@@ -1408,44 +1408,69 @@ class App(QMainWindow):
             cpu=re.search(r"cpu-load:\s*(\d+)%",raw["System resources"],re.I)
             if cpu and int(cpu.group(1))>=90:
                 add("warn","Производительность",f"Высокая загрузка CPU: {cpu.group(1)}%",raw["System resources"],"Проверь процессы и нагрузку; повтори диагностику после снижения нагрузки.")
-        if not nonempty("Main default route"):
+        if failed("Main default route"):
+            add("info","WAN / основной маршрут","Проверка default route не выполнилась",raw["Main default route"],"Проверь совместимость команды и права SSH; отсутствие вывода из-за ошибки не доказывает отсутствие маршрута.")
+        elif not nonempty("Main default route"):
             add("bad","WAN / основной маршрут","Не найден основной IPv4 default route в таблице main","/ip route print не вернул default route для main","Проверь WAN, DHCP/адрес шлюза и default route. VPN-таблицу пока не трогай.")
         elif "inactive" in raw["Main default route"].lower():
             add("bad","WAN / основной маршрут","Основной default route найден, но помечен inactive",raw["Main default route"],"Проверь доступность шлюза и состояние WAN-интерфейса.")
-        if not nonempty("WAN interface") or failed("WAN interface"):
-            add("warn","WAN-интерфейс","Не удалось получить monitor-traffic WAN",raw["WAN interface"],"Проверь имя WAN-интерфейса в настройках приложения и его наличие на роутере.")
-        if not nonempty("WAN ping") or "received=0" in raw["WAN ping"].lower() or "packet-loss=100%" in raw["WAN ping"].lower():
+        if failed("WAN interface"):
+            add("info","WAN-интерфейс","Проверка monitor-traffic не выполнилась",raw["WAN interface"],"Проверь имя WAN-интерфейса и поддержку команды на этой версии RouterOS.")
+        elif not nonempty("WAN interface"):
+            add("warn","WAN-интерфейс","Monitor-traffic не вернул данные",raw["WAN interface"],"Проверь имя WAN-интерфейса в настройках приложения.")
+        if failed("WAN ping"):
+            add("info","Доступ в интернет через WAN","Ping-тест не выполнился как команда",raw["WAN ping"],"Это не доказательство отсутствия интернета: проверь права/синтаксис и сопоставь с другими тестами.")
+        elif not nonempty("WAN ping") or "received=0" in raw["WAN ping"].lower() or "packet-loss=100%" in raw["WAN ping"].lower():
             add("bad","Доступ в интернет через WAN","Роутер не получил ответы от 1.1.1.1 через обычную таблицу маршрутизации",raw["WAN ping"],"Проверь WAN, шлюз провайдера, NAT и доступность внешнего IP. Это проверка с самого роутера, не с ПК.")
-        elif not failed("WAN ping"):
+        else:
             add("ok","Доступ в интернет через WAN","Проверочный IP доступен с роутера",raw["WAN ping"],"Основной WAN-путь отвечает.")
-        if not nonempty("DNS resolve Cloudflare") or failed("DNS resolve Cloudflare"):
-            add("bad","DNS / DoH","RouterOS не смог разрешить cloudflare.com",raw["DNS resolve Cloudflare"],"Проверь use-doh-server, verify-doh-cert, bootstrap DNS и доступ роутера к HTTPS/443.")
-        if not nonempty("DNS resolve YouTube") or failed("DNS resolve YouTube"):
-            add("warn","DNS / домены","RouterOS не смог разрешить youtube.com",raw["DNS resolve YouTube"],"Сравни результат с cloudflare.com. Проверь DNS static FWD для домена и доступность DoH.")
-        if not has("DNS configuration",r"allow-remote-requests:\s*yes"):
-            add("warn","DNS для LAN","allow-remote-requests не включён или конфигурация DNS не прочитана",raw["DNS configuration"],"Проверь, должен ли MikroTik обслуживать DNS-запросы LAN-клиентов.")
-        if not has("DNS configuration",r"use-doh-server:\s*https://") or not has("DNS configuration",r"verify-doh-cert:\s*yes"):
-            add("warn","DNS-over-HTTPS","DoH endpoint или проверка TLS-сертификата не подтверждены",raw["DNS configuration"],"Проверь URL DoH и verify-doh-cert=yes. Не отключай проверку TLS ради обхода ошибки.")
-        if not has("DHCP network",re.escape(f["lan_subnet"])):
+        if failed("DNS resolve Cloudflare"):
+            add("info","DNS / DoH","Команда проверки cloudflare.com не выполнилась",raw["DNS resolve Cloudflare"],"Проверь синтаксис/права; для подтверждения DNS используй также вывод /ip dns и тест с Windows.")
+        elif not nonempty("DNS resolve Cloudflare"):
+            add("bad","DNS / DoH","RouterOS не вернул адрес cloudflare.com",raw["DNS resolve Cloudflare"],"Проверь use-doh-server, verify-doh-cert, bootstrap DNS и доступ роутера к HTTPS/443.")
+        if failed("DNS resolve YouTube"):
+            add("info","DNS / домены","Команда проверки youtube.com не выполнилась",raw["DNS resolve YouTube"],"Проверь синтаксис/права и DNS static FWD.")
+        elif not nonempty("DNS resolve YouTube"):
+            add("warn","DNS / домены","RouterOS не вернул адрес youtube.com",raw["DNS resolve YouTube"],"Сравни результат с cloudflare.com. Проверь DNS static FWD для домена и доступность DoH.")
+        if failed("DNS configuration"):
+            add("info","DNS configuration","Не удалось прочитать DNS-конфигурацию",raw["DNS configuration"],"Проверь права SSH и повтори проверку после устранения ошибки команды.")
+        else:
+            if not has("DNS configuration",r"allow-remote-requests:\s*yes"):
+                add("warn","DNS для LAN","allow-remote-requests не включён",raw["DNS configuration"],"Проверь, должен ли MikroTik обслуживать DNS-запросы LAN-клиентов.")
+            if not has("DNS configuration",r"use-doh-server:\s*https://") or not has("DNS configuration",r"verify-doh-cert:\s*yes"):
+                add("warn","DNS-over-HTTPS","DoH endpoint или проверка TLS-сертификата не подтверждены",raw["DNS configuration"],"Проверь URL DoH и verify-doh-cert=yes. Не отключай проверку TLS ради обхода ошибки.")
+        if failed("DHCP network"):
+            add("info","DHCP / LAN","Не удалось прочитать DHCP network",raw["DHCP network"],"Проверь права SSH и синтаксис команды.")
+        elif not has("DHCP network",re.escape(f["lan_subnet"])):
             add("warn","DHCP / LAN","В DHCP network не найдена ожидаемая LAN-подсеть",raw["DHCP network"],"Сверь lan_subnet приложения с DHCP network на MikroTik.")
         elif not has("DHCP network",r"dns-server=.*(?:192\.168\.|\b"+re.escape(f.get("lan_ip","192.168.0.2"))+r"\b)"):
             add("info","DHCP / DNS","Не удалось подтвердить, что DHCP выдаёт адрес MikroTik как DNS",raw["DHCP network"],"Проверь dns-server в DHCP network и DNS-настройки клиента.")
         wg=raw["WireGuard peers"]
         handshake=re.search(r"last-handshake=(\S+)",wg,re.I)
-        if failed("WireGuard peers") or not handshake or handshake.group(1).lower() in ("never","0s"):
+        if failed("WireGuard peers"):
+            add("info","WireGuard","Не удалось прочитать peer",wg,"Проверь права SSH и синтаксис команды; handshake пока не оценён.")
+        elif not handshake or handshake.group(1).lower() in ("never","0s"):
             add("bad","WireGuard","Нет подтверждённого handshake peer",wg,"Проверь endpoint, UDP-порт, ключи, peer allowed-address и доступность сервера VPN.")
         else:
             add("ok","WireGuard",f"Handshake peer: {handshake.group(1)}",wg,"Туннель установил связь; дополнительно проверяем передачу трафика.")
-        if not nonempty("WireGuard interface") or failed("WireGuard interface"):
-            add("bad","WireGuard interface","Интерфейс WireGuard не найден или недоступен",raw["WireGuard interface"],"Сверь имя интерфейса в настройках приложения с RouterOS.")
-        if not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower():
+        if failed("WireGuard interface"):
+            add("info","WireGuard interface","Не удалось прочитать интерфейс WireGuard",raw["WireGuard interface"],"Проверь имя интерфейса и права SSH.")
+        elif not nonempty("WireGuard interface"):
+            add("bad","WireGuard interface","Интерфейс WireGuard не найден",raw["WireGuard interface"],"Сверь имя интерфейса в настройках приложения с RouterOS.")
+        if failed("VPN default route"):
+            add("info","Policy routing","Не удалось прочитать VPN default route",raw["VPN default route"],"Проверь права SSH и имя routing table.")
+        elif not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower():
             add("bad","Policy routing","Нет активного default route в отдельной VPN-таблице",raw["VPN default route"],"Проверь routing table, gateway=WireGuard и флаг активности маршрута.")
-        if failed("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower() or "packet-loss=100%" in raw["VPN interface ping"].lower():
-            add("warn","Трафик через WireGuard","Проверочный ping через интерфейс WireGuard не подтвердился",raw["VPN interface ping"],"Если handshake есть, проверь удалённый AllowedIPs/маршрут, NAT на VPN-сервере и ICMP-фильтрацию. Ошибка самой команды означает, что этот тест не поддержан/не выполнен.")
+        if failed("VPN interface ping"):
+            add("info","Трафик через WireGuard","Проба ping через WG не выполнилась",raw["VPN interface ping"],"Проверь поддержку параметра interface в этой версии RouterOS. Это не доказывает отказ туннеля.")
+        elif not nonempty("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower() or "packet-loss=100%" in raw["VPN interface ping"].lower():
+            add("warn","Трафик через WireGuard","Проверочный ping через интерфейс WireGuard не подтвердился",raw["VPN interface ping"],"Если handshake есть, проверь удалённый AllowedIPs/маршрут, NAT на VPN-сервере и ICMP-фильтрацию.")
         else:
             add("ok","Трафик через WireGuard","Проверочный ping через WireGuard получил ответ",raw["VPN interface ping"],"Туннель передаёт тестовый трафик.")
         mangle=raw["Managed Mangle"]
-        if not nonempty("Managed Mangle") or MANGLE_COMMENT not in mangle:
+        if failed("Managed Mangle"):
+            add("info","Mangle / policy routing","Не удалось прочитать управляемое правило",mangle,"Проверь права SSH и команду print stats detail.")
+        elif not nonempty("Managed Mangle") or MANGLE_COMMENT not in mangle:
             add("bad","Mangle / policy routing","Управляемое правило маркировки не найдено",mangle,"Проверь наличие правила VPN-MANAGER-DOMAIN-ROUTE.")
         elif re.search(r"\bX\s+.*"+re.escape(MANGLE_COMMENT),mangle):
             add("bad","Mangle / policy routing","Управляемое правило Mangle отключено",mangle,"Включай правило только после проверки VPN default route и NAT.")
@@ -1454,14 +1479,18 @@ class App(QMainWindow):
         else:
             add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
         nat=raw["Managed NAT"]
-        if not nonempty("Managed NAT") or NAT_COMMENT not in nat or "action=masquerade" not in nat or f"out-interface={f['wg_interface']}" not in nat:
+        if failed("Managed NAT"):
+            add("info","NAT через WireGuard","Не удалось прочитать управляемое NAT-правило",nat,"Проверь права SSH и команду print stats detail.")
+        elif not nonempty("Managed NAT") or NAT_COMMENT not in nat or "action=masquerade" not in nat or f"out-interface={f['wg_interface']}" not in nat:
             add("bad","NAT через WireGuard","Не найдено ожидаемое masquerade-правило на WG",nat,"Проверь srcnat, out-interface WireGuard и порядок NAT-правил.")
         else:
             add("ok","NAT через WireGuard","Управляемое masquerade-правило найдено",nat,"Проверь его счётчики при реальном трафике.")
         filt=raw["Firewall filter"]
         if re.search(r"action=fasttrack-connection",filt,re.I) and not re.search(r"\bX\s+\d+\s+.*action=fasttrack-connection",filt,re.I):
             add("warn","Firewall / FastTrack","Обнаружено активное FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
-        if not nonempty("DNS redirect NAT") or "action=redirect" not in raw["DNS redirect NAT"]:
+        if failed("DNS redirect NAT"):
+            add("info","DNS redirect","Не удалось прочитать DNS redirect NAT",raw["DNS redirect NAT"],"Проверь права SSH и команду выборки правил.")
+        elif not nonempty("DNS redirect NAT") or "action=redirect" not in raw["DNS redirect NAT"]:
             add("warn","DNS redirect","Не найдено управляемое перенаправление DNS на роутер",raw["DNS redirect NAT"],"Если клиенты должны использовать DNS MikroTik, проверь redirect UDP/TCP 53 и исключения.")
         if not nonempty("DNS static FWD"):
             add("info","DNS FWD","Управляемые DNS static записи не найдены",raw["DNS static FWD"],"Это нормально, если список доменов пуст; иначе проверь импорт и применение целей.")

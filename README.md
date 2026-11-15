@@ -4,7 +4,7 @@
 
 - Replaced manual DNS observation as the primary discovery path with an explicit **Update dependencies** workflow.
 - Added passive subdomain candidates from Certificate Transparency (crt.sh), followed by A/AAAA/CNAME lookups through Cloudflare DNS-over-HTTPS. The scan runs in a background worker and does not change router DNS settings.
-- Added service grouping (for example, ChatGPT / OpenAI) in the discovery table and the routing-target table. Group assignments are stored locally in application settings.
+- Replaced the flat discovery table with an expandable hierarchy: service group → domains → resolved IP addresses. Added group/domain checkboxes, a search filter across groups/domains/IPs, and expand/collapse controls. Group assignments are also shown in the routing-target table and stored locally in application settings.
 - Added confidence/source labels: actual browser requests from HAR, discovered CT/DNS names, and built-in profile entries.
 - HAR import groups request hosts, related Referer/Origin/Location hosts, redirects, and request-associated server IPs.
 - Resolved IPs remain informational and are not added to routing by default. IPv4 /32 addition is an explicit checkbox; shared CDN addresses may serve unrelated services.

@@ -1199,8 +1199,8 @@ def classify_routeros_command(command):
     mutation=re.search(r"(?i)(?:^|\s)(add|set|remove|enable|disable|move|reset|reset-counters|clear|flush|renew|release|generate-key|run|reboot|restore|upgrade|import|create|delete)(?:\s|$)",root)
     destructive=(
         re.search(r"(?i)^/?system\s+(?:reboot|reset-configuration|shutdown)\b",low)
-        or re.search(r"(?i)^/?(?:user|ip firewall|ip route|ip address|ip dns|interface|routing|system scheduler|system script)\s+.*\b(remove|reset|flush|disable|set|add|enable|move|import|restore)\b",low)
-        or re.search(r"(?i)^/?(?:file|backup)\s+.*\b(remove|delete|restore|save)\b",low)
+        or re.search(r"(?i)^/?(?:user|ip firewall|ip route|ip address|ip dns|ip service|ip ssh|ip dhcp-server|ip pool|interface|routing|system scheduler|system script|system package)\s+.*\b(remove|reset|flush|disable|set|add|enable|move|import|restore)\b",low)
+        or re.search(r"(?i)^/?(?:file|backup|system backup)\s+.*\b(remove|delete|restore|save|load)\b",low)
         or re.search(r"(?i)^/?tool\s+netwatch\b.*\b(add|set|remove)\b",low)
         or root.startswith(":") or root.startswith("execute ")
     )

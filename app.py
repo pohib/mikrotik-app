@@ -864,7 +864,7 @@ class App(QMainWindow):
         if st is None:
             sub.setText("Подключись к роутеру, чтобы увидеть статусы"); return
         found=st["found"]; local={x for x,_ in self.targets}
-        active=sum(1 for f in found.values() if not f[1]); disabled=len(found)-active
+        active=sum(1 for f in found.values() if not f[1] and not f[2]); disabled=sum(1 for f in found.values() if f[1]); invalid=sum(1 for f in found.values() if f[2])
         pending=len([x for x in local if x not in found]); ronly=len([x for x in found if x not in local])
         sub.setText(f"Активно {active} · отключено {disabled} · не применено {pending} · только на роутере {ronly} · address-list: {st['dyn']} дин. IP")
         for tg,f in sorted(found.items()):
@@ -1088,7 +1088,8 @@ class App(QMainWindow):
                 raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {found}. Ничего не меняю.")
             self.cmd(r,f'/ip firewall mangle {verb} [find where comment="{MANGLE_COMMENT}"]')
             self.cmd(r,f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"')
-            self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Правило "+("включено" if enabled else "отключено")+".",False,True)))
+            self.fetch_mangle_status(r)
+            self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Команда переключения выполнена; фактический статус перечитан с роутера.",False,True)))
         self.run_job(("Включение" if enabled else "Временное отключение")+" управляемого Mangle-правила…",job)
 
     def load_targets(self):
@@ -1250,7 +1251,12 @@ class App(QMainWindow):
             self.cmd(r,"/ip dns cache flush"); self.fetch_targets(r)
         self.run_job("Удаление выбранных управляемых объектов…",job)
 
-    def refresh_address_list(self): self.run_job("Обновление статусов целей…",lambda:self.fetch_targets(self.router_conn()))
+    def refresh_address_list(self):
+        def job():
+            r=self.router_conn()
+            self.fetch_targets(r)
+            self.fetch_mangle_status(r)
+        self.run_job("Обновление статусов целей и VPN-маршрутизации…",job)
     def read_command(self,command,target):
         self.run_job("Чтение конфигурации…",lambda:self.q.put(("TEXT",(target,self.router_conn().exec(command)))))
     def refresh_firewall(self):

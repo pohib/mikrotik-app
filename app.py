@@ -903,8 +903,10 @@ class App(QMainWindow):
                     rid,flags,_,answers,_,_=struct.unpack("!HHHHHH",raw[:12])
                     rcode=flags & 0x000F
                     if rid!=probe_id or not (flags & 0x8000): raise ValueError("DNS ID/QR не совпали.")
+                    if flags & 0x7800: raise ValueError("DNS response содержит неожиданный opcode.")
+                    if flags & 0x0200: raise ValueError("DNS response усечён (TC=1).")
                     if rcode!=0 or answers<1: raise ValueError(f"DNS RCODE={rcode}; answers={answers}.")
-                    return "OK",f"RFC 8484 POST с RouterOS: TLS certificate verified; HTTP 200; DNS ID matched; RCODE=0; answers={answers}; response={len(raw)} bytes."
+                    return "OK",f"RFC 8484 POST с RouterOS: TLS certificate verified; HTTP 200; DNS ID matched; QR=1; TC=0; RCODE=0; answers={answers}; response={len(raw)} bytes."
                 except Exception as exc:
                     return "FAIL",str(exc)
             active_url=active_match.group(1).rstrip(",;") if active_match else ""
@@ -949,7 +951,7 @@ class App(QMainWindow):
                 lan_dns=self.settings.get("lan_dns","").strip()
                 if not lan_dns: raise ValueError("LAN DNS IP не задан в настройках приложения.")
                 tcp_id=secrets.randbelow(65536)
-                tcp_qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\\x00"
+                tcp_qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\x00"
                 tcp_packet=struct.pack("!HHHHHH",tcp_id,0x0100,1,0,0,0)+tcp_qname+struct.pack("!HH",1,1)
                 with socket.create_connection((lan_dns,53),timeout=4) as dns_tcp:
                     dns_tcp.settimeout(4)
@@ -977,26 +979,30 @@ class App(QMainWindow):
             mangle=ok("Managed Mangle counters") and "mark-routing" in results.get("Managed Mangle counters","")
             wg=ok("WireGuard peers") and "last-handshake=" in results.get("WireGuard peers","") and "rx=" in results.get("WireGuard peers","")
             route=ok("VPN default route") and bool(re.search(r"\bA",results.get("VPN default route",""))) and "routing-table=" in results.get("VPN default route","") and "gateway=" in results.get("VPN default route","")
-            route_state="OK" if mangle else "FAIL"
-            stages=[("DoH endpoint с ПК","OK" if doh_result=="OK" else ("WARN" if doh_result=="WARN" else "FAIL"),"RFC 8484 POST с ПК"),
-                    ("Текущий DoH с MikroTik",active_doh_state,active_doh_detail),
+            route_state="INFO"
+            stages=[("DoH endpoint с ПК","INFO" if doh_result=="OK" else "WARN","Вспомогательная проверка с Windows; не заменяет тест с MikroTik"),
+                    ("Текущий DoH с MikroTik","OK" if active_doh_state=="OK" else "INFO",active_doh_detail+" · контрольный тест, не блокирует переход"),
                     ("Кандидат DoH с MikroTik",candidate_doh_state,candidate_doh_detail),
-                    ("HTTPS/TLS активного хоста",router_https,router_https_detail),
-                    ("DNS-резолвер MikroTik","OK" if dns_ok else "FAIL","DoH URL и сертификат настроены; :resolve может использовать кэш"),
+                    ("HTTPS/TLS активного хоста","INFO" if router_https=="OK" else "WARN",router_https_detail),
+                    ("DNS-резолвер MikroTik","OK" if dns_ok else "INFO","Текущая конфигурация/resolve; :resolve может использовать кэш и не доказывает upstream"),
                     ("LAN-клиент → DNS MikroTik / UDP",lan_dns_state,lan_dns_detail),
-                    ("LAN-клиент → DNS MikroTik / TCP",lan_dns_tcp_state,lan_dns_tcp_detail),
-                    ("Привязка домена к VPN","OK" if fwd and ips else "FAIL","FWD-запись и динамические IP"),
-                    ("Policy routing",route_state,"Mangle mark-routing присутствует; один снимок счётчика не доказывает маршрут конкретного клиента"),
-                    ("WireGuard","OK" if wg else "WARN","Peer/handshake/RX-TX обнаружены"),
-                    ("VPN-маршрут","OK" if route else "FAIL","Активный default route в выбранной таблице")]
+                    ("LAN-клиент → DNS MikroTik / TCP","OK" if lan_dns_tcp_state=="OK" else "WARN",lan_dns_tcp_detail+" · TCP/53 не является обязательным условием DoH"),
+                    ("Привязка домена к VPN","INFO","FWD: "+str(fwd)+"; динамические IP: "+str(ips)+" · отдельно от пригодности DoH"),
+                    ("Policy routing","INFO","Mangle mark-routing обнаружен: "+str(mangle)+" · отдельно от пригодности DoH"),
+                    ("WireGuard","INFO","Peer/handshake/RX-TX обнаружены: "+str(wg)+" · отдельно от пригодности DoH"),
+                    ("VPN-маршрут","INFO","Активный default route обнаружен: "+str(route)+" · отдельно от пригодности DoH")]
             self.q.put(("DOH_DIAGSTATUS",stages))
-            failed=[x[0] for x in stages if x[1]=="FAIL"]
-            warnings=[x[0] for x in stages if x[1]=="WARN"]
-            if failed: verdict="ПОКА НЕ МЕНЯТЬ DoH. Ошибки: "+", ".join(failed)+". Сначала устрани первый этап FAIL."
-            elif warnings: verdict="КАНДИДАТ НЕ ПОДТВЕРЖДЁН ПОЛНОСТЬЮ. Неполные проверки: "+", ".join(warnings)+". Разбери предупреждения до смены."
-            elif active_doh_state=="OK" and candidate_doh_state=="OK" and doh_result=="OK" and lan_dns_state=="OK" and lan_dns_tcp_state=="OK":
-                verdict="ТЕХНИЧЕСКИ МОЖНО МЕНЯТЬ DoH: текущий и кандидатный endpoint ответили на настоящий RFC 8484 POST непосредственно с MikroTik с проверкой TLS-сертификата; независимый запрос с ПК и LAN DNS также прошли. Перед применением сохрани backup/export и подготовь откат. Встроенный DNS-resolver RouterOS не даёт криптографического доказательства upstream для каждого клиентского запроса."
-            else: verdict="НЕДОСТАТОЧНО ДАННЫХ ДЛЯ РЕШЕНИЯ О СМЕНЕ DoH. Проверь RFC 8484 тесты непосредственно с MikroTik."
+            if candidate_doh_state!="OK":
+                verdict="НЕ МЕНЯТЬ DoH: кандидат не прошёл прямой RFC 8484 POST с MikroTik и проверку TLS-сертификата. Исправь endpoint, bootstrap DNS или доступ к HTTPS/443 и повтори тест."
+            elif lan_dns_state!="OK":
+                verdict="КАНДИДАТ DoH ДОСТУПЕН, НО СМЕНУ ПОКА НЕ РЕКОМЕНДУЮ: прямой тест с MikroTik прошёл, однако LAN-клиент не получил полноценный UDP DNS-ответ от роутера. Сначала проверь DNS-службу LAN."
+            else:
+                extras=[]
+                if active_doh_state!="OK": extras.append("текущий DoH не прошёл контрольный тест")
+                if lan_dns_tcp_state!="OK": extras.append("LAN TCP/53 не прошёл (это отдельное предупреждение)")
+                if doh_result!="OK": extras.append("Windows-тест endpoint не прошёл/неполон")
+                if not dns_ok: extras.append("текущая конфигурация или resolve не подтверждены; resolve может зависеть от кэша")
+                verdict="КАНДИДАТ ПРОШЁЛ КЛЮЧЕВЫЕ ПРОВЕРКИ — СМЕНА ТЕХНИЧЕСКИ ОБОСНОВАНА: RouterOS установил TLS-соединение с проверкой сертификата, отправил RFC 8484 POST и получил валидный DNS-ответ; LAN-клиент получил UDP DNS-ответ. Перед переключением создай backup + export, затем примени endpoint и сразу повтори проверку. "+("; ".join(extras)+". " if extras else "")+"Тест подтверждает доступность и совместимость endpoint с RouterOS, но не гарантирует доступность сервиса в будущем и не доказывает upstream для каждого запроса, который мог обслуживаться из кэша."
             parts.extend(["▌ AUTOMATIC ASSESSMENT",verdict,""])
             self.q.put(("DOH_DIAGOUT","\n".join(parts)))
         self.run_job("Диагностика DNS → VPN (read-only)…",job)
@@ -1164,12 +1170,12 @@ class App(QMainWindow):
                     for i,(name,state,detail) in enumerate(payload):
                         self.doh_stage_table.setItem(i,0,QTableWidgetItem(name))
                         cell=QTableWidgetItem(state); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                        cell.setForeground(QColor(TONES["ok"] if state=="OK" else TONES["bad"] if state=="FAIL" else TONES["warn"]))
+                        cell.setForeground(QColor(TONES["ok"] if state=="OK" else TONES["bad"] if state=="FAIL" else TONES["info"] if state=="INFO" else TONES["warn"]))
                         self.doh_stage_table.setItem(i,1,cell); self.doh_stage_table.setItem(i,2,QTableWidgetItem(detail))
                     failed=[x[0] for x in payload if x[1]=="FAIL"]; warns=[x[0] for x in payload if x[1]=="WARN"]
-                    if failed: self.doh_diagnosis_verdict.setText("ВЕРОЯТНАЯ ТОЧКА ОТКАЗА: "+", ".join(failed)+" · смотри первый FAIL сверху.")
-                    elif warns: self.doh_diagnosis_verdict.setText("ТРЕБУЕТСЯ ПРОВЕРКА: "+", ".join(warns)+" · конфигурация не равна доказательству прохождения трафика.")
-                    else: self.doh_diagnosis_verdict.setText("Проверенные этапы прошли. Отдельно проверь egress с LAN-клиента.")
+                    if failed: self.doh_diagnosis_verdict.setText("КАНДИДАТ НЕ ПРОШЁЛ ОБЯЗАТЕЛЬНЫЙ ЭТАП: "+", ".join(failed)+" · смотри автоматический вывод ниже.")
+                    elif warns: self.doh_diagnosis_verdict.setText("КЛЮЧЕВЫЕ ПРОВЕРКИ ПРОШЛИ; есть отдельные предупреждения: "+", ".join(warns)+".")
+                    else: self.doh_diagnosis_verdict.setText("Ключевые проверки DoH прошли. VPN-маршрутизация оценивается отдельно.")
                 elif kind=="DIAG":
                     result,silent=payload; self.last_diag=result
                     self.dashboard_report.setPlainText("\n".join(f"{k}: {v}" for k,v in result.items()))

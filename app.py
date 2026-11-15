@@ -1369,8 +1369,6 @@ class App(QMainWindow):
         self.targets_empty=QLabel("Пока нет целей. Добавь домен или IP, загрузи профиль либо запусти автоопределение."); self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         action_head=QHBoxLayout(); self.selection_hint=QLabel("Отметь галочками несколько групп, доменов или IP либо выдели строки мышью"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
         actions=QHBoxLayout()
-        select_all_local=QPushButton("Выделить всё"); select_all_local.clicked.connect(lambda: self.set_all_target_checks(True)); actions.addWidget(select_all_local)
-        clear_all_local=QPushButton("Снять выделение"); clear_all_local.clicked.connect(lambda: self.set_all_target_checks(False)); actions.addWidget(clear_all_local)
         local_remove=QPushButton("Удалить из приложения"); local_remove.setObjectName("DangerButton"); local_remove.clicked.connect(self.remove_local); actions.addWidget(local_remove)
         stage_apply=QPushButton("Применить цели"); stage_apply.setObjectName("PrimaryButton"); stage_apply.clicked.connect(self.stage_apply_targets); actions.addWidget(stage_apply)
         stage_remove=QPushButton("Подготовить удаление на роутере"); stage_remove.setObjectName("DangerButton"); stage_remove.clicked.connect(self.stage_remove_selected); actions.addWidget(stage_remove)
@@ -4109,6 +4107,11 @@ if __name__=="__main__":
         QMessageBox { background:#0a1423; color:#e8effb; }
         QMessageBox QLabel { color:#e8effb; min-width:280px; }
         QMessageBox QPushButton { min-width:92px; min-height:34px; }
+        QCheckBox { color:#dce7f8; spacing:9px; }
+        QCheckBox::indicator { width:17px; height:17px; border:1px solid #536985; border-radius:4px; background:#101b2d; }
+        QCheckBox::indicator:hover { border:1px solid #83b2ff; background:#172943; }
+        QCheckBox::indicator:checked { background:#3978e8; border:1px solid #78aaff; }
+        QCheckBox::indicator:disabled { background:#182335; border:1px solid #35445b; }
     """)
     win=App(); win._ui_icons = _ui_icons; win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")

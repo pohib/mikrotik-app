@@ -38,6 +38,7 @@ DOH_PRESETS = {
     "Cloudflare · блокировка вредоносных сайтов": ("https://security.cloudflare-dns.com/dns-query", "1.1.1.2, 1.0.0.2"),
     "Cloudflare · семейный фильтр": ("https://family.cloudflare-dns.com/dns-query", "1.1.1.3, 1.0.0.3"),
     "OpenDNS": ("https://doh.opendns.com/dns-query", "208.67.222.222, 208.67.220.220"),
+    "OpenDNS · FamilyShield": ("https://doh.familyshield.opendns.com/dns-query", "208.67.222.123, 208.67.220.123"),
 }
 
 PRESETS = {

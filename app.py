@@ -175,14 +175,15 @@ class RouterConnection:
 
     def exec(self, command, timeout=30):
         # Централизованный журнал: фиксируем все SSH-команды, включая фоновые опросы.
-        safe_command = re.sub(r'(?i)(private-key\\s*=\\s*)("[^"]*"|\\S+)', r'\\1[СКРЫТО]', command)
+        safe_command = re.sub(r'(?i)(private-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', command)
         self.ui_queue.put(("LOG", f"SSH → $ {safe_command}"))
         try:
             output = self._exec_raw(command, timeout)
         except Exception as exc:
-            self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\\nОШИБКА: {exc}"))
+            safe_error = re.sub(r'(?i)(private-key\\s*=\\s*)("[^"]*"|\\S+)', r'\\1[СКРЫТО]', str(exc))
+            self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\\nОШИБКА: {safe_error}"))
             raise
-        safe_output = re.sub(r'(?im)(private-key\\s*[:=]\\s*)(\\S+)', r'\\1[СКРЫТО]', output)
+        safe_output = re.sub(r'(?im)(private-key\s*[:=]\s*)(\S+)', r'\1[СКРЫТО]', output)
         self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\\n{safe_output or '(пустой вывод)'}"))
         return output
 
@@ -1274,7 +1275,7 @@ class App(QMainWindow):
         threading.Thread(target=lambda:(r.close(),self.q.put(("DISCONNECTED",None))),daemon=True).start()
 
     def cmd(self,r,command,timeout=30):
-        out=r.exec(command,timeout); self.q.put(("LOG",f"$ {command}\n{out or '(пустой вывод)'}")); return out
+        return r.exec(command,timeout)
 
     def diagnostics(self,r,run_ping=False,silent=False):
         f=self.settings;

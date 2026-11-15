@@ -1105,7 +1105,30 @@ class App(QMainWindow):
         shell_layout.setSpacing(0)
         outer.addWidget(shell)
 
-        titlebar = QFrame()
+        class DragTitleBar(QFrame):
+            def __init__(self):
+                super().__init__()
+                self._drag_offset = None
+
+            def mousePressEvent(self, event):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_offset = event.globalPosition().toPoint() - d.frameGeometry().topLeft()
+                    event.accept()
+                else:
+                    super().mousePressEvent(event)
+
+            def mouseMoveEvent(self, event):
+                if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                    d.move(event.globalPosition().toPoint() - self._drag_offset)
+                    event.accept()
+                else:
+                    super().mouseMoveEvent(event)
+
+            def mouseReleaseEvent(self, event):
+                self._drag_offset = None
+                super().mouseReleaseEvent(event)
+
+        titlebar = DragTitleBar()
         titlebar.setObjectName("LoginTitleBar")
         titlebar.setFixedHeight(48)
         titlebar_layout = QHBoxLayout(titlebar)
@@ -1120,26 +1143,6 @@ class App(QMainWindow):
         titlebar_layout.addStretch()
         titlebar_layout.addWidget(close_btn)
         shell_layout.addWidget(titlebar)
-
-        titlebar._drag_offset = None
-        def titlebar_press(event):
-            if event.button() == Qt.MouseButton.LeftButton:
-                titlebar._drag_offset = event.globalPosition().toPoint() - d.frameGeometry().topLeft()
-                event.accept()
-            else:
-                QFrame.mousePressEvent(titlebar, event)
-        def titlebar_move(event):
-            if titlebar._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-                d.move(event.globalPosition().toPoint() - titlebar._drag_offset)
-                event.accept()
-            else:
-                QFrame.mouseMoveEvent(titlebar, event)
-        def titlebar_release(event):
-            titlebar._drag_offset = None
-            QFrame.mouseReleaseEvent(titlebar, event)
-        titlebar.mousePressEvent = titlebar_press
-        titlebar.mouseMoveEvent = titlebar_move
-        titlebar.mouseReleaseEvent = titlebar_release
 
         content = QWidget()
         root = QVBoxLayout(content)

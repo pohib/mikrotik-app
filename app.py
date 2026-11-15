@@ -227,10 +227,7 @@ def parse_terse(text):
         if first < 0:
             continue
         head = line[:first].split()
-        # RouterOS terse output places flags directly after the row index
-        # (for example: "0 X chain=..."). Keep all tokens between index and
-        # first key=value pair; the previous slice silently dropped single flags.
-        flags = set("".join(head[1:])) if len(head) > 1 else set()
+        flags = set("".join(head[1:-1])) if len(head) > 2 else set()
         fields = {k: v.strip('"') for k, v in re.findall(r'([\w.-]+)=("(?:[^"\\]|\\.)*"|\S*)', line)}
         items.append({"flags": flags, "f": fields})
     return items

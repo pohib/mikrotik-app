@@ -513,7 +513,6 @@ class App(QMainWindow):
         header = QHBoxLayout(); titlebox = QVBoxLayout(); self.page_title=QLabel("Обзор сети"); self.page_title.setObjectName("PageTitle")
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
-        self.conn_badge=QLabel("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); header.addWidget(self.conn_badge)
         self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
         self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
         cv.addLayout(header)
@@ -843,7 +842,7 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.progress.hide(); self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="PENDING_CLEARED": self.pending_actions=[]; self.update_pending_ui()
                 elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
@@ -871,7 +870,6 @@ class App(QMainWindow):
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
                 elif kind=="DISCONNECTED":
                     self.auth_btn.setText("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
-                    self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
                     for k in self.dns_ind: self.set_ind(k,"off","—")
                     self.log("SSH отключён")
@@ -1321,6 +1319,9 @@ class App(QMainWindow):
             d.accept()
 
         login.clicked.connect(do_login)
+        for field in (host, port, user, key, phrase):
+            field.returnPressed.connect(do_login)
+        d.setDefaultButton(login)
         d.exec()
         if d.result() == QDialog.DialogCode.Accepted:
             self.connect_router()

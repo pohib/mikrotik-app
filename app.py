@@ -2293,7 +2293,7 @@ class App(QMainWindow):
 
     def ping_wan(self):
         self.run_diag_commands("Ping WAN · основной маршрут",[
-            ("Ping 1.1.1.1 через main","/tool ping address=1.1.1.1 routing-table=main count=5",25),
+            ("Ping 1.1.1.1 через основной маршрут","/tool ping address=1.1.1.1 count=5",25),
             ("Основной default route","/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main",20),
         ],"Ping WAN…")
 

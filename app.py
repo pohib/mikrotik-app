@@ -52,6 +52,7 @@ PRESETS = {
     "Netflix": ["netflix.com", "netflix.net", "nflxvideo.net", "nflximg.net", "nflximg.com", "nflxso.net", "nflxext.com"],
     "Cloudflare services": ["cloudflare.com", "cloudflare-dns.com", "one.one.one.one"],
     "Instagram": ["instagram.com", "i.instagram.com", "graph.instagram.com", "cdninstagram.com", "fbcdn.net", "instagram.fna.fbcdn.net"],
+    "TikTok": ["tiktok.com", "tiktokv.com", "tiktokcdn.com", "tiktokcdn-us.com", "byteoversea.com", "ibytedtos.com", "ipstatp.com", "byteimg.com", "muscdn.com"],
 }
 
 
@@ -397,8 +398,7 @@ class Backdrop(QWidget):
         tp = QPainter(self.tile); tp.setRenderHint(QPainter.RenderHint.Antialiasing); tp.setPen(Qt.PenStyle.NoPen); tp.setBrush(QColor(255, 255, 255, 20)); tp.drawEllipse(QPointF(13, 13), 0.9, 0.9); tp.end()
 
     def paintEvent(self, _event):
-        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
+        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)        w, h = self.width(), self.height()
         base = QLinearGradient(0, 0, w, h); base.setColorAt(0, QColor("#080d19")); base.setColorAt(1, QColor("#04060b"))
         p.fillRect(self.rect(), base)
         for cx, cy, r, col in ((0.88, 0.02, 0.62, (59, 130, 246, 70)), (0.22, 1.02, 0.55, (45, 212, 191, 38)), (0.60, 0.52, 0.45, (139, 92, 246, 32))):
@@ -797,8 +797,7 @@ class AutoDiscoveryDialog(QDialog):
                 with urllib.request.urlopen(req, timeout=5) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 for answer in payload.get("Answer", []):
-                    data = str(answer.get("data", "")).rstrip(".")
-                    if qtype in ("A", "AAAA"):
+                    data = str(answer.get("data", "")).rstrip(".")                    if qtype in ("A", "AAAA"):
                         try:
                             result["ips"].add(str(ipaddress.ip_address(data)))
                         except ValueError:
@@ -1197,8 +1196,7 @@ class App(QMainWindow):
             action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
         log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(8)); self.addAction(log_action)
         fit_controls(self)
-        for fr in self.findChildren(QFrame):
-            n = fr.objectName()
+        for fr in self.findChildren(QFrame):            n = fr.objectName()
             if n == "Hero": add_shadow(fr, 44, 14, (10, 30, 90, 150))
             elif n in ("Panel", "Card"): add_shadow(fr, 32, 10, (0, 0, 0, 125))
         for b in self.findChildren(QPushButton):
@@ -1287,9 +1285,14 @@ class App(QMainWindow):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
         p=self.panel("Цели выборочной маршрутизации","Добавляй домены, отдельные IPv4 (/32) и сети CIDR. IPv6 пока не поддерживается.")
         row=QHBoxLayout(); self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
+        self.target_group=QComboBox(); self.target_group.setEditable(True); self.target_group.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        known_groups={"Пользовательские", *PRESETS.keys(), *self.target_groups.values()}
+        self.target_group.addItems(sorted(known_groups, key=str.casefold)); self.target_group.setCurrentText("Пользовательские")
+        self.target_group.setMinimumWidth(190); self.target_group.setToolTip("Выбери существующую группу или введи название новой группы.")
+        self.target_group.lineEdit().setPlaceholderText("Название группы")
         add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
         auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
-        row.addWidget(self.target_input,1); row.addWidget(add); row.addWidget(auto); p.layout().addLayout(row)
+        row.addWidget(self.target_input,1); row.addWidget(QLabel("Группа")); row.addWidget(self.target_group); row.addWidget(add); row.addWidget(auto); p.layout().addLayout(row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); self.preset.setMinimumWidth(180); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("＋ Все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
         import_btn=QPushButton("Импорт"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
         export_btn=QPushButton("Экспорт"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
@@ -1597,8 +1600,7 @@ class App(QMainWindow):
                 lan_dns_state="OK" if answer_count>0 else "WARN"
                 lan_dns_detail=f"Ответ от {lan_dns}:53; RCODE={answer_rcode}; Answer records={answer_count}."
             except Exception as exc:
-                lan_dns_detail=str(exc)
-            parts.extend(["▌ LAN client → MikroTik DNS / UDP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
+                lan_dns_detail=str(exc)            parts.extend(["▌ LAN client → MikroTik DNS / UDP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
             lan_dns_tcp_state="WARN"
             lan_dns_tcp_detail="TCP DNS query не выполнен."
             try:
@@ -1997,8 +1999,7 @@ class App(QMainWindow):
                     name_match=(cached_name==target or (match_sub and cached_name.endswith("."+target)))
                     if name_match and cf.get("type","").upper()=="A":
                         try: cache_ips.add(str(ipaddress.ip_address(cf.get("data",""))))
-                        except ValueError: pass
-                in_address_list=cache_ips.intersection(dynamic_ips)
+                        except ValueError: pass                in_address_list=cache_ips.intersection(dynamic_ips)
                 detail += f" · DNS cache A: {len(cache_ips)} IP · совпало с динамическим address-list: {len(in_address_list)}"
                 found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,bool(in_address_list),len(cache_ips),sorted(cache_ips),sorted(in_address_list))
         for it in managed_al:
@@ -2397,8 +2398,7 @@ class App(QMainWindow):
             def do_login():
                 h, u = host.text().strip(), user.text().strip()
                 k = key.text().strip()
-                mode = auth_mode.currentData()
-                try:
+                mode = auth_mode.currentData()                try:
                     p = int(port.text().strip())
                     if not h or not u:
                         raise ValueError("Укажите адрес маршрутизатора и имя пользователя.")
@@ -2797,8 +2797,7 @@ class App(QMainWindow):
                 ipv6_addresses+"\n"+ipv6_route+"\nIPv6 firewall:\n"+raw.get("IPv6 firewall","")+"\nND/RA:\n"+ipv6_nd,
                 "Проверь, получают ли LAN-клиенты IPv6 через RA, и отдельно спроектируй IPv6 policy routing или контролируемую блокировку IPv6. Ничего автоматически не отключать.")
         elif nonempty("IPv6 default route"):
-            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",ipv6_route,"Проверь IPv6 DNS, адреса клиентов, firewall и RA отдельно.")
-        else:
+            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",ipv6_route,"Проверь IPv6 DNS, адреса клиентов, firewall и RA отдельно.")        else:
             add("info","IPv6","IPv6 default route не обнаружен в выводе; это не исключает локальные IPv6-маршруты или другой маршрутизатор",ipv6_addresses+"\n"+ipv6_nd,"Сверь IPv6-настройки на клиенте и объявления Router Advertisement в LAN.")
         if not failed("Recent network errors") and raw["Recent network errors"].strip():
             add("info","Журнал RouterOS","В журнале есть сетевые ошибки/предупреждения",raw["Recent network errors"],"Сопоставь timestamp записи со временем отказа; старые записи сами по себе не доказывают текущую неисправность.")
@@ -3177,9 +3176,26 @@ class App(QMainWindow):
             self.targets=[]
         self.render_targets()
     def add_target(self):
-        try: t,k=normalize_target(self.target_input.text())
-        except Exception as e: QMessageBox.warning(self,"Некорректная цель",str(e)); return
-        if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]="Пользовательские"; self.save_settings(); self.render_targets()
+        try:
+            t,k=normalize_target(self.target_input.text())
+            group=self.target_group.currentText().strip() if hasattr(self,"target_group") else "Пользовательские"
+            if not group:
+                group="Пользовательские"
+            if len(group)>64 or any(ord(ch)<32 for ch in group):
+                raise ValueError("Название группы должно содержать не более 64 обычных символов.")
+        except Exception as e:
+            QMessageBox.warning(self,"Некорректная цель или группа",str(e)); return
+        existing=next((x for x in self.targets if x[0]==t),None)
+        changed=False
+        if existing is None:
+            self.targets.append((t,k)); changed=True
+        if self.target_groups.get(t)!=group:
+            self.target_groups[t]=group; changed=True
+        if hasattr(self,"target_group") and self.target_group.findText(group)<0:
+            self.target_group.addItem(group)
+        if changed:
+            self.save_settings(); self.render_targets()
+            self.log(f"Цель {t} добавлена/перемещена в группу «{group}».")
         self.target_input.clear()
     def auto_discover_targets(self):
         dlg = AutoDiscoveryDialog(self, self.request_discovery_dns_cache)
@@ -3197,8 +3213,7 @@ class App(QMainWindow):
                 self.target_groups[target] = group
         self.save_settings()
         self.render_targets()
-        self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")
-        if added:
+        self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")        if added:
             QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
         else:
             QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
@@ -3224,11 +3239,13 @@ class App(QMainWindow):
 
     def load_preset(self):
         name=self.preset.currentText(); n=0
+        if hasattr(self,"target_group"):
+            self.target_group.setCurrentText(name)
         for raw in PRESETS[name]:
             try: t,k=normalize_target(raw)
             except: continue
             if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]=name; n+=1
-        self.save_settings(); self.render_targets(); self.log(f"Профиль {name}: добавлено {n} целей")
+        self.save_settings(); self.render_targets(); self.log(f"Профиль {name}: добавлено {n} целей в группу «{name}»")
     def render_targets(self):
         if not hasattr(self,"target_table"): return
         found=self.router_state["found"] if self.router_state else {}
@@ -3397,8 +3414,7 @@ class App(QMainWindow):
         filters=r.exec("/ip firewall filter print detail")
         if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Нужна ручная проверка исключений перед настройкой mangle.")
         mangle=r.exec("/ip firewall mangle print detail")
-        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")
-        if MANGLE_COMMENT not in mangle:
+        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")        if MANGLE_COMMENT not in mangle:
             self.cmd(r,mangle_cmd(f))
         nat=r.exec("/ip firewall nat print detail")
         if not (f"out-interface={wg}" in nat and "action=masquerade" in nat and f"src-address={sub}" in nat):
@@ -3898,4 +3914,3 @@ if __name__=="__main__":
     """)
     win=App(); win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
-    sys.exit(app.exec())

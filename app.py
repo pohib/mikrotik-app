@@ -1371,10 +1371,10 @@ class App(QMainWindow):
             "WireGuard addresses": f"/ip address print detail where interface={ros_q(f['wg_interface'])}",
             "WireGuard peers": f"/interface wireguard peers print detail where interface={ros_q(f['wg_interface'])}",
             "VPN interface ping": f"/tool ping address=1.1.1.1 interface={ros_q(f['wg_interface'])} count=3",
-            "Managed Mangle": f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"',
+            "Managed Mangle": f'/ip firewall mangle print stats terse where comment="{MANGLE_COMMENT}"',
             "Managed NAT": f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"',
-            "DNS redirect NAT": '/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',
-            "Firewall filter": "/ip firewall filter print detail",
+            "DNS redirect NAT": '/ip firewall nat print stats terse where comment~"DNS-REDIRECT"',
+            "Firewall filter": "/ip firewall filter print terse",
             "DNS static FWD": '/ip dns static print terse where comment~"VPN-MANAGER:"',
             "DNS cache": "/ip dns cache print terse",
             "Managed CIDR address-list": '/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"',
@@ -1526,13 +1526,15 @@ class App(QMainWindow):
         else:
             add("ok","Трафик через WireGuard","Проверочный ping через WireGuard получил ответ",raw["VPN interface ping"],"Туннель передаёт тестовый трафик.")
         mangle=raw["Managed Mangle"]
+        mangle_entries=parse_terse(mangle) if not failed("Managed Mangle") else []
+        managed_mangle=next((x for x in mangle_entries if x["f"].get("comment")==MANGLE_COMMENT),None)
         if failed("Managed Mangle"):
-            add("info","Mangle / policy routing","Не удалось прочитать управляемое правило",mangle,"Проверь права SSH и команду print stats detail.")
-        elif not nonempty("Managed Mangle") or MANGLE_COMMENT not in mangle:
+            add("info","Mangle / policy routing","Не удалось прочитать управляемое правило",mangle,"Проверь права SSH и команду print stats terse.")
+        elif managed_mangle is None:
             add("bad","Mangle / policy routing","Управляемое правило маркировки не найдено",mangle,"Проверь наличие правила VPN-MANAGER-DOMAIN-ROUTE.")
-        elif re.search(r"\bX\s+.*"+re.escape(MANGLE_COMMENT),mangle):
+        elif "X" in managed_mangle["flags"]:
             add("bad","Mangle / policy routing","Управляемое правило Mangle отключено",mangle,"Включай правило только после проверки VPN default route и NAT.")
-        elif "action=mark-routing" not in mangle or f"new-routing-mark={f['route_table']}" not in mangle:
+        elif managed_mangle["f"].get("action")!="mark-routing" or managed_mangle["f"].get("new-routing-mark")!=f["route_table"]:
             add("bad","Mangle / policy routing","Правило найдено, но параметры mark-routing не совпадают с профилем",mangle,"Проверь action, new-routing-mark, passthrough, chain и address-list.")
         else:
             add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
@@ -1544,15 +1546,17 @@ class App(QMainWindow):
         else:
             add("ok","NAT через WireGuard","Управляемое masquerade-правило найдено",nat,"Проверь его счётчики при реальном трафике.")
         filt=raw["Firewall filter"]
-        if re.search(r"action=fasttrack-connection",filt,re.I) and not re.search(r"\bX\s+\d+\s+.*action=fasttrack-connection",filt,re.I):
-            add("warn","Firewall / FastTrack","Обнаружено активное FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
+        filter_entries=parse_terse(filt) if not failed("Firewall filter") else []
+        active_fasttrack=any(x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"] for x in filter_entries)
+        if active_fasttrack:
+            add("warn","Firewall / FastTrack","Обнаружено включённое FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
         dns_redirect=raw["DNS redirect NAT"]
         if failed("DNS redirect NAT"):
             add("info","DNS redirect","Не удалось прочитать DNS redirect NAT",dns_redirect,"Проверь права SSH и команду выборки правил.")
         else:
-            rule_blocks=[x for x in re.split(r"(?m)(?=^\\s*\\d+\\s+)",dns_redirect) if "action=" in x]
-            udp53=any(re.search(r"protocol=udp",x,re.I) and re.search(r"dst-port=53",x,re.I) and re.search(r"action=redirect",x,re.I) for x in rule_blocks)
-            tcp53=any(re.search(r"protocol=tcp",x,re.I) and re.search(r"dst-port=53",x,re.I) and re.search(r"action=redirect",x,re.I) for x in rule_blocks)
+            redirect_entries=parse_terse(dns_redirect)
+            udp53=any(x["f"].get("protocol")=="udp" and x["f"].get("dst-port")=="53" and x["f"].get("action")=="redirect" and "X" not in x["flags"] for x in redirect_entries)
+            tcp53=any(x["f"].get("protocol")=="tcp" and x["f"].get("dst-port")=="53" and x["f"].get("action")=="redirect" and "X" not in x["flags"] for x in redirect_entries)
             if not udp53 or not tcp53:
                 missing=("UDP/53" if not udp53 else "")+(" и " if not udp53 and not tcp53 else "")+("TCP/53" if not tcp53 else "")
                 add("warn","DNS redirect",f"Не подтверждён redirect {missing} на DNS MikroTik",dns_redirect,"Проверь отдельные правила redirect для UDP/53 и TCP/53, а также порядок и исключения.")

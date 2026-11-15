@@ -1,5 +1,14 @@
 # MikroTik VPN Manager — v1.2.0
 
+## v1.4.0 — Deep diagnostics
+
+- Reworked the full diagnostic into a single layered, read-only run.
+- Checks RouterOS identity/resources/clock, WAN interface and main default route, WAN reachability, DNS/DoH configuration and actual DNS resolution, DHCP network and leases, WireGuard interface/peer/handshake, VPN route and an interface-bound ping probe, managed Mangle/NAT counters, DNS redirect/FWD entries, FastTrack, IPv6 default route, and recent network warnings/errors.
+- Adds local Windows client DNS resolution and TCP/443 checks to separate client-side failures from router-side failures. These are clearly labeled because Windows may use a different resolver.
+- Shows likely fault area, severity, evidence collected during the same run, and next action. A failed/unsupported command is marked inconclusive rather than automatically treated as a network outage.
+- Full diagnostics no longer add temporary routing rules or alter router configuration.
+- Added copy and UTF-8 TXT export of the complete report, including raw command evidence.
+
 ## v1.3.0 — UX and usability
 
 - Startup opens the dashboard without forcing an SSH login dialog; connect when ready.

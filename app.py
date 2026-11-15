@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math
+import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math, csv
 from collections import deque
 from pathlib import Path
 from datetime import datetime
@@ -587,7 +587,10 @@ class App(QMainWindow):
         row=QHBoxLayout(); self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
         add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
         row.addWidget(self.target_input,1); row.addWidget(add); p.layout().addLayout(row)
-        row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all); row2.addStretch()
+        row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
+        import_btn=QPushButton("Импорт TXT/CSV"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
+        export_btn=QPushButton("Экспорт CSV"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
+        row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
         self.target_table=QTableWidget(0,7); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
         actions=QHBoxLayout()
@@ -885,7 +888,7 @@ class App(QMainWindow):
         if f[2]: return ("Ошибка конфигурации","bad")
         if f[1]: return ("Запись отключена","warn")
         if f[0]=="Домен":
-            return ("FWD настроена · ждёт DNS/IP","info") if len(f)<5 or not f[4] else ("FWD настроена · есть IP в списке","ok")
+            return ("FWD настроена · DNS ещё не наполнил список","info") if len(f)<5 or not f[4] else ("FWD настроена · в общем списке есть динамические IP","ok")
         if len(f)>=5 and not f[4]: return ("Нет IP в address-list","warn")
         return ("Применена на роутере","ok") if is_local else ("Только на роутере","info")
 
@@ -1146,6 +1149,43 @@ class App(QMainWindow):
             self.fetch_mangle_status(r)
             self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Команда переключения выполнена; фактический статус перечитан с роутера.",False,True)))
         self.run_job(("Включение" if enabled else "Временное отключение")+" управляемого Mangle-правила…",job)
+
+    def import_targets_file(self):
+        path,_=QFileDialog.getOpenFileName(self,"Импорт целей","", "Списки целей (*.txt *.csv);;Все файлы (*.*)")
+        if not path: return
+        added=skipped=0; errors=[]
+        try:
+            raw=Path(path).read_text(encoding="utf-8-sig")
+            if path.lower().endswith(".csv"):
+                values=[row[0].strip() for row in csv.reader(raw.splitlines(),delimiter=";") if row and row[0].strip()]
+                if values and values[0].lower() in ("target","цель","domain","ip"): values=values[1:]
+            else:
+                values=[line.strip() for line in raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+            existing={x[0] for x in self.targets}
+            for value in values:
+                try: target,kind=normalize_target(value)
+                except Exception as exc: skipped+=1; errors.append(f"{value}: {exc}"); continue
+                if target in existing: skipped+=1; continue
+                self.targets.append((target,kind)); existing.add(target); added+=1
+            self.render_targets()
+            self.log(f"Импорт завершён: добавлено {added}, пропущено {skipped}.")
+            if errors: QMessageBox.warning(self,"Импорт завершён",f"Добавлено: {added}\nПропущено: {skipped}\n\nПервые ошибки:\n"+"\n".join(errors[:12]))
+            else: QMessageBox.information(self,"Импорт завершён",f"Добавлено: {added}\nПропущено (дубликаты): {skipped}")
+        except Exception as exc:
+            QMessageBox.critical(self,"Ошибка импорта",str(exc))
+
+    def export_targets_file(self):
+        path,_=QFileDialog.getSaveFileName(self,"Экспорт списка целей","vpn-targets.csv","CSV (*.csv)")
+        if not path: return
+        try:
+            with open(path,"w",newline="",encoding="utf-8-sig") as stream:
+                writer=csv.writer(stream,delimiter=";")
+                writer.writerow(["Цель","Тип"])
+                writer.writerows(self.targets)
+            self.log(f"Экспортировано целей: {len(self.targets)} → {path}")
+            QMessageBox.information(self,"Экспорт готов",f"Сохранено целей: {len(self.targets)}\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self,"Ошибка экспорта",str(exc))
 
     def load_targets(self):
         self.targets=[]; self.render_targets()

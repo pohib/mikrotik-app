@@ -11,7 +11,7 @@ try:
 except ImportError:
     paramiko = None
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint
+from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint
 from html import escape as esc
 from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import (
@@ -497,15 +497,37 @@ class DialogTitleBar(QFrame):
         heading = QLabel(title)
         heading.setObjectName("DialogHeading")
         row.addWidget(heading, 1)
+        # QLabel дочерние элементы перехватывают мышь и не передают её QFrame.
+        # Устанавливаем фильтр, чтобы перетаскивание работало при захвате за любой участок заголовка.
+        self._drag_widgets = [self, brand, heading]
+        for widget in self._drag_widgets:
+            widget.installEventFilter(self)
+            widget.setCursor(Qt.CursorShape.SizeAllCursor)
         close = QPushButton("×")
         close.setObjectName("DialogClose")
         close.setFixedSize(30, 30)
         close.clicked.connect(dialog.reject)
         row.addWidget(close)
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+    def _begin_drag(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self.dialog.isMaximized():
             self._drag_pos = event.globalPosition().toPoint() - self.dialog.frameGeometry().topLeft()
+            return True
+        return False
+
+    def eventFilter(self, watched, event):
+        if watched in self._drag_widgets:
+            if event.type() == QEvent.Type.MouseButtonPress and self._begin_drag(event):
+                return True
+            if event.type() == QEvent.Type.MouseMove and self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                self.dialog.move(event.globalPosition().toPoint() - self._drag_pos)
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._drag_pos = None
+        return super().eventFilter(watched, event)
+
+    def mousePressEvent(self, event):
+        if self._begin_drag(event):
             event.accept()
 
     def mouseMoveEvent(self, event):

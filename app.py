@@ -939,7 +939,9 @@ class App(QMainWindow):
         def job():
             r=self.router_conn()
             count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
-            if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {count or "неизвестно"}. Ничего не меняю.")
+            if count!="1":
+                found=count or "неизвестно"
+                raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {found}. Ничего не меняю.")
             self.cmd(r,f'/ip firewall mangle {verb} [find where comment="{MANGLE_COMMENT}"]')
             self.cmd(r,f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"')
             self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Правило "+("включено" if enabled else "отключено")+".",False,True)))

@@ -398,7 +398,8 @@ class Backdrop(QWidget):
         tp = QPainter(self.tile); tp.setRenderHint(QPainter.RenderHint.Antialiasing); tp.setPen(Qt.PenStyle.NoPen); tp.setBrush(QColor(255, 255, 255, 20)); tp.drawEllipse(QPointF(13, 13), 0.9, 0.9); tp.end()
 
     def paintEvent(self, _event):
-        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)        w, h = self.width(), self.height()
+        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
         base = QLinearGradient(0, 0, w, h); base.setColorAt(0, QColor("#080d19")); base.setColorAt(1, QColor("#04060b"))
         p.fillRect(self.rect(), base)
         for cx, cy, r, col in ((0.88, 0.02, 0.62, (59, 130, 246, 70)), (0.22, 1.02, 0.55, (45, 212, 191, 38)), (0.60, 0.52, 0.45, (139, 92, 246, 32))):
@@ -797,7 +798,8 @@ class AutoDiscoveryDialog(QDialog):
                 with urllib.request.urlopen(req, timeout=5) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 for answer in payload.get("Answer", []):
-                    data = str(answer.get("data", "")).rstrip(".")                    if qtype in ("A", "AAAA"):
+                    data = str(answer.get("data", "")).rstrip(".")
+                    if qtype in ("A", "AAAA"):
                         try:
                             result["ips"].add(str(ipaddress.ip_address(data)))
                         except ValueError:
@@ -1196,7 +1198,8 @@ class App(QMainWindow):
             action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
         log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(8)); self.addAction(log_action)
         fit_controls(self)
-        for fr in self.findChildren(QFrame):            n = fr.objectName()
+        for fr in self.findChildren(QFrame):
+            n = fr.objectName()
             if n == "Hero": add_shadow(fr, 44, 14, (10, 30, 90, 150))
             elif n in ("Panel", "Card"): add_shadow(fr, 32, 10, (0, 0, 0, 125))
         for b in self.findChildren(QPushButton):
@@ -1600,7 +1603,8 @@ class App(QMainWindow):
                 lan_dns_state="OK" if answer_count>0 else "WARN"
                 lan_dns_detail=f"Ответ от {lan_dns}:53; RCODE={answer_rcode}; Answer records={answer_count}."
             except Exception as exc:
-                lan_dns_detail=str(exc)            parts.extend(["▌ LAN client → MikroTik DNS / UDP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
+                lan_dns_detail=str(exc)
+            parts.extend(["▌ LAN client → MikroTik DNS / UDP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
             lan_dns_tcp_state="WARN"
             lan_dns_tcp_detail="TCP DNS query не выполнен."
             try:
@@ -1999,7 +2003,8 @@ class App(QMainWindow):
                     name_match=(cached_name==target or (match_sub and cached_name.endswith("."+target)))
                     if name_match and cf.get("type","").upper()=="A":
                         try: cache_ips.add(str(ipaddress.ip_address(cf.get("data",""))))
-                        except ValueError: pass                in_address_list=cache_ips.intersection(dynamic_ips)
+                        except ValueError: pass
+                in_address_list=cache_ips.intersection(dynamic_ips)
                 detail += f" · DNS cache A: {len(cache_ips)} IP · совпало с динамическим address-list: {len(in_address_list)}"
                 found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,bool(in_address_list),len(cache_ips),sorted(cache_ips),sorted(in_address_list))
         for it in managed_al:
@@ -2398,7 +2403,8 @@ class App(QMainWindow):
             def do_login():
                 h, u = host.text().strip(), user.text().strip()
                 k = key.text().strip()
-                mode = auth_mode.currentData()                try:
+                mode = auth_mode.currentData()
+                try:
                     p = int(port.text().strip())
                     if not h or not u:
                         raise ValueError("Укажите адрес маршрутизатора и имя пользователя.")
@@ -2797,7 +2803,8 @@ class App(QMainWindow):
                 ipv6_addresses+"\n"+ipv6_route+"\nIPv6 firewall:\n"+raw.get("IPv6 firewall","")+"\nND/RA:\n"+ipv6_nd,
                 "Проверь, получают ли LAN-клиенты IPv6 через RA, и отдельно спроектируй IPv6 policy routing или контролируемую блокировку IPv6. Ничего автоматически не отключать.")
         elif nonempty("IPv6 default route"):
-            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",ipv6_route,"Проверь IPv6 DNS, адреса клиентов, firewall и RA отдельно.")        else:
+            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",ipv6_route,"Проверь IPv6 DNS, адреса клиентов, firewall и RA отдельно.")
+        else:
             add("info","IPv6","IPv6 default route не обнаружен в выводе; это не исключает локальные IPv6-маршруты или другой маршрутизатор",ipv6_addresses+"\n"+ipv6_nd,"Сверь IPv6-настройки на клиенте и объявления Router Advertisement в LAN.")
         if not failed("Recent network errors") and raw["Recent network errors"].strip():
             add("info","Журнал RouterOS","В журнале есть сетевые ошибки/предупреждения",raw["Recent network errors"],"Сопоставь timestamp записи со временем отказа; старые записи сами по себе не доказывают текущую неисправность.")
@@ -3213,7 +3220,8 @@ class App(QMainWindow):
                 self.target_groups[target] = group
         self.save_settings()
         self.render_targets()
-        self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")        if added:
+        self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")
+        if added:
             QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
         else:
             QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
@@ -3414,7 +3422,8 @@ class App(QMainWindow):
         filters=r.exec("/ip firewall filter print detail")
         if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Нужна ручная проверка исключений перед настройкой mangle.")
         mangle=r.exec("/ip firewall mangle print detail")
-        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")        if MANGLE_COMMENT not in mangle:
+        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")
+        if MANGLE_COMMENT not in mangle:
             self.cmd(r,mangle_cmd(f))
         nat=r.exec("/ip firewall nat print detail")
         if not (f"out-interface={wg}" in nat and "action=masquerade" in nat and f"src-address={sub}" in nat):

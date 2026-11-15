@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -409,10 +409,33 @@ class LogWindow(QDialog):
         self.lines.clear(); self.text.clear()
 
 
+class WindowTitleBar(QFrame):
+    def __init__(self, window):
+        super().__init__(window); self.window=window; self.drag_pos=None
+        self.setObjectName("WindowTitleBar"); self.setFixedHeight(42)
+        row=QHBoxLayout(self); row.setContentsMargins(16,0,8,0); row.setSpacing(8)
+        brand=QLabel("◈  MIKROTIK VPN MANAGER"); brand.setObjectName("ChromeBrand")
+        row.addWidget(brand); row.addStretch()
+        for label,obj,fn in (("—","ChromeButton",window.showMinimized),("□","ChromeButton",self.toggle_maximize),("×","ChromeClose",window.close)):
+            b=QPushButton(label); b.setObjectName(obj); b.setFixedSize(38,30); b.clicked.connect(fn); row.addWidget(b)
+        self.max_button=row.itemAt(3).widget()
+    def toggle_maximize(self):
+        if self.window.isMaximized(): self.window.showNormal(); self.max_button.setText("□")
+        else: self.window.showMaximized(); self.max_button.setText("❐")
+    def mousePressEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton and not self.window.isMaximized():
+            self.drag_pos=event.globalPosition().toPoint()-self.window.frameGeometry().topLeft(); event.accept()
+    def mouseMoveEvent(self,event):
+        if self.drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window.move(event.globalPosition().toPoint()-self.drag_pos); event.accept()
+    def mouseReleaseEvent(self,event): self.drag_pos=None
+
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1500, 960); self.setMinimumSize(1180, 780)
         self.q = queue.Queue(); self.router: Optional[RouterConnection] = None
         self.busy = False; self.targets = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
@@ -420,8 +443,9 @@ class App(QMainWindow):
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.build_ui(); self.load_targets()
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(120)
-        # Полная диагностика запускается только вручную; периодический полный опрос отключён.
-        self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic); self.traffic_timer.start(5000)
+        # Автоматические проверки выключены; пользователь может отдельно включить опрос трафика.
+        self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic)
+        self.traffic_timer.setInterval(5000)
 
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
@@ -442,7 +466,10 @@ class App(QMainWindow):
     def build_ui(self):
         self.setStyleSheet(STYLE)
         root = Backdrop(); self.setCentralWidget(root)
-        main = QHBoxLayout(root); main.setContentsMargins(0,0,0,0); main.setSpacing(0)
+        outer=QVBoxLayout(root); outer.setContentsMargins(0,0,0,0); outer.setSpacing(0)
+        self.title_bar=WindowTitleBar(self); outer.addWidget(self.title_bar)
+        main_host=QWidget(); main=QHBoxLayout(main_host); main.setContentsMargins(0,0,0,0); main.setSpacing(0)
+        outer.addWidget(main_host,1)
         sidebar = QFrame(); sidebar.setObjectName("Sidebar"); sidebar.setFixedWidth(238)
         sl = QVBoxLayout(sidebar); sl.setContentsMargins(20,26,20,20); sl.setSpacing(10)
         logo = QLabel("◈  MIKROTIK") ; logo.setObjectName("Brand")
@@ -466,8 +493,11 @@ class App(QMainWindow):
         self.pages=[]
         self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
+        footer=QHBoxLayout()
         self.status=QLabel("●  Готово  ·  Конфигурация меняется только после явного подтверждения")
-        self.status.setObjectName("StatusBar"); cv.addWidget(self.status)
+        self.status.setObjectName("StatusBar"); footer.addWidget(self.status,1)
+        grip=QSizeGrip(root); grip.setFixedSize(18,18); footer.addWidget(grip,0,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignBottom)
+        cv.addLayout(footer)
         fit_controls(self)
         for fr in self.findChildren(QFrame):
             n = fr.objectName()
@@ -514,7 +544,13 @@ class App(QMainWindow):
         for key,title in (("rx","<span style='color:#38bdf8'>●</span>  ПРИЁМ СЕЙЧАС"),("tx","<span style='color:#fbbf24'>●</span>  ПЕРЕДАЧА СЕЙЧАС"),("peak","ПИК ЗА 10 МИН"),("total","ВСЕГО RX / TX")):
             box=QVBoxLayout(); box.setSpacing(2); tl=QLabel(title); tl.setObjectName("CardTitle"); vl=QLabel("—"); vl.setObjectName("StatValue")
             box.addWidget(tl); box.addWidget(vl); stats.addLayout(box,1); self.tr_labels[key]=vl
-        tp.layout().addLayout(stats); mid.addWidget(tp,2)
+        tp.layout().addLayout(stats)
+        traffic_controls=QHBoxLayout()
+        self.traffic_auto=QCheckBox("Автообновление трафика · 5 сек"); self.traffic_auto.setChecked(False)
+        self.traffic_auto.toggled.connect(self.set_traffic_auto)
+        refresh_traffic=QPushButton("Обновить сейчас"); refresh_traffic.clicked.connect(self.poll_traffic)
+        traffic_controls.addWidget(self.traffic_auto); traffic_controls.addStretch(); traffic_controls.addWidget(refresh_traffic)
+        tp.layout().addLayout(traffic_controls); mid.addWidget(tp,2)
         dp=self.panel("Состояние DNS","Защита от обхода и утечек"); self.dns_ind={}
         for i,(key,title) in enumerate((("overall","Общая защита"),("doh","DoH (DNS-over-HTTPS)"),("redirect","Перехват DNS :53"),("dot","Блокировка DoT/DoQ :853"),("remote","Remote requests"),("fwd","DNS FWD-записи"),("ips","IP в address-list"),("v6","IPv6 default route"))):
             if i:
@@ -553,7 +589,7 @@ class App(QMainWindow):
         row.addWidget(self.target_input,1); row.addWidget(add); p.layout().addLayout(row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all); row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
-        self.target_table=QTableWidget(0,6); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
+        self.target_table=QTableWidget(0,7); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
         actions=QHBoxLayout()
         for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Предпросмотр применения",self.preview_apply,"Button"),("Применить на роутер",self.apply_all,"PrimaryButton"),("Удалить выбранное с роутера",self.remove_remote,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
             b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
@@ -565,6 +601,7 @@ class App(QMainWindow):
         enable=QPushButton("Включить VPN-маршрутизацию"); enable.setObjectName("PrimaryButton"); enable.clicked.connect(lambda:self.set_managed_mangle(True))
         safety_row.addWidget(disable); safety_row.addWidget(enable)
         self.mangle_status=QLabel("●  Статус: не проверен"); self.mangle_status.setObjectName("IndValue")
+        self.mangle_state="unknown"
         check_mangle=QPushButton("Проверить статус"); check_mangle.clicked.connect(self.refresh_mangle_status)
         safety_row.addWidget(self.mangle_status,1); safety_row.addWidget(check_mangle)
         control.layout().addLayout(safety_row)
@@ -765,6 +802,13 @@ class App(QMainWindow):
         for v in self.tr_labels.values(): v.setText("—")
         self.tr_panel.sub_label.setText("Ожидание данных от peer…" if connected else "Ожидание подключения к роутеру…")
 
+    def set_traffic_auto(self,enabled):
+        if enabled:
+            self.traffic_timer.start(); self.poll_traffic()
+            self.log("Автообновление счётчиков WireGuard включено: интервал 5 секунд.")
+        else:
+            self.traffic_timer.stop(); self.log("Автообновление счётчиков WireGuard отключено.")
+
     def poll_traffic(self):
         r=self.router
         if self.tr_busy or not r or not r.client: return
@@ -802,7 +846,11 @@ class App(QMainWindow):
         managed_al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
         all_al=parse_terse(r.exec(f'/ip firewall address-list print terse where list={ros_q(alist)}'))
         total=len(all_al)
-        dyn=sum(1 for it in all_al if "D" in it["flags"])
+        dynamic_entries=[it for it in all_al if "D" in it["flags"]]
+        static_entries=[it for it in all_al if "D" not in it["flags"]]
+        dyn=len(dynamic_entries)
+        dynamic_ips=sorted({it["f"].get("address","") for it in dynamic_entries if it["f"].get("address")})
+        static_ips=sorted({it["f"].get("address","") for it in static_entries if it["f"].get("address")})
         found={}
         for it in dns:
             fields=it["f"]; c=fields.get("comment","")
@@ -811,14 +859,17 @@ class App(QMainWindow):
                 detail="DNS static FWD"
                 if fields.get("address-list"): detail+=f' · address-list={fields["address-list"]}'
                 if fields.get("match-subdomain"): detail+=f' · match-subdomain={fields["match-subdomain"]}'
-                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail)
+                detail += f" · динамических IP в address-list: {dyn} (общий счётчик)"
+                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,dyn)
         for it in managed_al:
             fields=it["f"]; c=fields.get("comment","")
             if c.startswith("VPN-MANAGER-CIDR:"):
                 target=c.split(":",1)[1]
                 kind="IPv4-адрес" if target.endswith("/32") else "IPv4-сеть"
-                found[target]=(kind,"X" in it["flags"],"I" in it["flags"],"Статическая запись address-list")
-        self.q.put(("TARGETS",{"found":found,"dyn":dyn,"total":total,"dns_count":len(dns)}))
+                present=any(a==target for a in static_ips)
+                detail="IP присутствует в address-list" if present else "Запись есть, но адрес не найден в address-list"
+                found[target]=(kind,"X" in it["flags"],"I" in it["flags"],detail,present)
+        self.q.put(("TARGETS",{"found":found,"dyn":dyn,"total":total,"dns_count":len(dns),"dynamic_ips":dynamic_ips,"static_ips":static_ips}))
 
     def on_targets(self,payload):
         self.router_state=payload; self.render_targets()
@@ -831,9 +882,12 @@ class App(QMainWindow):
         if st is None: return ("Не проверено","muted")
         f=st["found"].get(t)
         if f is None: return ("Не применена","muted")
-        if f[2]: return ("Ошибка (invalid)","bad")
-        if f[1]: return ("Отключена","warn")
-        return ("Активна","ok") if is_local else ("Только на роутере","info")
+        if f[2]: return ("Ошибка конфигурации","bad")
+        if f[1]: return ("Запись отключена","warn")
+        if f[0]=="Домен":
+            return ("FWD настроена · ждёт DNS/IP","info") if len(f)<5 or not f[4] else ("FWD настроена · есть IP в списке","ok")
+        if len(f)>=5 and not f[4]: return ("Нет IP в address-list","warn")
+        return ("Применена на роутере","ok") if is_local else ("Только на роутере","info")
 
     def fetch_mangle_status(self,r):
         entries=parse_terse(r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}'))
@@ -851,6 +905,7 @@ class App(QMainWindow):
     def on_mangle_status(self,payload):
         if not hasattr(self,"mangle_status"): return
         state=payload["state"]; label=payload["label"]
+        self.mangle_state=state
         tone={"enabled":"ok","disabled":"warn","invalid":"bad","unknown":"muted"}.get(state,"muted")
         self.mangle_status.setText(f'●  {label} · проверено {payload["checked"]}')
         self.mangle_status.setStyleSheet(f"color:{TONES[tone]};font-weight:700")
@@ -1124,23 +1179,25 @@ class App(QMainWindow):
         for t,k,is_local in rows:
             f=found.get(t)
             if self.router_state is None:
-                remote="Не проверено"; remote_tone="muted"; detail="Нет свежих данных от MikroTik"
+                remote="Не проверено"; remote_tone="muted"; detail="Нет свежих данных от MikroTik"; target_state="Ожидает проверки"; state_tone="muted"
             elif f is None:
-                remote="Не найдено"; remote_tone="warn"; detail="Управляемая запись не обнаружена на роутере"
+                remote="Не найдена"; remote_tone="warn"; detail="Управляемая запись не обнаружена на роутере"; target_state="Только в приложении"; state_tone="warn"
             elif f[2]:
-                remote="Ошибка (invalid)"; remote_tone="bad"; detail=f[3]
+                remote="Ошибка invalid"; remote_tone="bad"; detail=f[3]; target_state="Ошибка конфигурации"; state_tone="bad"
             elif f[1]:
-                remote="Отключено"; remote_tone="warn"; detail=f[3]
+                remote="Отключена"; remote_tone="warn"; detail=f[3]; target_state="Отключена на роутере"; state_tone="warn"
             else:
-                remote="Включено"; remote_tone="ok"; detail=f[3]
+                remote="Найдена"; remote_tone="ok"; detail=f[3]; target_state,state_tone=self.status_for(t,is_local)
             local_label="В локальном списке" if is_local else "Только на роутере"
             source="DNS FWD" if k=="Домен" else "address-list"
-            values=(t,k,source,local_label,remote,detail)
+            values=(t,k,source,local_label,remote,target_state,detail)
             i=self.target_table.rowCount(); self.target_table.insertRow(i)
             for j,val in enumerate(values):
                 item=QTableWidgetItem(val); item.setData(Qt.ItemDataRole.UserRole,t)
                 if j==4:
                     item.setForeground(QBrush(QColor(TONES[remote_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
+                elif j==5:
+                    item.setForeground(QBrush(QColor(TONES[state_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
                 self.target_table.setItem(i,j,item)
         self.filter_targets(self.target_search.text() if hasattr(self,"target_search") else "")
         if hasattr(self,"active_table"): self.render_active()
@@ -1296,6 +1353,11 @@ class App(QMainWindow):
 STYLE="""
 /* ---------- base: фон рисует Backdrop, остальные виджеты и подписи прозрачные ---------- */
 QMainWindow,QDialog,QMessageBox{background:#05070d}
+QFrame#WindowTitleBar{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0b1425,stop:1 #101c32);border-bottom:1px solid rgba(130,170,230,55)}
+QLabel#ChromeBrand{color:#8fa8cc;font-size:9pt;font-weight:800;letter-spacing:1px}
+QPushButton#ChromeButton,QPushButton#ChromeClose{background:transparent;border:0;border-radius:7px;color:#a9bbd5;font-size:13pt;padding:0}
+QPushButton#ChromeButton:hover{background:rgba(255,255,255,24);color:#ffffff}
+QPushButton#ChromeClose:hover{background:#d83d55;color:#ffffff}
 QWidget{color:#e8edf6;font-family:'Segoe UI Variable Text','Segoe UI';font-size:10pt}
 QLabel{background:transparent;border:0}
 QScrollArea#PageScroll{background:transparent;border:0}

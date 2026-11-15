@@ -2111,7 +2111,10 @@ class App(QMainWindow):
             "DNS cache": "/ip dns cache print terse",
             "Managed CIDR address-list": '/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"',
             "VPN address-list": f"/ip firewall address-list print terse where list={ros_q(f['address_list'])}",
+            "IPv6 settings": "/ipv6 settings print",
             "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and disabled=no",
+            "Managed Mangle counters": f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',
+            "FastTrack counters": "/ip firewall filter print stats detail",
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
             "WAN ping": "/tool ping address=1.1.1.1 count=3",
         }
@@ -2292,6 +2295,21 @@ class App(QMainWindow):
         else:
             add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
 
+        if domain:
+            if not route_probe_ips:
+                add("info","Фактический маршрут домена",f"Для {domain} не удалось получить IPv4 из DNS-ответа; route lookup не выполнен",raw.get("Selected domain DNS resolve",""),"Сделай DNS-запрос с клиента и повтори проверку. Для IPv6 нужен отдельный анализ IPv6-маршрутизации.")
+            for probe_ip in route_probe_ips[:5]:
+                vpn_key=f"Route lookup {probe_ip} · vpn"
+                vpn_route=raw.get(vpn_key,"")
+                if vpn_route.startswith("ERROR:"):
+                    add("info","Фактический маршрут домена",f"Не удалось проверить активный маршрут {probe_ip} в таблице {f['route_table']}",vpn_route,"Проверь поддержку фильтрации по адресу и routing-table в RouterOS.")
+                elif not vpn_route.strip():
+                    add("warn","Фактический маршрут домена",f"Для {probe_ip} не найден активный маршрут в VPN-таблице {f['route_table']}",vpn_route,"Проверь default route и более специфичные маршруты в VPN-таблице.")
+                elif f["wg_interface"].lower() in vpn_route.lower():
+                    add("ok","Фактический маршрут домена",f"Активный маршрут {probe_ip} в VPN-таблице указывает на {f['wg_interface']}",vpn_route,"Это подтверждает маршрут внутри VPN-таблицы. Для подтверждения прохождения LAN-пакетов дополнительно нужны срабатывание Mangle и динамическая запись IP в address-list.")
+                else:
+                    add("warn","Фактический маршрут домена",f"Маршрут {probe_ip} в VPN-таблице найден, но WireGuard-интерфейс {f['wg_interface']} в next-hop не подтверждён",vpn_route,"Проверь gateway/immediate-gw и более специфичные маршруты VPN-таблицы.")
+
         nat=raw["Managed NAT"]
         if failed("Managed NAT"):
             add("info","NAT через WireGuard","Не удалось прочитать NAT-правила",nat,"Проверь права SSH и совместимость команды /ip firewall nat print terse.")
@@ -2353,6 +2371,12 @@ class App(QMainWindow):
                 add("ok","DNS redirect","Redirect UDP/53 и TCP/53 обнаружен",dns_redirect,"Проверь счётчики этих правил после DNS-запроса клиента.")
         if not nonempty("DNS static FWD"):
             add("info","DNS FWD","Управляемые DNS static записи не найдены",raw["DNS static FWD"],"Это нормально, если список доменов пуст; иначе проверь импорт и применение целей.")
+        if failed("IPv6 settings"):
+            add("info","IPv6 settings","Не удалось прочитать глобальные настройки IPv6",raw["IPv6 settings"],"Проверь доступность меню /ipv6 settings и права SSH.")
+        elif has("IPv6 settings",r"disable-ipv6:\\s*yes"):
+            add("ok","IPv6 settings","IPv6 глобально отключён в RouterOS",raw["IPv6 settings"],"Проверь также настройки IPv6 на клиентах и наличие других маршрутизаторов в LAN.")
+        else:
+            add("info","IPv6 settings","IPv6 не подтверждён как глобально отключённый",raw["IPv6 settings"],"Сопоставь настройки IPv6 с default route и IPv6 firewall; отсутствие default route не исключает другие IPv6-пути.")
         if nonempty("IPv6 default route"):
             add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",raw["IPv6 default route"],"Проверь IPv6 DNS, IPv6 firewall и IPv6-маршрутизацию клиентов отдельно.")
         if not failed("Recent network errors") and raw["Recent network errors"].strip():

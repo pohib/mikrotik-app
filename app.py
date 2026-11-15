@@ -1739,6 +1739,22 @@ class App(QMainWindow):
         warnings=sum(1 for x in findings if x["level"]=="warn")
         passed=sum(1 for x in findings if x["level"]=="ok")
         overall="КРИТИЧЕСКАЯ ПРОБЛЕМА" if critical else ("ЕСТЬ ПРЕДУПРЕЖДЕНИЯ" if warnings else "КРИТИЧЕСКИХ ОТКЛОНЕНИЙ НЕ НАЙДЕНО")
+        dns_text=raw["DNS configuration"]
+        doh_ok=has("DNS configuration",r"use-doh-server:\s*https://") and has("DNS configuration",r"verify-doh-cert:\s*yes")
+        remote_ok=has("DNS configuration",r"allow-remote-requests:\s*yes")
+        redirect_entries=parse_terse(raw["DNS redirect NAT"]) if not failed("DNS redirect NAT") else []
+        redirect_udp=any(x["f"].get("chain")=="dstnat" and x["f"].get("action")=="redirect" and x["f"].get("protocol")=="udp" and x["f"].get("dst-port")=="53" and "X" not in x["flags"] for x in redirect_entries)
+        redirect_tcp=any(x["f"].get("chain")=="dstnat" and x["f"].get("action")=="redirect" and x["f"].get("protocol")=="tcp" and x["f"].get("dst-port")=="53" and "X" not in x["flags"] for x in redirect_entries)
+        filter_entries=parse_terse(raw["Firewall filter"]) if not failed("Firewall filter") else []
+        dot_ok=any(x["f"].get("chain")=="forward" and x["f"].get("action")=="drop" and x["f"].get("protocol")=="tcp" and x["f"].get("dst-port")=="853" and "BLOCK-DOT" in x["f"].get("comment","") and "X" not in x["flags"] for x in filter_entries)
+        doq_ok=any(x["f"].get("chain")=="forward" and x["f"].get("action")=="drop" and x["f"].get("protocol")=="udp" and x["f"].get("dst-port")=="853" and "BLOCK-DOQ" in x["f"].get("comment","") and "X" not in x["flags"] for x in filter_entries)
+        fwd_entries=parse_terse(raw["DNS static FWD"]) if not failed("DNS static FWD") else []
+        managed_fwd_count=len([x for x in fwd_entries if "VPN-MANAGER:" in x["f"].get("comment","")])
+        ip_entries=parse_terse(raw["VPN address-list"]) if not failed("VPN address-list") else []
+        managed_ip_count=len([x for x in ip_entries if "X" not in x["flags"]])
+        ipv6_present=nonempty("IPv6 default route") and not failed("IPv6 default route")
+        dns_flags=[doh_ok,redirect_udp and redirect_tcp,dot_ok and doq_ok,remote_ok]
+        dns_count=sum(bool(x) for x in dns_flags)
         result={
             "Маршрутизатор":raw["Router identity"].replace("name:","").strip() or "ответ получен",
             "Проверяемый домен":domain or "не задан",
@@ -1748,10 +1764,18 @@ class App(QMainWindow):
             "Успешные проверки":str(passed),
             "WireGuard handshake":handshake.group(1) if handshake else "не подтверждён",
             "VPN default route":"найден" if nonempty("VPN default route") and "inactive" not in raw["VPN default route"].lower() and f"gateway={f['wg_interface']}" in raw["VPN default route"] else "не подтверждён",
-            "DoH":"включён и TLS verify=yes" if has("DNS configuration",r"use-doh-server:\s*https://") and has("DNS configuration",r"verify-doh-cert:\s*yes") else "не подтверждён",
+            "DoH":"включён" if doh_ok else "не подтверждён",
+            "DNS redirect UDP/TCP":"UDP + TCP" if redirect_udp and redirect_tcp else ("UDP" if redirect_udp else ("TCP" if redirect_tcp else "не обнаружен")),
+            "DoT/DoQ block":"TCP/853 + UDP/853" if dot_ok and doq_ok else ("TCP/853" if dot_ok else ("UDP/853" if doq_ok else "не обнаружена")),
+            "Remote requests":"включён" if remote_ok else "выключен",
+            "DNS FWD":"есть" if managed_fwd_count else "нет",
+            "DNS FWD count":str(managed_fwd_count),
+            "VPN address-list":"есть" if managed_ip_count else "нет",
+            "VPN address-list count":str(managed_ip_count),
+            "IPv6 default route":"обнаружен" if ipv6_present else "не обнаружен",
+            "DNS security":f"{dns_count}/4 обязательных проверок подтверждены; DoH, redirect :53, DoT/DoQ :853 и remote requests",
             "WAN ping":"успешен" if "received=0" not in raw["WAN ping"].lower() and not failed("WAN ping") else "не прошёл / нет данных",
             "VPN ping":"успешен" if "received=0" not in raw["VPN interface ping"].lower() and not failed("VPN interface ping") else "не прошёл / нет данных",
-            "DNS security":"DoH + TLS проверяются отдельно; DNS redirect и DNS FWD см. подробности",
             "Windows DNS":"ошибка" if local["Windows DNS"].startswith("ERROR:") else "ответ получен",
             "Windows TCP 443":"недоступен" if local["Windows TCP 443"].startswith("ERROR:") else "доступен",
             "Windows TCP 1.1.1.1:443":"недоступен" if local["Windows TCP 1.1.1.1:443"].startswith("ERROR:") else "доступен",

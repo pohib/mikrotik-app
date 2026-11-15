@@ -632,6 +632,8 @@ class AutoDiscoveryDialog(QDialog):
         self.setWindowTitle("Автоопределение зависимостей сервиса")
         self.resize(980, 650)
         self.discovered = {}
+        self.dns_observation_baseline_ready = False
+        self.dns_observation_baseline = set()
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 14)
         root.setSpacing(10)
@@ -641,9 +643,10 @@ class AutoDiscoveryDialog(QDialog):
         title.setObjectName("SectionTitle")
         root.addWidget(title)
         note = QLabel(
-            "Укажи основной домен: приложение добавит его, известные зависимости из локальных профилей "
-            "и разрешит найденные домены в IPv4. Дополнительно можно импортировать HAR из браузера. "
-            "Полный список зависимостей автоматически гарантировать нельзя."
+            "Укажи основной домен и запусти наблюдение до открытия сервиса: приложение запомнит исходный DNS-кэш, "
+            "а затем добавит новые поддомены и внешние домены, появившиеся во время загрузки. "
+            "HAR помогает собрать хосты запросов, Referer/Origin и редиректы. DNS-наблюдение не доказывает "
+            "принадлежность каждого нового домена именно этому сервису."
         )
         note.setObjectName("Muted")
         note.setWordWrap(True)
@@ -782,8 +785,10 @@ class AutoDiscoveryDialog(QDialog):
     def toggle_dns_monitor(self, enabled):
         if enabled:
             self.monitor_dns.setText("Остановить наблюдение")
+            self.dns_observation_baseline_ready = False
+            self.dns_observation_baseline.clear()
             self.dns_monitor_timer.start()
-            self.status.setText("Наблюдение включено: снимок DNS-кэша каждые 7 секунд. Открой сервис в браузере.")
+            self.status.setText("Снимаю исходный DNS-кэш. После этого открой сервис: новые DNS-имена будут добавляться автоматически.")
             self.request_dns_cache()
         else:
             self.dns_monitor_timer.stop()
@@ -804,13 +809,29 @@ class AutoDiscoveryDialog(QDialog):
     def import_router_dns_cache(self, output):
         # RouterOS cache entries commonly expose name=... and data=... fields.
         records = re.findall(r'name="([^"]+)"[^\n]*?(?:data|address)="([^"]+)"', str(output), flags=re.IGNORECASE)
+        current_names = {domain for name, _data in records if (domain := self._is_domain(name))}
+        if self.monitor_dns.isChecked() and not self.dns_observation_baseline_ready:
+            self.dns_observation_baseline = current_names
+            self.dns_observation_baseline_ready = True
+            self.status.setText(
+                f"Исходный DNS-кэш зафиксирован ({len(current_names)} имён). Теперь открой сервис и пользуйся им: "
+                "новые имена будут добавляться автоматически."
+            )
+            return
+
         names = set()
-        added = 0
+        added_before = len(self.discovered)
         for name, data in records:
             domain = self._is_domain(name)
-            if domain:
+            if not domain:
+                continue
+            is_new_during_observation = (
+                not self.monitor_dns.isChecked()
+                or domain not in self.dns_observation_baseline
+            )
+            if is_new_during_observation:
                 names.add(domain)
-                self._add_domain(domain, "DNS-кэш MikroTik")
+                self._add_domain(domain, "Новый DNS-запрос во время наблюдения" if self.monitor_dns.isChecked() else "DNS-кэш MikroTik")
                 ips = self.discovered[domain][1]
                 try:
                     if ipaddress.ip_address(data).version == 4 and data not in ips:
@@ -820,8 +841,19 @@ class AutoDiscoveryDialog(QDialog):
                     if alias:
                         names.add(alias)
                         self._add_domain(alias, "CNAME из DNS-кэша MikroTik")
+            self.dns_observation_baseline.add(domain)
         self._render()
-        self.status.setText(f"DNS-кэш MikroTik обработан: найдено доменов {len(names)}. Кэш может содержать старые записи и не указывает клиента-источника.")
+        if self.monitor_dns.isChecked():
+            new_count = len(self.discovered) - added_before
+            self.status.setText(
+                f"Наблюдение DNS: новых имён в этом снимке {len(names)}, новых строк в списке {max(0, new_count)}. "
+                "Могут попадаться фоновые запросы других приложений; для точной атрибуции используй HAR."
+            )
+        else:
+            self.status.setText(
+                f"DNS-кэш MikroTik обработан: найдено доменов {len(names)}. "
+                "Кэш может содержать старые записи и не указывает клиента-источника."
+            )
 
     def import_har(self):
         path, _ = QFileDialog.getOpenFileName(self, "Импорт HAR", str(Path.home()), "HAR files (*.har *.json);;All files (*.*)")
@@ -832,22 +864,37 @@ class AutoDiscoveryDialog(QDialog):
             entries = data.get("log", {}).get("entries", [])
             count = 0
             for entry in entries:
-                url = entry.get("request", {}).get("url", "")
-                host = urlparse(url).hostname or ""
-                domain = self._is_domain(host)
-                if domain:
+                request = entry.get("request", {})
+                response = entry.get("response", {})
+                candidates = [(request.get("url", ""), "HAR: запрос браузера")]
+                # Referer/Origin связывают запрос с открытой страницей; Location фиксирует redirect host.
+                for header in request.get("headers", []) + response.get("headers", []):
+                    header_name = str(header.get("name", "")).lower()
+                    if header_name in ("referer", "origin", "location"):
+                        candidates.append((str(header.get("value", "")), f"HAR: заголовок {header_name}"))
+                redirect_url = response.get("redirectURL", "")
+                if redirect_url:
+                    candidates.append((redirect_url, "HAR: HTTP redirect"))
+                entry_domains = set()
+                for candidate_url, source in candidates:
+                    host = urlparse(candidate_url).hostname or ""
+                    domain = self._is_domain(host)
+                    if not domain:
+                        continue
                     before = len(self.discovered)
-                    self._add_domain(domain, "HAR: запрос браузера")
+                    self._add_domain(domain, source)
+                    entry_domains.add(domain)
                     if len(self.discovered) > before:
                         count += 1
-                    server_ip = entry.get("serverIPAddress", "")
-                    try:
-                        if server_ip and ipaddress.ip_address(server_ip).version == 4:
+                server_ip = entry.get("serverIPAddress", "")
+                try:
+                    if server_ip and ipaddress.ip_address(server_ip).version == 4 and entry_domains:
+                        for domain in entry_domains:
                             current_source, current_ips = self.discovered[domain]
                             if server_ip not in current_ips:
                                 self.discovered[domain] = (current_source, sorted(set(current_ips + [server_ip])))
-                    except ValueError:
-                        pass
+                except ValueError:
+                    pass
             self._render()
             self.status.setText(f"HAR обработан: обнаружено {count} новых доменов; всего в списке: {len(self.discovered)}.")
         except Exception as exc:

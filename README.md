@@ -1,4 +1,23 @@
-# MikroTik VPN Manager — v1.5.0
+# MikroTik VPN Manager — v1.6.0
+
+## v1.6.0 — Dialog UI and routing diagnostics
+
+### UI
+- All application-owned secondary windows use frameless dark styling with a custom draggable title bar and close control: dependency discovery, preview, and apply queue.
+- Message boxes use the same visual theme instead of native Windows message windows.
+- File open/save/folder pickers use Qt dialogs with the native Windows dialog disabled and the application theme applied.
+- Explicit dialog background styling prevents the white surface previously visible in the apply-changes window.
+- SSH login already had a custom frameless interface and remains unchanged.
+
+### Stage 1 diagnostics
+- Expanded IPv6 inspection: global settings, addresses, active/default routes, IPv6 firewall filter, and Neighbor Discovery / Router Advertisement configuration.
+- Reports a possible IPv6 VPN bypass when a global IPv6 address and default route are present; it does not automatically disable IPv6 or alter firewall rules.
+- FastTrack analysis lists active FastTrack rules and counters; client-specific domain checks inspect conntrack entries for the selected LAN client and resolved service IPs, including an explicit warning when fasttrack=yes is present.
+- Domain route lookup uses addresses extracted from RouterOS resolve output, DNS cache, and managed dynamic address-list entries, then inspects active routes in both main and the configured VPN table.
+- Client checks include conntrack, FastTrack counters, Mangle counters, and IPv6 neighbor evidence.
+- All added diagnostics are read-only. A conntrack snapshot only proves that a matching connection record was present at the moment of inspection; generate traffic from the client during the check for useful evidence. It does not prove that every packet of a flow followed the expected path.
+
+
 
 ## v1.5.0 — Destination-aware routing diagnostics
 

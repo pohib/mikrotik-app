@@ -1369,7 +1369,7 @@ class App(QMainWindow):
             "Firewall filter": "/ip firewall filter print detail",
             "DNS static FWD": '/ip dns static print detail where comment~"VPN-MANAGER:"',
             "VPN address-list": f"/ip firewall address-list print detail where list={ros_q(f['address_list'])}",
-            "IPv6 default route": "/ipv6 route print detail where dst-address=::/0",
+            "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and disabled=no",
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
             "WAN ping": "/tool ping address=1.1.1.1 count=3",
         }
@@ -1419,7 +1419,7 @@ class App(QMainWindow):
         # SSH and basic router response are implicit preconditions: this function
         # is only entered after an authenticated SSH session has been obtained.
         if failed("System resources"):
-            add("bad","Ресурсы роутера","Не удалось получить состояние system resource",raw["System resources"],"Проверь доступность RouterOS и права SSH-пользователя.")
+            add("info","Ресурсы роутера","Не удалось выполнить проверку system resource",raw["System resources"],"Проверь права SSH и совместимость команды; ошибка чтения не означает отказ роутера.")
         else:
             cpu=re.search(r"cpu-load:\s*(\d+)%",raw["System resources"],re.I)
             if cpu and int(cpu.group(1))>=90:
@@ -1504,10 +1504,17 @@ class App(QMainWindow):
         filt=raw["Firewall filter"]
         if re.search(r"action=fasttrack-connection",filt,re.I) and not re.search(r"\bX\s+\d+\s+.*action=fasttrack-connection",filt,re.I):
             add("warn","Firewall / FastTrack","Обнаружено активное FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
+        dns_redirect=raw["DNS redirect NAT"]
         if failed("DNS redirect NAT"):
-            add("info","DNS redirect","Не удалось прочитать DNS redirect NAT",raw["DNS redirect NAT"],"Проверь права SSH и команду выборки правил.")
-        elif not nonempty("DNS redirect NAT") or "action=redirect" not in raw["DNS redirect NAT"]:
-            add("warn","DNS redirect","Не найдено управляемое перенаправление DNS на роутер",raw["DNS redirect NAT"],"Если клиенты должны использовать DNS MikroTik, проверь redirect UDP/TCP 53 и исключения.")
+            add("info","DNS redirect","Не удалось прочитать DNS redirect NAT",dns_redirect,"Проверь права SSH и команду выборки правил.")
+        else:
+            udp53=bool(re.search(r"protocol=udp.*dst-port=53.*action=redirect",dns_redirect,re.I|re.S))
+            tcp53=bool(re.search(r"protocol=tcp.*dst-port=53.*action=redirect",dns_redirect,re.I|re.S))
+            if not udp53 or not tcp53:
+                missing=("UDP/53" if not udp53 else "")+(" и " if not udp53 and not tcp53 else "")+("TCP/53" if not tcp53 else "")
+                add("warn","DNS redirect",f"Не подтверждён redirect {missing} на DNS MikroTik",dns_redirect,"Проверь отдельные правила redirect для UDP/53 и TCP/53, а также порядок и исключения.")
+            else:
+                add("ok","DNS redirect","Redirect UDP/53 и TCP/53 обнаружен",dns_redirect,"Проверь счётчики этих правил после DNS-запроса клиента.")
         if not nonempty("DNS static FWD"):
             add("info","DNS FWD","Управляемые DNS static записи не найдены",raw["DNS static FWD"],"Это нормально, если список доменов пуст; иначе проверь импорт и применение целей.")
         if nonempty("IPv6 default route"):

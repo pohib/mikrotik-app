@@ -481,6 +481,51 @@ class WindowTitleBar(QFrame):
         if event.button()==Qt.MouseButton.LeftButton: self.toggle_maximize()
 
 
+class DialogTitleBar(QFrame):
+    """Компактная перетаскиваемая шапка для внутренних окон приложения."""
+    def __init__(self, dialog, title):
+        super().__init__(dialog)
+        self.dialog = dialog
+        self._drag_pos = None
+        self.setObjectName("DialogTitleBar")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(16, 10, 10, 10)
+        row.setSpacing(10)
+        brand = QLabel("◈")
+        brand.setObjectName("DialogBrand")
+        row.addWidget(brand)
+        heading = QLabel(title)
+        heading.setObjectName("DialogHeading")
+        row.addWidget(heading, 1)
+        close = QPushButton("×")
+        close.setObjectName("DialogClose")
+        close.setFixedSize(30, 30)
+        close.clicked.connect(dialog.reject)
+        row.addWidget(close)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.dialog.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.dialog.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+
+
+def add_dialog_chrome(dialog, layout, title):
+    dialog.setWindowTitle(title)
+    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+    dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+    dialog.setObjectName("AppDialog")
+    dialog.setStyleSheet(STYLE)
+    layout.insertWidget(0, DialogTitleBar(dialog, title))
+
+
 class AutoDiscoveryDialog(QDialog):
     """Сбор доменных зависимостей из профилей, DNS и HAR браузера."""
     def __init__(self, parent=None, dns_reader=None):
@@ -490,8 +535,9 @@ class AutoDiscoveryDialog(QDialog):
         self.resize(980, 650)
         self.discovered = {}
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 18)
+        root.setContentsMargins(14, 12, 14, 14)
         root.setSpacing(10)
+        add_dialog_chrome(self, root, "Автоопределение зависимостей")
 
         title = QLabel("Автоопределение доменов и IP")
         title.setObjectName("SectionTitle")
@@ -2837,8 +2883,9 @@ class App(QMainWindow):
     def preview_apply(self):
         if not self.targets: QMessageBox.information(self,"Список пуст","Добавь цели для маршрутизации."); return
         text,new,skip=self.plan_text()
-        dlg=QDialog(self); dlg.setWindowTitle("Предпросмотр изменений"); dlg.resize(1000,720)
-        lay=QVBoxLayout(dlg); lay.setContentsMargins(26,24,26,22); lay.setSpacing(12)
+        dlg=QDialog(self); dlg.resize(1000,720)
+        lay=QVBoxLayout(dlg); lay.setContentsMargins(14,12,14,14); lay.setSpacing(12)
+        add_dialog_chrome(dlg,lay,"Предпросмотр изменений")
         title=QLabel("Предпросмотр изменений"); title.setObjectName("SectionTitle")
         sub=QLabel("Ниже — точные команды RouterOS, которые приложение отправит по SSH. Основной маршрут через ZTE не меняется."); sub.setObjectName("Muted"); sub.setWordWrap(True)
         chip=QLabel(f"●  Новых записей: {new}      ·      будет пропущено: {skip}      ·      всего целей: {len(self.targets)}"); chip.setObjectName("InfoNote")
@@ -3074,8 +3121,9 @@ class App(QMainWindow):
     def apply_pending_changes(self):
         if not self.pending_actions:return
         actions=list(self.pending_actions)
-        dlg=QDialog(self); dlg.setWindowTitle("Проверка и применение изменений"); dlg.resize(980,760)
-        lay=QVBoxLayout(dlg); lay.setContentsMargins(22,20,22,18); lay.setSpacing(12)
+        dlg=QDialog(self); dlg.resize(980,760)
+        lay=QVBoxLayout(dlg); lay.setContentsMargins(14,12,14,14); lay.setSpacing(12)
+        add_dialog_chrome(dlg,lay,"Проверка и применение изменений")
         title=QLabel(f"Проверь операции · {len(actions)}"); title.setObjectName("SectionTitle")
         note=QLabel("Каждое изменение показано отдельным блоком: пояснение, команды RouterOS и что проверить после применения. До подтверждения команды не отправляются.")
         note.setObjectName("Muted"); note.setWordWrap(True); lay.addWidget(title); lay.addWidget(note)

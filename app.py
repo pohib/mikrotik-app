@@ -1188,6 +1188,48 @@ class AutoDiscoveryDialog(QDialog):
     def selected_targets(self):
         return [(target, kind) for target, kind, _group in self.selected_target_records()]
 
+class TerminalCommandInput(QLineEdit):
+    """Однострочный CLI-ввод с навигацией по истории команд стрелками."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.history = []
+        self.history_index = 0
+        self.draft = ""
+
+    def set_history(self, history):
+        self.history = history
+        self.history_index = len(history)
+
+    def remember_current_draft(self):
+        if self.history_index >= len(self.history):
+            self.draft = self.text()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Up and self.history:
+            if self.history_index == len(self.history):
+                self.draft = self.text()
+            if self.history_index > 0:
+                self.history_index -= 1
+                self.setText(self.history[self.history_index])
+                self.end(False)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Down and self.history:
+            if self.history_index < len(self.history) - 1:
+                self.history_index += 1
+                self.setText(self.history[self.history_index])
+            elif self.history_index == len(self.history) - 1:
+                self.history_index = len(self.history)
+                self.setText(self.draft)
+            self.end(False)
+            event.accept()
+            return
+        if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self.history_index == len(self.history):
+                self.draft = self.text()
+        super().keyPressEvent(event)
+
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1838,36 +1880,55 @@ class App(QMainWindow):
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
         panel=QFrame(); panel.setObjectName("Panel")
-        pl=QVBoxLayout(panel); pl.setContentsMargins(18,18,18,18); pl.setSpacing(12)
-        bar=QHBoxLayout()
-        heading=QVBoxLayout()
+        pl=QVBoxLayout(panel); pl.setContentsMargins(20,20,20,18); pl.setSpacing(14)
+
+        bar=QHBoxLayout(); bar.setSpacing(12)
+        heading=QVBoxLayout(); heading.setSpacing(4)
         title=QLabel("RouterOS CLI"); title.setObjectName("SectionTitle")
-        subtitle=QLabel("Команды выполняются на MikroTik через текущее SSH-подключение.")
+        subtitle=QLabel("Интерактивная командная строка MikroTik через текущее SSH-подключение")
         subtitle.setObjectName("Muted")
         heading.addWidget(title); heading.addWidget(subtitle); bar.addLayout(heading,1)
-        copy_btn=QPushButton("Копировать вывод"); copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.terminal_output.toPlainText()))
-        clear_btn=QPushButton("Очистить"); clear_btn.clicked.connect(lambda: self.terminal_output.clear())
+        terminal_tag=QLabel("SSH  /  ROUTEROS")
+        terminal_tag.setObjectName("TerminalTag")
+        bar.addWidget(terminal_tag,0,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        copy_btn=QPushButton("Копировать вывод"); copy_btn.setObjectName("QuietButton")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.terminal_output.toPlainText()))
+        clear_btn=QPushButton("Очистить вывод"); clear_btn.setObjectName("QuietButton")
+        clear_btn.clicked.connect(lambda: self.terminal_output.clear())
         bar.addWidget(copy_btn); bar.addWidget(clear_btn); pl.addLayout(bar)
+
         self.terminal_output=QPlainTextEdit()
         self.terminal_output.setObjectName("TerminalOutput")
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.terminal_output.setPlaceholderText("Вывод команд RouterOS появится здесь…")
+        self.terminal_output.setPlaceholderText("Здесь появятся команды и ответы RouterOS…")
         self.terminal_output.setMinimumHeight(420)
-        self.terminal_output.setStyleSheet("QPlainTextEdit#TerminalOutput { background:#03060b; color:#c9d7e8; border:1px solid #1b2b43; border-radius:12px; padding:14px; font-family:'Cascadia Mono','Consolas',monospace; font-size:10pt; selection-background-color:#244b82; }")
+        self.terminal_output.setStyleSheet("QPlainTextEdit#TerminalOutput { background:#030914; color:#c9d7e8; border:1px solid #263d5d; border-radius:14px; padding:16px; font-family:'Cascadia Mono','Consolas',monospace; font-size:10pt; selection-background-color:#244b82; }")
         pl.addWidget(self.terminal_output,1)
+
+        command_header=QHBoxLayout()
+        command_caption=QLabel("КОМАНДА")
+        command_caption.setObjectName("TerminalCaption")
+        self.terminal_history_hint=QLabel("↑ / ↓  история команд   ·   Enter  выполнить")
+        self.terminal_history_hint.setObjectName("TerminalHint")
+        command_header.addWidget(command_caption); command_header.addStretch(1); command_header.addWidget(self.terminal_history_hint)
+        pl.addLayout(command_header)
+
         command_row=QHBoxLayout(); command_row.setSpacing(10)
         prompt=QLabel(">")
-        prompt.setStyleSheet("color:#4ade80;font-family:Consolas,monospace;font-size:15pt;font-weight:700")
-        self.terminal_input=QLineEdit()
+        prompt.setObjectName("TerminalPrompt")
+        self.terminal_input=TerminalCommandInput()
+        self.terminal_input.setObjectName("TerminalCommandInput")
         self.terminal_input.setPlaceholderText("/system resource print")
         self.terminal_input.setClearButtonEnabled(True)
+        self.terminal_input.set_history(getattr(self,"terminal_history",[]))
         self.terminal_input.returnPressed.connect(self.terminal_execute)
-        execute=QPushButton("Выполнить  ↵"); execute.setObjectName("PrimaryButton"); execute.clicked.connect(self.terminal_execute)
+        execute=QPushButton("Выполнить  ↵"); execute.setObjectName("PrimaryButton"); execute.setMinimumWidth(142); execute.clicked.connect(self.terminal_execute)
         command_row.addWidget(prompt); command_row.addWidget(self.terminal_input,1); command_row.addWidget(execute)
         pl.addLayout(command_row)
+
         l.addWidget(panel,1)
-        note=QLabel("Внимание: это полноценный CLI RouterOS. Команды изменения конфигурации выполняются напрямую. Перед использованием проверяй команду; не вставляй неизвестные скрипты.")
+        note=QLabel("Полноценный CLI RouterOS: команды изменения конфигурации выполняются напрямую. История команд хранится в течение текущего запуска приложения. Перед выполнением проверяй команды.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
         return w
 
@@ -1880,10 +1941,19 @@ class App(QMainWindow):
         if "\n" in command or "\r" in command:
             QMessageBox.warning(self,"Некорректная команда","Вводи одну команду RouterOS за раз.")
             return
+        if not hasattr(self,"terminal_history"):
+            self.terminal_history=[]
+        if not self.terminal_history or self.terminal_history[-1] != command:
+            self.terminal_history.append(command)
+            self.terminal_history=self.terminal_history[-200:]
+        self.terminal_input.set_history(self.terminal_history)
+        self.terminal_input.history_index=len(self.terminal_history)
+        self.terminal_input.draft=""
         self.terminal_input.clear()
         stamp=datetime.now().strftime("%H:%M:%S")
         self.terminal_output.appendPlainText(f"\n[{stamp}] $ {command}")
         self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal_history_hint.setText(f"↑ / ↓  история команд · {len(self.terminal_history)}")
         def job():
             try:
                 r=self.router_conn()
@@ -4070,6 +4140,13 @@ QTreeWidget::indicator:checked{background:#3978e8;border:1px solid #78aaff}
 QTreeWidget::indicator:indeterminate{background:#2457a8;border:1px solid #78aaff}
 QTreeWidget::indicator:disabled{background:#182335;border:1px solid #35445b}
 QTreeWidget::branch{background:transparent}
+QLabel#TerminalTag{color:#8ce9c5;background:rgba(16,185,129,22);border:1px solid rgba(52,211,153,75);border-radius:9px;padding:8px 11px;font-size:8pt;font-weight:800;letter-spacing:1px}
+QLabel#TerminalCaption{color:#91a9cc;font-size:8pt;font-weight:800;letter-spacing:1.2px}
+QLabel#TerminalHint{color:#7188aa;font-size:8pt}
+QLabel#TerminalPrompt{color:#58e0a2;font-family:'Cascadia Mono','Consolas',monospace;font-size:19pt;font-weight:800;padding:0 5px}
+QLineEdit#TerminalCommandInput{background:#071222;border:1px solid #36547a;border-radius:13px;padding:0 15px;min-height:48px;color:#f0f6ff;font-family:'Cascadia Mono','Consolas',monospace;font-size:10pt;selection-background-color:#244b82}
+QLineEdit#TerminalCommandInput:hover{border-color:#648fc8}
+QLineEdit#TerminalCommandInput:focus{background:#09182b;border:1px solid #72a8ff}
 QTreeWidget::branch:has-siblings:!adjoins-item{border-image:none;border-left:1px solid #30425e}
 QTreeWidget::branch:has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}
 QTreeWidget::branch:!has-children:!has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}

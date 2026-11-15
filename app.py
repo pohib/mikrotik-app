@@ -2129,6 +2129,27 @@ class App(QMainWindow):
             except Exception as exc:
                 raw[title]="ERROR: "+str(exc)
 
+        # RouterOS v7 route-table inspection for IPv4 addresses returned by the selected domain.
+        # This is not packet-level proof: actual LAN forwarding also depends on Mangle,
+        # address-list membership and FastTrack state.
+        route_probe_ips=[]
+        if domain and not raw.get("Selected domain DNS resolve","").startswith("ERROR:"):
+            for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9])",raw.get("Selected domain DNS resolve","")):
+                try:
+                    ipaddress.IPv4Address(candidate)
+                    if candidate not in route_probe_ips:
+                        route_probe_ips.append(candidate)
+                except ValueError:
+                    pass
+        for probe_ip in route_probe_ips[:5]:
+            for table_name,table_value in (("main","main"),("vpn",f["route_table"])):
+                key=f"Route lookup {probe_ip} · {table_name}"
+                command=f"/ip route print detail where {probe_ip} in dst-address and active and routing-table={ros_q(table_value)}"
+                try:
+                    raw[key]=self.cmd(r,command,timeout=18)
+                except Exception as exc:
+                    raw[key]="ERROR: "+str(exc)
+
         # Redact credentials from the report as well as the operation log.
         # WireGuard private/preshared keys must never be exported with diagnostics.
         for key,value in raw.items():

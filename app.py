@@ -522,10 +522,32 @@ def add_dialog_chrome(dialog, layout, title):
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setObjectName("AppDialog")
-    dialog.setStyleSheet(STYLE)
+    dialog.setStyleSheet(STYLE + """
+        QDialog#AppDialog { background:#080f1d; color:#e8effb; border:1px solid #315078; }
+        QDialog#AppDialog QLabel { color:#e8effb; }
+        QDialog#AppDialog QLabel#Muted { color:#91a6c6; }
+        QFrame#DialogTitleBar { background:#0d192b; border:1px solid #243b5b; border-radius:11px; }
+        QLabel#DialogBrand { background:#2864c8; color:#fff; border-radius:8px; min-width:28px; max-width:28px; min-height:28px; max-height:28px; qproperty-alignment:AlignCenter; font-weight:800; }
+        QLabel#DialogHeading { color:#f3f7ff; font-size:10pt; font-weight:750; }
+        QPushButton#DialogClose { background:#17263b; border:1px solid #304663; color:#dce8fa; border-radius:8px; font-size:15pt; }
+        QPushButton#DialogClose:hover { background:#8f3548; border-color:#c65d70; }
+    """)
     header=DialogTitleBar(dialog,title)
     if isinstance(layout,QGridLayout):
-        layout.addWidget(header,layout.rowCount(),0,1,max(1,layout.columnCount()))
+        old_items=[]
+        for index in range(layout.count()):
+            item=layout.itemAt(index)
+            row,column,row_span,column_span=layout.getItemPosition(index)
+            old_items.append((item,row,column,row_span,column_span))
+        while layout.count():
+            layout.takeAt(0)
+        layout.addWidget(header,0,0,1,max(1,layout.columnCount()))
+        for item,row,column,row_span,column_span in old_items:
+            widget=item.widget()
+            if widget is not None:
+                layout.addWidget(widget,row+1,column,row_span,column_span)
+            else:
+                layout.addItem(item,row+1,column,row_span,column_span)
     else:
         layout.insertWidget(0,header)
 

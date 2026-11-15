@@ -626,12 +626,12 @@ class App(QMainWindow):
             return
         command=self.terminal_input.text().strip()
         if not command: return
-        if "\\n" in command or "\\r" in command:
+        if "\n" in command or "\r" in command:
             QMessageBox.warning(self,"Некорректная команда","Вводи одну команду RouterOS за раз.")
             return
         self.terminal_input.clear()
         stamp=datetime.now().strftime("%H:%M:%S")
-        self.terminal_output.appendPlainText(f"\\n[{stamp}] $ {command}")
+        self.terminal_output.appendPlainText(f"\n[{stamp}] $ {command}")
         self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
         def job():
             try:
@@ -688,7 +688,9 @@ class App(QMainWindow):
                         v=str(result.get(key.upper(),""))
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
-                elif kind=="TERMOUT":\n                    self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)\n                elif kind=="TEXT": payload[0].setPlainText(payload[1])
+                elif kind=="TERMOUT":
+                    self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+                elif kind=="TEXT": payload[0].setPlainText(payload[1])
                 elif kind=="BACKUP": self.backup_info.setText(payload)
         except queue.Empty: pass
 

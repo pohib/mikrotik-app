@@ -942,7 +942,36 @@ class App(QMainWindow):
                 lan_dns_detail=f"Ответ от {lan_dns}:53; RCODE={answer_rcode}; Answer records={answer_count}."
             except Exception as exc:
                 lan_dns_detail=str(exc)
-            parts.extend(["▌ LAN client → MikroTik DNS",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
+            parts.extend(["▌ LAN client → MikroTik DNS / UDP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
+            lan_dns_tcp_state="WARN"
+            lan_dns_tcp_detail="TCP DNS query не выполнен."
+            try:
+                lan_dns=self.settings.get("lan_dns","").strip()
+                if not lan_dns: raise ValueError("LAN DNS IP не задан в настройках приложения.")
+                tcp_id=secrets.randbelow(65536)
+                tcp_qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\\x00"
+                tcp_packet=struct.pack("!HHHHHH",tcp_id,0x0100,1,0,0,0)+tcp_qname+struct.pack("!HH",1,1)
+                with socket.create_connection((lan_dns,53),timeout=4) as dns_tcp:
+                    dns_tcp.settimeout(4)
+                    dns_tcp.sendall(struct.pack("!H",len(tcp_packet))+tcp_packet)
+                    prefix=dns_tcp.recv(2)
+                    if len(prefix)!=2: raise ValueError("Не получен TCP DNS length prefix.")
+                    expected=struct.unpack("!H",prefix)[0]
+                    chunks=[]; remaining=expected
+                    while remaining:
+                        chunk=dns_tcp.recv(remaining)
+                        if not chunk: raise ValueError("TCP DNS соединение закрыто до полного ответа.")
+                        chunks.append(chunk); remaining-=len(chunk)
+                    tcp_answer=b"".join(chunks)
+                if len(tcp_answer)<12: raise ValueError("TCP DNS-ответ короче заголовка.")
+                tcp_rid,tcp_flags,_,tcp_count,_,_=struct.unpack("!HHHHHH",tcp_answer[:12])
+                tcp_rcode=tcp_flags & 0x000F
+                if tcp_rid!=tcp_id or not (tcp_flags & 0x8000): raise ValueError("Некорректный TCP DNS-ответ.")
+                if tcp_rcode!=0: raise ValueError(f"TCP DNS RCODE={tcp_rcode}.")
+                lan_dns_tcp_state="OK" if tcp_count>0 else "WARN"
+                lan_dns_tcp_detail=f"Ответ от {lan_dns}:53/TCP; RCODE={tcp_rcode}; Answer records={tcp_count}."
+            except Exception as exc: lan_dns_tcp_detail=str(exc)
+            parts.extend(["▌ LAN client → MikroTik DNS / TCP",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/TCP",lan_dns_tcp_detail,""])
             fwd=ok("Managed FWD") and "type=FWD" in results.get("Managed FWD","")
             ips=ok("Dynamic VPN IPs") and "address=" in results.get("Dynamic VPN IPs","")
             mangle=ok("Managed Mangle counters") and "mark-routing" in results.get("Managed Mangle counters","")
@@ -955,7 +984,7 @@ class App(QMainWindow):
                     ("HTTPS/TLS активного хоста",router_https,router_https_detail),
                     ("DNS-резолвер MikroTik","OK" if dns_ok else "FAIL","DoH URL и сертификат настроены; :resolve может использовать кэш"),
                     ("LAN-клиент → DNS MikroTik / UDP",lan_dns_state,lan_dns_detail),
-                    ("LAN-клиент → DNS MikroTik / TCP","NOT_TESTED","TCP/53 не проверяется этой версией"),
+                    ("LAN-клиент → DNS MikroTik / TCP",lan_dns_tcp_state,lan_dns_tcp_detail),
                     ("Привязка домена к VPN","OK" if fwd and ips else "FAIL","FWD-запись и динамические IP"),
                     ("Policy routing",route_state,"Mangle mark-routing присутствует; один снимок счётчика не доказывает маршрут конкретного клиента"),
                     ("WireGuard","OK" if wg else "WARN","Peer/handshake/RX-TX обнаружены"),
@@ -965,7 +994,7 @@ class App(QMainWindow):
             warnings=[x[0] for x in stages if x[1]=="WARN"]
             if failed: verdict="ПОКА НЕ МЕНЯТЬ DoH. Ошибки: "+", ".join(failed)+". Сначала устрани первый этап FAIL."
             elif warnings: verdict="КАНДИДАТ НЕ ПОДТВЕРЖДЁН ПОЛНОСТЬЮ. Неполные проверки: "+", ".join(warnings)+". Разбери предупреждения до смены."
-            elif active_doh_state=="OK" and candidate_doh_state=="OK" and doh_result=="OK" and lan_dns_state=="OK":
+            elif active_doh_state=="OK" and candidate_doh_state=="OK" and doh_result=="OK" and lan_dns_state=="OK" and lan_dns_tcp_state=="OK":
                 verdict="ТЕХНИЧЕСКИ МОЖНО МЕНЯТЬ DoH: текущий и кандидатный endpoint ответили на настоящий RFC 8484 POST непосредственно с MikroTik с проверкой TLS-сертификата; независимый запрос с ПК и LAN DNS также прошли. Перед применением сохрани backup/export и подготовь откат. Встроенный DNS-resolver RouterOS не даёт криптографического доказательства upstream для каждого клиентского запроса."
             else: verdict="НЕДОСТАТОЧНО ДАННЫХ ДЛЯ РЕШЕНИЯ О СМЕНЕ DoH. Проверь RFC 8484 тесты непосредственно с MikroTik."
             parts.extend(["▌ AUTOMATIC ASSESSMENT",verdict,""])

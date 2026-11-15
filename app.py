@@ -3243,7 +3243,7 @@ class App(QMainWindow):
             f=found.get(t)
             group=self.target_groups.get(t,"Пользовательские") if is_local else "На роутере"
             if group not in groups:
-                root=QTreeWidgetItem([f"▰  {group}","Группа","{len(self.targets)} целей","","","",""])
+                root=QTreeWidgetItem([f"▰  {group}","Группа",f"{sum(1 for _t,_k,_local in rows if (self.target_groups.get(_t, 'Пользовательские') if _local else 'На роутере') == group)} целей","","","",""])
                 root.setData(0,Qt.ItemDataRole.UserRole,("group",group))
                 root.setToolTip(0,"Выдели группу и нажми «Удалить из приложения» или подготовь удаление на роутере.")
                 font=root.font(0); font.setBold(True); root.setFont(0,font)
@@ -3331,9 +3331,9 @@ class App(QMainWindow):
         return selected
 
     def remove_local(self):
-        selected=self.selected_targets()
+        selected=[target for target in self.selected_targets() if target in self.targets]
         if not selected:
-            QMessageBox.information(self,"Ничего не выбрано","Выбери группу или конкретные домены/IP-цели. DNS IP-подсказки не являются самостоятельными маршрутами.")
+            QMessageBox.information(self,"Ничего не выбрано","Выбери локальную группу, домен или IP-цель. Записи, существующие только на роутере, удаляются через подготовку удаления.")
             return
         names=", ".join(target for target,_kind in selected[:5])
         if len(selected)>5: names+=f" и ещё {len(selected)-5}"

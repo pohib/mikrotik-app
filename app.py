@@ -1343,7 +1343,7 @@ class App(QMainWindow):
             section_layout.addLayout(form)
             outer.addWidget(section)
 
-            def update_auth_fields(*_):
+            def update_auth_fields(*_, animate=True):
                 use_key = auth_mode.currentData() == "key"
                 key_label.setVisible(use_key)
                 key_row.setVisible(use_key)
@@ -1358,19 +1358,30 @@ class App(QMainWindow):
                 target = mode_indicator.geometry()
                 target.setX(target_x)
                 target.setY(4)
-                target.setWidth((mode_switch.width() - 8) // 2)
+                target.setWidth(max(0, (mode_switch.width() - 8) // 2))
                 target.setHeight(mode_switch.height() - 8)
                 mode_animation.stop()
-                mode_animation.setStartValue(mode_indicator.geometry())
-                mode_animation.setEndValue(target)
-                mode_animation.start()
+                if animate and mode_switch.width() > 20:
+                    mode_animation.setStartValue(mode_indicator.geometry())
+                    mode_animation.setEndValue(target)
+                    mode_animation.start()
+                else:
+                    mode_indicator.setGeometry(target)
                 dialog.adjustSize()
 
             password_tab.clicked.connect(lambda: auth_mode.setCurrentIndex(auth_mode.findData("password")))
             key_tab.clicked.connect(lambda: auth_mode.setCurrentIndex(auth_mode.findData("key")))
             auth_mode.currentIndexChanged.connect(update_auth_fields)
-            update_auth_fields()
-            QTimer.singleShot(0, update_auth_fields)
+            initial_key_mode = auth_mode.currentData() == "key"
+            key_label.setVisible(initial_key_mode)
+            key_row.setVisible(initial_key_mode)
+            phrase_label.setVisible(initial_key_mode)
+            phrase.setVisible(initial_key_mode)
+            password_label.setVisible(not initial_key_mode)
+            password.setVisible(not initial_key_mode)
+            password_tab.setChecked(not initial_key_mode)
+            key_tab.setChecked(initial_key_mode)
+            QTimer.singleShot(0, lambda: update_auth_fields(animate=False))
 
             security = QLabel("◉  При первом подключении проверь fingerprint SSH-сервера. Пароль не сохраняется в файле настроек приложения.")
             security.setObjectName("SSHSecurityNote")

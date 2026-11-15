@@ -772,6 +772,7 @@ class App(QMainWindow):
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
+                elif kind=="WG_APPLIED": self.wg_inputs["wg_private_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
                 elif kind=="MANGLE_STATUS": self.on_mangle_status(payload)
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)
@@ -1145,6 +1146,82 @@ class App(QMainWindow):
     def clear_log_page(self):
         if QMessageBox.question(self,"Очистить журнал","Удалить все записи текущего сеанса?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
         self.log_lines.clear(); self.filter_log_page()
+    
+    def import_wireguard_conf(self):
+        path,_=QFileDialog.getOpenFileName(self,"Импорт WireGuard-конфигурации",str(Path.home()),"WireGuard config (*.conf);;All files (*.*)")
+        if not path: return
+        try:
+            raw=Path(path).read_text(encoding="utf-8-sig")
+            sections=re.split(r"(?im)^\\s*\\[([^]]+)\\]\\s*$",raw)
+            data={}
+            for i in range(1,len(sections),2):
+                section=sections[i].strip().lower(); block=sections[i+1]; vals={}
+                for line in block.splitlines():
+                    line=line.split("#",1)[0].strip()
+                    if "=" in line:
+                        k,v=line.split("=",1); vals[k.strip().lower()]=v.strip()
+                data[section]=vals
+            interface=data.get("interface",{}); peers=data.get("peer",{})
+            if not interface.get("privatekey") or not peers.get("publickey") or not peers.get("endpoint"):
+                raise ValueError("В .conf должны быть Interface: PrivateKey и Peer: PublicKey, Endpoint.")
+            endpoint=peers["endpoint"]
+            if endpoint.startswith("[") and "]:" in endpoint:
+                host,port=endpoint[1:].split("]:",1)
+            elif ":" in endpoint: host,port=endpoint.rsplit(":",1)
+            else: raise ValueError("Endpoint должен содержать порт, например vpn.example:51820")
+            values={"wg_private_key":interface["privatekey"],"wg_public_key":peers["publickey"],"wg_endpoint":host,"wg_port":port,
+                    "wg_allowed":peers.get("allowedips","0.0.0.0/0"),"wg_address":interface.get("address","").split(",")[0].strip(),
+                    "wg_keepalive":peers.get("persistentkeepalive","25")}
+            for k,v in values.items():
+                if k in self.wg_inputs: self.wg_inputs[k].setText(v)
+            self.log(f"Импортирован WireGuard-профиль: {Path(path).name}. Проверь параметры перед применением.")
+            QMessageBox.information(self,"Профиль загружен","Конфигурация прочитана. Проверь поля и нажми «Применить новый VPN-профиль».")
+        except Exception as e: QMessageBox.critical(self,"Ошибка импорта",str(e))
+
+    def apply_wireguard_profile(self):
+        cfg={k:w.text().strip() for k,w in self.wg_inputs.items()}
+        try:
+            if len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
+            if len(base64.b64decode(cfg["wg_public_key"],validate=True))!=32: raise ValueError("PublicKey должен быть корректным WireGuard-ключом.")
+            if not re.fullmatch(r"[A-Za-z0-9.-]+",cfg["wg_endpoint"]): raise ValueError("Endpoint: укажи домен или IPv4 без порта.")
+            port=int(cfg["wg_port"])
+            if not 1<=port<=65535: raise ValueError("Endpoint port должен быть от 1 до 65535.")
+            keep=int(cfg["wg_keepalive"] or "0")
+            if not 0<=keep<=65535: raise ValueError("Persistent keepalive должен быть от 0 до 65535 секунд.")
+            allowed=[x.strip() for x in cfg["wg_allowed"].split(",") if x.strip()]
+            if not allowed: raise ValueError("AllowedIPs не может быть пустым.")
+            for net in allowed: ipaddress.ip_network(net,strict=False)
+            if cfg["wg_address"]: ipaddress.ip_interface(cfg["wg_address"])
+            self.pending_wg_config=cfg
+        except Exception as e: QMessageBox.warning(self,"Проверь WireGuard-профиль",str(e)); return
+        if QMessageBox.question(self,"Сменить VPN-провайдера",
+            "Применить новый WireGuard-профиль? Будут заменены ключ интерфейса, параметры peer и адрес WG-интерфейса (если указан). Правила маршрутизации, NAT, address-list и таблица vpn останутся без изменений.",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
+            self.pending_wg_config=None; return
+        self.run_job("Применение нового WireGuard-профиля…",self._apply_wireguard_profile)
+
+    def _apply_wireguard_profile(self):
+        cfg=self.pending_wg_config
+        if not cfg: raise RuntimeError("Профиль WireGuard не выбран.")
+        r=self.router_conn(); wg=self.settings["wg_interface"]; q=ros_q
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",wg): raise ValueError("Некорректное имя WireGuard-интерфейса.")
+        exists=r.exec(f"/interface wireguard print count-only where name={q(wg)}").strip()
+        if exists!="1": raise RuntimeError(f"Ожидался один WireGuard-интерфейс {wg}, найдено: {exists}.")
+        peer_count=r.exec(f"/interface wireguard peers print count-only where interface={q(wg)}").strip()
+        if peer_count not in ("0","1"): raise RuntimeError(f"На интерфейсе {wg} найдено peer: {peer_count}. Автоматически не выбираю, какой заменять.")
+        peer_fields=f"public-key={q(cfg['wg_public_key'])} endpoint-address={q(cfg['wg_endpoint'])} endpoint-port={int(cfg['wg_port'])} allowed-address={q(cfg['wg_allowed'])} persistent-keepalive={int(cfg['wg_keepalive'])}s"
+        if peer_count=="1": r.exec(f"/interface wireguard peers set [find where interface={q(wg)}] {peer_fields}",10)
+        else: r.exec(f"/interface wireguard peers add interface={q(wg)} {peer_fields}",10)
+        r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])}",10)
+        self.q.put(("LOG",f"Обновлены ключ и peer интерфейса {wg}; private-key скрыт в журнале."))
+        if cfg["wg_address"]:
+            r.exec(f"/ip address remove [find where interface={q(wg)}]",10)
+            r.exec(f"/ip address add address={q(cfg['wg_address'])} interface={q(wg)} comment={q('VPN-MANAGER:WireGuard address')}",10)
+        self.q.put(("LOG","Профиль применён. Mangle, NAT, address-list и default route не изменялись."))
+        self.fetch_mangle_status(r)
+        self.pending_wg_config=None
+        self.q.put(("WG_APPLIED",None))
+
     def test_vpn(self): self.nav.setCurrentRow(2); self.run_job("Тест ping через WireGuard…",lambda:self.diagnostics(self.router_conn(),True))
     def ping_wan(self): self.run_job("Ping 1.1.1.1 из main…",lambda:self.diag_run("Ping WAN (main)","/tool ping address=1.1.1.1 count=4"))
     def traceroute(self):

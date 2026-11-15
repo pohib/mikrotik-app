@@ -666,13 +666,14 @@ class App(QMainWindow):
 
     def page_diagnostics(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        p=self.panel("Диагностика","Сбор состояния интерфейсов, peer, маршрутов, DNS и Firewall. Команды только читают конфигурацию.")
+        p=self.panel("Диагностика","Одна комплексная проверка: WAN, DNS/DoH, DHCP, WireGuard, маршруты, Mangle, NAT, FastTrack, IPv6 и DNS/HTTPS с этого Windows-ПК. Проверки не меняют конфигурацию MikroTik.")
         row=QHBoxLayout()
         for text,fn in [("Полная диагностика",self.run_diagnostics),("Тест ping через VPN",self.test_vpn),("Ping WAN",self.ping_wan),("Traceroute",self.traceroute)]:
             b=QPushButton(text); b.clicked.connect(fn); row.addWidget(b)
         row.addStretch()
         clr=QPushButton("Очистить"); clr.setObjectName("QuietButton"); clr.clicked.connect(lambda:self.diag_text.clear()); row.addWidget(clr)
-        cpy=QPushButton("Копировать"); cpy.setObjectName("QuietButton"); cpy.clicked.connect(lambda:QApplication.clipboard().setText(self.diag_text.toPlainText())); row.addWidget(cpy)
+        cpy=QPushButton("Копировать отчёт"); cpy.setObjectName("QuietButton"); cpy.clicked.connect(lambda:QApplication.clipboard().setText(self.diag_text.toPlainText())); row.addWidget(cpy)
+        save=QPushButton("Сохранить .txt"); save.setObjectName("QuietButton"); save.clicked.connect(self.save_diagnostic_report); row.addWidget(save)
         p.layout().addLayout(row)
         client_box=QHBoxLayout()
         self.client_input=QLineEdit(); self.client_input.setPlaceholderText("IP телефона в LAN, например 192.168.0.50")
@@ -687,6 +688,21 @@ class App(QMainWindow):
         domain_box.addWidget(domain_test); p.layout().addLayout(domain_box)
         self.diag_text=QTextEdit(); self.diag_text.setObjectName("DiagView"); self.diag_text.setReadOnly(True); self.diag_text.setAcceptRichText(False); self.diag_text.setPlaceholderText("Результаты диагностики появятся здесь…"); self.diag_text.setMinimumHeight(300); p.layout().addWidget(self.diag_text,1)
         l.addWidget(p,1); return w
+
+    def save_diagnostic_report(self):
+        content=self.diag_text.toPlainText().strip()
+        if not content:
+            QMessageBox.information(self,"Нет отчёта","Сначала запусти полную диагностику.")
+            return
+        default_name=f"MikroTik-diagnostic-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+        path,_=QFileDialog.getSaveFileName(self,"Сохранить диагностический отчёт",str(Path.home()/default_name),"Текстовый отчёт (*.txt)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(content,encoding="utf-8")
+            QMessageBox.information(self,"Отчёт сохранён",f"Диагностический отчёт сохранён:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self,"Не удалось сохранить отчёт",str(exc))
 
     def page_firewall(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)

@@ -1,23 +1,19 @@
-# MikroTik VPN Manager — v1.6.0
+# MikroTik VPN Manager — v1.7.0
 
-## v1.6.0 — Dialog UI and routing diagnostics
+## v1.7.0 — Grouped service dependency discovery
 
-### UI
-- All application-owned secondary windows use frameless dark styling with a custom draggable title bar and close control: dependency discovery, preview, and apply queue.
-- Message boxes use the same visual theme instead of native Windows message windows.
-- File open/save/folder pickers use Qt dialogs with the native Windows dialog disabled and the application theme applied.
-- Explicit dialog background styling prevents the white surface previously visible in the apply-changes window.
-- SSH login already had a custom frameless interface and remains unchanged.
+- Replaced manual DNS observation as the primary discovery path with an explicit **Update dependencies** workflow.
+- Added passive subdomain candidates from Certificate Transparency (crt.sh), followed by A/AAAA/CNAME lookups through Cloudflare DNS-over-HTTPS. The scan runs in a background worker and does not change router DNS settings.
+- Added service grouping (for example, ChatGPT / OpenAI) in the discovery table and the routing-target table. Group assignments are stored locally in application settings.
+- Added confidence/source labels: actual browser requests from HAR, discovered CT/DNS names, and built-in profile entries.
+- HAR import groups request hosts, related Referer/Origin/Location hosts, redirects, and request-associated server IPs.
+- Resolved IPs remain informational and are not added to routing by default. IPv4 /32 addition is an explicit checkbox; shared CDN addresses may serve unrelated services.
+- Manual DNS-cache import/observation remains available as an optional secondary source. It is clearly marked as not attributing queries to a particular LAN client or application.
+- Fixed the apply-changes preview dialog by styling its dialog and scroll-content surfaces explicitly, including the scroll area's child widget, to prevent Windows' default white background from showing through.
 
-### Stage 1 diagnostics
-- Expanded IPv6 inspection: global settings, addresses, active/default routes, IPv6 firewall filter, and Neighbor Discovery / Router Advertisement configuration.
-- Reports a possible IPv6 VPN bypass when a global IPv6 address and default route are present; it does not automatically disable IPv6 or alter firewall rules.
-- FastTrack analysis lists active FastTrack rules and counters; client-specific domain checks inspect conntrack entries for the selected LAN client and resolved service IPs, including an explicit warning when fasttrack=yes is present.
-- Domain route lookup uses addresses extracted from RouterOS resolve output, DNS cache, and managed dynamic address-list entries, then inspects active routes in both main and the configured VPN table.
-- Client checks include conntrack, FastTrack counters, Mangle counters, and IPv6 neighbor evidence.
-- All added diagnostics are read-only. A conntrack snapshot only proves that a matching connection record was present at the moment of inspection; generate traffic from the client during the check for useful evidence. It does not prove that every packet of a flow followed the expected path.
+### Discovery limitations
 
-
+Certificate Transparency only contains hostnames observed in issued certificates; it is not a complete service inventory. Public DNS answers can vary by resolver, geography, and time. HAR is the best source in this workflow for confirming that a browser actually requested a hostname, but only covers the captured browser session. DNS-derived IPs may be shared CDN/hosting addresses and should not automatically be treated as exclusive to one service.
 
 ## v1.5.0 — Destination-aware routing diagnostics
 

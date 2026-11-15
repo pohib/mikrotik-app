@@ -523,7 +523,11 @@ def add_dialog_chrome(dialog, layout, title):
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setObjectName("AppDialog")
     dialog.setStyleSheet(STYLE)
-    layout.insertWidget(0, DialogTitleBar(dialog, title))
+    header=DialogTitleBar(dialog,title)
+    if isinstance(layout,QGridLayout):
+        layout.addWidget(header,layout.rowCount(),0,1,max(1,layout.columnCount()))
+    else:
+        layout.insertWidget(0,header)
 
 
 class QMessageBox:
@@ -535,7 +539,7 @@ class QMessageBox:
     def _show(parent, title, text, icon, buttons, default_button=None):
         box = QtMessageBox(icon, title, str(text), buttons, parent)
         add_dialog_chrome(box, box.layout(), title)
-        if default_button is not None:
+        if default_button not in (None, QtMessageBox.StandardButton.NoButton):
             box.setDefaultButton(default_button)
         return box.exec()
 

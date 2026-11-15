@@ -2137,7 +2137,7 @@ class App(QMainWindow):
         # address-list membership and FastTrack state.
         route_probe_ips=[]
         if domain and not raw.get("Selected domain DNS resolve","").startswith("ERROR:"):
-            for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9])",raw.get("Selected domain DNS resolve","")):
+            for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",raw.get("Selected domain DNS resolve","")):
                 try:
                     ipaddress.IPv4Address(candidate)
                     if candidate not in route_probe_ips:
@@ -2373,7 +2373,7 @@ class App(QMainWindow):
             add("info","DNS FWD","Управляемые DNS static записи не найдены",raw["DNS static FWD"],"Это нормально, если список доменов пуст; иначе проверь импорт и применение целей.")
         if failed("IPv6 settings"):
             add("info","IPv6 settings","Не удалось прочитать глобальные настройки IPv6",raw["IPv6 settings"],"Проверь доступность меню /ipv6 settings и права SSH.")
-        elif has("IPv6 settings",r"disable-ipv6:\\s*yes"):
+        elif has("IPv6 settings",r"disable-ipv6:\s*yes"):
             add("ok","IPv6 settings","IPv6 глобально отключён в RouterOS",raw["IPv6 settings"],"Проверь также настройки IPv6 на клиентах и наличие других маршрутизаторов в LAN.")
         else:
             add("info","IPv6 settings","IPv6 не подтверждён как глобально отключённый",raw["IPv6 settings"],"Сопоставь настройки IPv6 с default route и IPv6 firewall; отсутствие default route не исключает другие IPv6-пути.")

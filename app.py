@@ -539,7 +539,7 @@ class App(QMainWindow):
         description.setObjectName("HeroText"); description.setWordWrap(True)
         intro.addWidget(eyebrow); intro.addWidget(headline); intro.addWidget(description)
         hl.addLayout(intro,1)
-        hero_actions=QVBoxLayout(); connect=QPushButton("Подключиться к роутеру  →"); connect.setObjectName("PrimaryButton"); connect.clicked.connect(self.show_ssh_login)
+        hero_actions=QVBoxLayout(); connect=QPushButton("Войти по SSH  →"); connect.setObjectName("PrimaryButton"); connect.clicked.connect(self.show_ssh_login); self.dashboard_login_btn=connect
         diag=QPushButton("Обновить состояние"); diag.setObjectName("HeroSecondary"); diag.clicked.connect(self.run_diagnostics)
         hero_actions.addWidget(connect); hero_actions.addWidget(diag); hero_actions.addStretch(); hl.addLayout(hero_actions)
         l.addWidget(hero)
@@ -665,7 +665,7 @@ class App(QMainWindow):
 
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        p=self.panel("Подключение и параметры","Параметры сохраняются локально. Passphrase приватного ключа не сохраняется.")
+        p=self.panel("Сетевые параметры","Здесь находятся параметры LAN, policy routing и WireGuard. SSH-авторизация вынесена в отдельное окно входа.")
         form=QFormLayout(); self.inputs={}; form.setVerticalSpacing(12); form.setHorizontalSpacing(22); form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
         for label,key in fields:
@@ -773,7 +773,7 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": self.dashboard_login_btn.setText("SSH подключён · Отключиться"); self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
@@ -799,7 +799,7 @@ class App(QMainWindow):
                 elif kind=="TERMOUT":
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
                 elif kind=="DISCONNECTED":
-                    self.auth_btn.setText("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
+                    self.dashboard_login_btn.setText("Войти по SSH  →"); self.auth_btn.setText("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
                     self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
                     for k in self.dns_ind: self.set_ind(k,"off","—")

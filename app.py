@@ -175,15 +175,15 @@ class RouterConnection:
 
     def exec(self, command, timeout=30):
         # Централизованный журнал: фиксируем все SSH-команды, включая фоновые опросы.
-        safe_command = re.sub(r'(?i)(private-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', command)
+        safe_command = re.sub(r'(?i)((?:private|preshared)-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', command)
         self.ui_queue.put(("LOG", f"SSH → $ {safe_command}"))
         try:
             output = self._exec_raw(command, timeout)
         except Exception as exc:
-            safe_error = re.sub(r'(?i)(private-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', str(exc))
+            safe_error = re.sub(r'(?i)((?:private|preshared)-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', str(exc))
             self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\nОШИБКА: {safe_error}"))
             raise
-        safe_output = re.sub(r'(?im)(private-key\s*[:=]\s*)(\S+)', r'\1[СКРЫТО]', output)
+        safe_output = re.sub(r'(?im)((?:private|preshared)-key\s*[:=]\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', output)
         self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\n{safe_output or '(пустой вывод)'}"))
         return output
 
@@ -1396,6 +1396,12 @@ class App(QMainWindow):
                 raw[title]=self.cmd(r,command,timeout=18)
             except Exception as exc:
                 raw[title]="ERROR: "+str(exc)
+
+        # Redact credentials from the report as well as the operation log.
+        # WireGuard private/preshared keys must never be exported with diagnostics.
+        for key,value in raw.items():
+            value=re.sub(r'(?im)((?:private|preshared)-key\\s*[:=]\\s*)("[^"]*"|\\S+)',r'\\1[СКРЫТО]',value)
+            raw[key]=value
 
         # Client-side checks run on the Windows PC where this app is running.
         # They are deliberately separated from router-side checks: Windows may use

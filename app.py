@@ -3739,6 +3739,11 @@ QComboBox::down-arrow{image:url(ARROW_URL);width:14px;height:9px}
 QComboBox::down-arrow:on{top:1px}
 QComboBox QAbstractItemView{background:#0a111e;color:#e8edf6;border:1px solid #2b4163;outline:0;padding:4px;selection-background-color:#22427f;selection-color:#ffffff}
 QPlainTextEdit,QTextEdit,QTableWidget{background:#060a14;border:1px solid rgba(255,255,255,22);border-radius:13px;color:#d8e3f3;gridline-color:#192840;alternate-background-color:rgba(255,255,255,5);selection-background-color:#22427f;selection-color:#ffffff}
+QTreeWidget{background:#060a14;border:1px solid rgba(255,255,255,22);border-radius:13px;color:#d8e3f3;alternate-background-color:rgba(255,255,255,5);selection-background-color:#22427f;selection-color:#ffffff;outline:0}
+QTreeWidget::item{padding:7px 5px;border-bottom:1px solid #15243a}
+QTreeWidget::item:hover{background:rgba(110,155,235,24)}
+QTreeWidget::item:selected{background:rgba(61,115,205,90);color:#ffffff}
+QTreeWidget QHeaderView::section{background:#0b1424;color:#9ab0d0;border:0;border-bottom:1px solid #243752;padding:12px;font-size:8pt;font-weight:800}
 QPlainTextEdit{padding:12px;font-family:'Cascadia Mono','Cascadia Code','Consolas',monospace;font-size:9pt}
 QTextEdit#DiagView{padding:12px;font-family:'Cascadia Mono','Cascadia Code','Consolas',monospace;font-size:9pt}
 QHeaderView::section{background:#0b1424;color:#9ab0d0;border:0;border-bottom:1px solid #243752;padding:12px;font-size:8pt;font-weight:800}

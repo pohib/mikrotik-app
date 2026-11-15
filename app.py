@@ -452,6 +452,7 @@ class App(QMainWindow):
         # Автоматические проверки выключены; пользователь может отдельно включить опрос трафика.
         self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic)
         self.traffic_timer.setInterval(5000)
+        self.login_dialog = None
 
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
@@ -462,7 +463,7 @@ class App(QMainWindow):
 
     def save_settings(self):
         if hasattr(self, "inputs"):
-            self.settings = self.fields()
+            self.settings.update(self.fields())
         if hasattr(self, "wg_inputs"):
             for k,w in self.wg_inputs.items():
                 if k != "wg_private_key": self.settings[k] = w.text().strip()
@@ -495,6 +496,7 @@ class App(QMainWindow):
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
         self.conn_badge=QLabel("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); header.addWidget(self.conn_badge)
+        self.auth_btn=QPushButton("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
         self.log_btn=QPushButton("☷  Журнал операций"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
@@ -537,7 +539,7 @@ class App(QMainWindow):
         description.setObjectName("HeroText"); description.setWordWrap(True)
         intro.addWidget(eyebrow); intro.addWidget(headline); intro.addWidget(description)
         hl.addLayout(intro,1)
-        hero_actions=QVBoxLayout(); connect=QPushButton("Подключиться к роутеру  →"); connect.setObjectName("PrimaryButton"); connect.clicked.connect(self.connect_router)
+        hero_actions=QVBoxLayout(); connect=QPushButton("Подключиться к роутеру  →"); connect.setObjectName("PrimaryButton"); connect.clicked.connect(self.show_ssh_login)
         diag=QPushButton("Обновить состояние"); diag.setObjectName("HeroSecondary"); diag.clicked.connect(self.run_diagnostics)
         hero_actions.addWidget(connect); hero_actions.addWidget(diag); hero_actions.addStretch(); hl.addLayout(hero_actions)
         l.addWidget(hero)
@@ -665,13 +667,12 @@ class App(QMainWindow):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Подключение и параметры","Параметры сохраняются локально. Passphrase приватного ключа не сохраняется.")
         form=QFormLayout(); self.inputs={}; form.setVerticalSpacing(12); form.setHorizontalSpacing(22); form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        fields=[("Адрес MikroTik","host"),("SSH-порт","port"),("Пользователь","username"),("Приватный ключ SSH","key_file"),("LAN bridge","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
+        fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
         for label,key in fields:
             e=QLineEdit(self.settings[key]); self.inputs[key]=e
             if key=="key_file":
                 wrap=QWidget(); rr=QHBoxLayout(wrap); rr.setContentsMargins(0,0,0,0); rr.addWidget(e,1); bb=QPushButton("Выбрать ключ"); bb.clicked.connect(lambda _=False, x=e:self.choose_key(x)); rr.addWidget(bb); form.addRow(label,wrap)
             else: form.addRow(label,e)
-        self.passphrase=QLineEdit(); self.passphrase.setEchoMode(QLineEdit.EchoMode.Password); self.passphrase.setPlaceholderText("Если ключ защищён passphrase"); form.addRow("Passphrase ключа",self.passphrase)
         p.layout().addLayout(form)
         wg=self.panel("Профиль WireGuard / смена VPN-провайдера","Импортируй конфигурацию провайдера .conf или заполни поля вручную. Правила маршрутизации сохраняются.")
         wgform=QFormLayout(); self.wg_inputs={}
@@ -686,7 +687,7 @@ class App(QMainWindow):
         wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
         warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address. DNS из .conf не применяется: DNS-политика MikroTik остаётся прежней.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
-        row=QHBoxLayout(); save=QPushButton("Сохранить параметры"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); conn=QPushButton("Подключиться и проверить"); conn.clicked.connect(self.connect_router); disc=QPushButton("Отключиться"); disc.clicked.connect(self.disconnect_router); row.addWidget(save); row.addWidget(conn); row.addWidget(disc); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
+        row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -772,7 +773,7 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
@@ -798,6 +799,7 @@ class App(QMainWindow):
                 elif kind=="TERMOUT":
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
                 elif kind=="DISCONNECTED":
+                    self.auth_btn.setText("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
                     self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
                     for k in self.dns_ind: self.set_ind(k,"off","—")
@@ -1029,7 +1031,7 @@ class App(QMainWindow):
             if hasattr(self,"wg_inputs"):
                 for k,w in self.wg_inputs.items():
                     if k != "wg_private_key": self.settings[k] = w.text().strip()
-            self.passphrase_value = self.passphrase.text() if hasattr(self, "passphrase") else ""
+            if hasattr(self, "passphrase"): self.passphrase_value = self.passphrase.text()
         self.busy=True; self.log(label)
         def runner():
             try: fn(); self.q.put(("DONE",None))
@@ -1045,6 +1047,44 @@ class App(QMainWindow):
         if not 1<=port<=65535: raise ValueError("SSH-порт вне диапазона 1–65535")
         r=RouterConnection(f["host"],port,f["username"],f["key_file"],getattr(self,"passphrase_value",""),self.q)
         known,fp=r.connect(); self.router=r; self.q.put(("CONNECTED",{"known":known,"fp":fp})); return r
+
+    def show_ssh_login(self):
+        if self.router and self.router.client and self.router.client.get_transport() and self.router.client.get_transport().is_active():
+            if QMessageBox.question(self,"SSH подключение","Отключиться от MikroTik?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes: self.disconnect_router()
+            return
+        d=QDialog(self); d.setWindowTitle("SSH · Secure connection"); d.setModal(True); d.setMinimumWidth(520); d.setObjectName("SSHLoginDialog")
+        d.setStyleSheet(self.styleSheet() + "QDialog#SSHLoginDialog{background:#0b1425;border:1px solid rgba(180,210,255,100);border-radius:22px} QFrame#LoginHero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(65,110,205,180),stop:1 rgba(20,35,70,220));border:1px solid rgba(200,225,255,90);border-radius:18px} QLineEdit{min-height:38px;padding:0 12px}")
+        root=QVBoxLayout(d); root.setContentsMargins(24,24,24,22); root.setSpacing(14)
+        hero=QFrame(); hero.setObjectName("LoginHero"); hl=QVBoxLayout(hero); hl.setContentsMargins(20,18,20,18)
+        tag=QLabel("MIKROTIK VPN MANAGER  /  SECURE ACCESS"); tag.setObjectName("Eyebrow")
+        title=QLabel("Подключение к маршрутизатору"); title.setObjectName("HeroTitle")
+        desc=QLabel("Войди по SSH, чтобы управлять VPN-маршрутизацией и получать состояние сети. Можно продолжить без подключения."); desc.setObjectName("HeroText"); desc.setWordWrap(True)
+        hl.addWidget(tag); hl.addWidget(title); hl.addWidget(desc); root.addWidget(hero)
+        form=QFormLayout(); form.setVerticalSpacing(10); form.setHorizontalSpacing(16)
+        host=QLineEdit(self.settings.get("host","")); host.setPlaceholderText("192.168.0.2 или router.example")
+        port=QLineEdit(self.settings.get("port","2313")); port.setMaximumWidth(110)
+        user=QLineEdit(self.settings.get("username","pwned"))
+        key=QLineEdit(self.settings.get("key_file","")); key.setPlaceholderText("Путь к приватному SSH-ключу")
+        keyrow=QWidget(); kr=QHBoxLayout(keyrow); kr.setContentsMargins(0,0,0,0); kr.addWidget(key,1)
+        browse=QPushButton("Обзор…"); browse.clicked.connect(lambda:self.choose_key(key)); kr.addWidget(browse)
+        phrase=QLineEdit(); phrase.setEchoMode(QLineEdit.EchoMode.Password); phrase.setPlaceholderText("Только если ключ защищён паролем")
+        form.addRow("Адрес роутера",host); form.addRow("SSH-порт",port); form.addRow("Пользователь",user); form.addRow("Приватный ключ",keyrow); form.addRow("Passphrase ключа",phrase); root.addLayout(form)
+        note=QLabel("При первом подключении приложение покажет fingerprint SSH-сервера. Сверь его с MikroTik перед подтверждением."); note.setObjectName("InfoNote"); note.setWordWrap(True); root.addWidget(note)
+        buttons=QHBoxLayout(); skip=QPushButton("Пропустить вход"); skip.setObjectName("QuietButton"); login=QPushButton("Подключиться  →"); login.setObjectName("PrimaryButton")
+        buttons.addWidget(skip); buttons.addStretch(); buttons.addWidget(login); root.addLayout(buttons)
+        skip.clicked.connect(d.reject)
+        def do_login():
+            h=host.text().strip(); u=user.text().strip(); k=key.text().strip()
+            try:
+                p=int(port.text().strip())
+                if not h or not u or not k or not Path(k).is_file(): raise ValueError("Укажи адрес, пользователя и существующий файл приватного SSH-ключа.")
+                if not 1<=p<=65535: raise ValueError("SSH-порт должен быть от 1 до 65535.")
+            except Exception as e: QMessageBox.warning(d,"Проверь данные",str(e)); return
+            self.settings.update({"host":h,"port":str(p),"username":u,"key_file":k})
+            self.passphrase_value=phrase.text(); self.save_settings(); d.accept()
+        login.clicked.connect(do_login)
+        d.exec()
+        if d.result()==QDialog.DialogCode.Accepted: self.connect_router()
 
     def connect_router(self):
         def job():
@@ -1680,6 +1720,6 @@ if __name__=="__main__":
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME)
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")
-    win=App(); win.show()
+    win=App(); win.show(); QTimer.singleShot(350, win.show_ssh_login)
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
     sys.exit(app.exec())

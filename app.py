@@ -2260,11 +2260,11 @@ class App(QMainWindow):
             "IPv6 settings": "/ipv6 settings print",
             "IPv6 addresses": "/ipv6 address print detail",
             "IPv6 routes": "/ipv6 route print detail where active",
-            "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and disabled=no",
+            "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and active",
             "IPv6 firewall": "/ipv6 firewall filter print detail",
             "IPv6 Neighbor Discovery / Router Advertisements": "/ipv6 nd print detail",
             "Managed Mangle counters": f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',
-            "FastTrack counters": "/ip firewall filter print stats detail",
+            "FastTrack counters": "/ip firewall filter print stats detail where action=fasttrack-connection",
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
             "WAN ping": "/tool ping address=1.1.1.1 count=3",
         }
@@ -2487,7 +2487,10 @@ class App(QMainWindow):
         filt=raw["Firewall filter"]
         filter_entries=parse_terse(filt) if not failed("Firewall filter") else []
         active_fasttrack=any(x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"] for x in filter_entries)
-        fasttrack_entries=[x for x in filter_entries if x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"]]
+        fasttrack_counter_entries=parse_terse(raw["FastTrack counters"]) if not failed("FastTrack counters") else []
+        fasttrack_entries=[x for x in fasttrack_counter_entries if x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"]]
+        if not fasttrack_entries:
+            fasttrack_entries=[x for x in filter_entries if x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"]]
         if active_fasttrack:
             ft_summary=[]
             for entry in fasttrack_entries:

@@ -230,7 +230,8 @@ class Dot(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
         col = QColor(TONES.get(self.state, TONES["off"]))
-        glow = QRadialGradient(8, 8, 8); g0 = QColor(col); g0.setAlpha(150 if self.state != "off" else 40); g1 = QColor(col); g1.setAlpha(0)        glow.setColorAt(0, g0); glow.setColorAt(1, g1)
+        glow = QRadialGradient(8, 8, 8); g0 = QColor(col); g0.setAlpha(150 if self.state != "off" else 40); g1 = QColor(col); g1.setAlpha(0)
+        glow.setColorAt(0, g0); glow.setColorAt(1, g1)
         p.setPen(Qt.PenStyle.NoPen); p.setBrush(QBrush(glow)); p.drawEllipse(QPointF(8, 8), 8, 8)
         p.setBrush(col); p.drawEllipse(QPointF(8, 8), 4.2, 4.2)
 

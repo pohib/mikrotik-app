@@ -881,7 +881,7 @@ class App(QMainWindow):
                     pu=urlparse(url)
                     if pu.scheme!="https" or not pu.hostname: raise ValueError("Требуется HTTPS endpoint.")
                     probe_id=secrets.randbelow(65536)
-                    qname=b"".join(bytes([len(x)])+x.encode("idna") for x in domain.rstrip(".").split("."))+b"\\x00"
+                    qname=b"".join(bytes([len(x)])+x.encode("idna") for x in domain.rstrip(".").split("."))+b"\x00"
                     qpacket=struct.pack("!HHHHHH",probe_id,0x0100,1,0,0,0)+qname+struct.pack("!HH",1,1)
                     qhex=binascii.hexlify(qpacket).decode("ascii")
                     headers="Content-Type: application/dns-message,Accept: application/dns-message"

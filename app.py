@@ -517,11 +517,15 @@ class App(QMainWindow):
         self.title_bar=WindowTitleBar(self); outer.addWidget(self.title_bar)
         main_host=QWidget(); main=QHBoxLayout(main_host); main.setContentsMargins(0,0,0,0); main.setSpacing(0)
         outer.addWidget(main_host,1)
-        sidebar = QFrame(); sidebar.setObjectName("Sidebar"); sidebar.setFixedWidth(218)
+        sidebar = QFrame(); sidebar.setObjectName("Sidebar"); sidebar.setFixedWidth(236)
         sl = QVBoxLayout(sidebar); sl.setContentsMargins(16,22,16,16); sl.setSpacing(8)
         logo = QLabel("◈  MIKROTIK") ; logo.setObjectName("Brand")
         sl.addWidget(logo); sub = QLabel("NETWORK  /  VPN CONTROL"); sub.setObjectName("BrandSub"); sl.addWidget(sub); sl.addSpacing(28)
         self.nav = QListWidget(); self.nav.setObjectName("Nav")
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.nav.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.nav.setWordWrap(False)
         for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки", "07     Терминал", "08     Журнал"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
@@ -2342,8 +2346,8 @@ QScrollArea#PageScroll{background:transparent;border:0}
 QFrame#Sidebar{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(9,14,25,225),stop:1 rgba(5,8,14,242));border-right:1px solid rgba(255,255,255,22)}
 QLabel#Brand{font-size:18pt;font-weight:800;color:#ffffff}QLabel#BrandSub{color:#6a80a6;font-size:8pt;font-weight:700}
 QLabel#SidebarFoot{color:#62779a;font-size:8pt;padding:14px 2px 2px 2px;border-top:1px solid rgba(255,255,255,20)}
-QListWidget#Nav{background:transparent;border:0;outline:0;color:#8aa0c0;padding-top:2px}
-QListWidget#Nav::item{padding:13px 14px;border-radius:11px;margin:3px 0;font-size:10pt;font-weight:600;border:1px solid transparent}
+QListWidget#Nav{background:transparent;border:0;outline:0;color:#8aa0c0;padding-top:2px;padding-right:0px;}
+QListWidget#Nav::item{padding:12px 8px;border-radius:11px;margin:3px 0;font-size:9.5pt;font-weight:600;border:1px solid transparent;}
 QListWidget#Nav::item:hover:!selected{background:rgba(255,255,255,14);color:#e4edfb;border:1px solid rgba(255,255,255,18)}
 QListWidget#Nav::item:selected{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(70,120,235,150),stop:1 rgba(50,90,190,70));color:#ffffff;border:1px solid rgba(130,175,255,140)}
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math, csv
+import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math, csv, socket
 from collections import deque
 from pathlib import Path
 from datetime import datetime
@@ -1364,6 +1364,21 @@ class App(QMainWindow):
             except Exception as exc:
                 raw[title]="ERROR: "+str(exc)
 
+        # Client-side checks run on the Windows PC where this app is running.
+        # They are deliberately separated from router-side checks: Windows may use
+        # a different resolver (VPN client, DoH app, or manually configured DNS).
+        local={}
+        try:
+            answers=socket.getaddrinfo("youtube.com",443,type=socket.SOCK_STREAM)
+            local["Windows DNS"]="; ".join(sorted({x[4][0] for x in answers})) or "Адреса не получены"
+        except Exception as exc:
+            local["Windows DNS"]="ERROR: "+str(exc)
+        try:
+            with socket.create_connection(("youtube.com",443),timeout=4):
+                local["Windows TCP 443"]="Соединение с youtube.com:443 установлено"
+        except Exception as exc:
+            local["Windows TCP 443"]="ERROR: "+str(exc)
+
         def failed(key):
             value=raw.get(key,"")
             return value.startswith("ERROR:")
@@ -1375,6 +1390,15 @@ class App(QMainWindow):
         findings=[]
         def add(level,area,cause,evidence,action):
             findings.append({"level":level,"area":area,"cause":cause,"evidence":evidence,"action":action})
+
+        if local["Windows DNS"].startswith("ERROR:"):
+            add("warn","DNS на Windows-клиенте","Windows не смог разрешить youtube.com",local["Windows DNS"],"Проверь DNS-серверы Windows, VPN-клиент, DoH/DoT в браузере и DNS-настройки сетевого адаптера.")
+        else:
+            add("ok","DNS на Windows-клиенте","Windows получил DNS-ответ для youtube.com",local["Windows DNS"],"Это результат локального resolver Windows; он может отличаться от DNS MikroTik.")
+        if local["Windows TCP 443"].startswith("ERROR:"):
+            add("warn","HTTPS на Windows-клиенте","Windows не установил TCP-соединение с youtube.com:443",local["Windows TCP 443"],"Сравни с WAN ping и DNS на роутере. Проверь локальный firewall, прокси/VPN-клиент и доступность HTTPS.")
+        else:
+            add("ok","HTTPS на Windows-клиенте","TCP/443 до youtube.com доступен",local["Windows TCP 443"],"TCP-соединение установлено; это ещё не проверка TLS, HTTP или воспроизведения видео.")
 
         # SSH and basic router response are implicit preconditions: this function
         # is only entered after an authenticated SSH session has been obtained.
@@ -1468,6 +1492,8 @@ class App(QMainWindow):
             "WAN ping":"успешен" if "received=0" not in raw["WAN ping"].lower() and not failed("WAN ping") else "не прошёл / нет данных",
             "VPN ping":"успешен" if "received=0" not in raw["VPN interface ping"].lower() and not failed("VPN interface ping") else "не прошёл / нет данных",
             "DNS security":"DoH + TLS проверяются отдельно; DNS redirect и DNS FWD см. подробности",
+            "Windows DNS":"ошибка" if local["Windows DNS"].startswith("ERROR:") else "ответ получен",
+            "Windows TCP 443":"недоступен" if local["Windows TCP 443"].startswith("ERROR:") else "доступен",
         }
         self.q.put(("DIAG",(result,silent)))
         if not silent:
@@ -1481,6 +1507,7 @@ class App(QMainWindow):
                     summary.append(f"  Доказательство: {item['evidence'][:1200]}")
                 summary.append("")
             self.q.put(("DIAGOUT",("Автоматический разбор · выводы и рекомендации","\n".join(summary),False,True)))
+            self.q.put(("DIAGOUT",("Проверки на этом Windows-компьютере","\n".join(f"{k}: {v}" for k,v in local.items()),False,True)))
             for title,value in raw.items():
                 self.q.put(("DIAGOUT",(title+" · собранное доказательство",value,False,False)))
         self.q.put(("LOG",f"Расширенная диагностика завершена: {critical} проблем, {warnings} предупреждений, {passed} успешных проверок. Все проверки read-only; конфигурация роутера не изменялась."))

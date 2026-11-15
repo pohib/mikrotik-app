@@ -1339,18 +1339,20 @@ class App(QMainWindow):
         p=self.panel("Цели выборочной маршрутизации","Добавляй домены, отдельные IPv4 (/32) и сети CIDR. IPv6 пока не поддерживается.")
         row=QHBoxLayout(); row.setSpacing(8)
         self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
-        self.target_input.setMinimumWidth(150); self.target_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.target_input.setMinimumWidth(180); self.target_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
+        auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
+        row.addWidget(self.target_input,1); row.addWidget(add,0); row.addWidget(auto,0); p.layout().addLayout(row)
+        group_row=QHBoxLayout(); group_row.setSpacing(10)
+        group_label=QLabel("Группа для новой цели"); group_label.setMinimumWidth(150)
         self.target_group=QComboBox(); self.target_group.setEditable(True); self.target_group.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         known_groups={"Пользовательские", *PRESETS.keys(), *self.target_groups.values()}
         self.target_group.addItems(sorted(known_groups, key=str.casefold)); self.target_group.setCurrentText("Пользовательские")
-        self.target_group.setMinimumWidth(170); self.target_group.setMaximumWidth(190)
+        self.target_group.setMinimumWidth(240); self.target_group.setMaximumWidth(360)
         self.target_group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.target_group.setToolTip("Выбери существующую группу или введи название новой группы.")
-        self.target_group.lineEdit().setPlaceholderText("Название группы")
-        group_label=QLabel("Группа"); group_label.setFixedWidth(48)
-        add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
-        auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
-        row.addWidget(self.target_input,1); row.addWidget(group_label,0); row.addWidget(self.target_group,0); row.addWidget(add,0); row.addWidget(auto,0); p.layout().addLayout(row)
+        self.target_group.lineEdit().setPlaceholderText("Выбрать или создать группу")
+        group_row.addWidget(group_label); group_row.addWidget(self.target_group); group_row.addStretch(1); p.layout().addLayout(group_row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); self.preset.setMinimumWidth(180); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("＋ Все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
         import_btn=QPushButton("Импорт"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
         export_btn=QPushButton("Экспорт"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
@@ -1367,6 +1369,8 @@ class App(QMainWindow):
         self.targets_empty=QLabel("Пока нет целей. Добавь домен или IP, загрузи профиль либо запусти автоопределение."); self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         action_head=QHBoxLayout(); self.selection_hint=QLabel("Отметь галочками несколько групп, доменов или IP либо выдели строки мышью"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
         actions=QHBoxLayout()
+        select_all_local=QPushButton("Выделить всё"); select_all_local.clicked.connect(lambda: self.set_all_target_checks(True)); actions.addWidget(select_all_local)
+        clear_all_local=QPushButton("Снять выделение"); clear_all_local.clicked.connect(lambda: self.set_all_target_checks(False)); actions.addWidget(clear_all_local)
         local_remove=QPushButton("Удалить из приложения"); local_remove.setObjectName("DangerButton"); local_remove.clicked.connect(self.remove_local); actions.addWidget(local_remove)
         stage_apply=QPushButton("Применить цели"); stage_apply.setObjectName("PrimaryButton"); stage_apply.clicked.connect(self.stage_apply_targets); actions.addWidget(stage_apply)
         stage_remove=QPushButton("Подготовить удаление на роутере"); stage_remove.setObjectName("DangerButton"); stage_remove.clicked.connect(self.stage_remove_selected); actions.addWidget(stage_remove)
@@ -3444,47 +3448,83 @@ class App(QMainWindow):
         return selected
 
     def remove_local(self):
-        # A group row is a container, not a routing target. Resolve it explicitly
-        # by its stored group marker instead of relying only on child selection.
+        """Remove selected local targets; selecting a group expands to all its local members."""
+        if not hasattr(self, "target_table"):
+            return
+        selected_items = set(self.target_table.selectedItems())
+        selected = set()
         selected_group_names = set()
-        selected_items = self.target_table.selectedItems() if hasattr(self, "target_table") else []
-        if hasattr(self, "target_table"):
-            for index in range(self.target_table.topLevelItemCount()):
-                group_item = self.target_table.topLevelItem(index)
-                marker = group_item.data(0, Qt.ItemDataRole.UserRole)
-                if not (isinstance(marker, tuple) and len(marker) == 2 and marker[0] == "group"):
-                    continue
-                if group_item in selected_items or group_item.checkState(0) == Qt.CheckState.Checked:
-                    selected_group_names.add(str(marker[1]))
 
-        selected = set(record for record in self.selected_targets() if record in self.targets)
-        # Selecting/checking a group means deleting every local target assigned
-        # to that group, even if a child row is currently filtered or not selected.
+        for index in range(self.target_table.topLevelItemCount()):
+            group_item = self.target_table.topLevelItem(index)
+            marker = group_item.data(0, Qt.ItemDataRole.UserRole)
+            is_group = isinstance(marker, tuple) and len(marker) == 2 and marker[0] == "group"
+            if not is_group:
+                continue
+            group_name = str(marker[1])
+            group_chosen = (group_item in selected_items or
+                            group_item.checkState(0) == Qt.CheckState.Checked)
+            if group_chosen:
+                selected_group_names.add(group_name)
+
+            for child_index in range(group_item.childCount()):
+                child = group_item.child(child_index)
+                target = child.data(0, Qt.ItemDataRole.UserRole)
+                kind = child.data(0, Qt.ItemDataRole.UserRole + 1)
+                if not target or not kind:
+                    continue
+                child_chosen = (group_chosen or child in selected_items or
+                                child.checkState(0) == Qt.CheckState.Checked)
+                if child_chosen and (target, kind) in self.targets:
+                    selected.add((target, kind))
+
+        # Group membership is resolved from the persisted mapping, not from
+        # the currently visible tree children (which may be filtered/collapsed).
         for target, kind in self.targets:
-            group_name = self.target_groups.get(target, "Пользовательские")
-            if group_name in selected_group_names:
+            if self.target_groups.get(target, "Пользовательские") in selected_group_names:
                 selected.add((target, kind))
+
         selected = sorted(selected, key=lambda record: record[0].casefold())
         if not selected:
-            QMessageBox.information(self,"Ничего не выбрано","Выбери локальную группу, домен или IP-цель. Записи, существующие только на роутере, удаляются через подготовку удаления.")
+            QMessageBox.information(
+                self, "Ничего не выбрано",
+                "Отметь галочкой группу/цель или выдели строку мышью. "
+                "Удаляются только записи из локального списка; настройки MikroTik не изменяются."
+            )
             return
-        names=", ".join(target for target,_kind in selected[:8])
-        if len(selected)>8: names+=f" и ещё {len(selected)-8}"
-        answer=QMessageBox.question(self,"Удалить из приложения?",f"Будет удалено локально целей: {len(selected)}\\n{names}\\n\\nНастройки MikroTik не изменятся.")
-        if answer!=QMessageBox.StandardButton.Yes: return
-        removed_groups = {self.target_groups.get(target, "Пользовательские") for target, _kind in selected}
+
+        names = ", ".join(target for target, _kind in selected[:8])
+        if len(selected) > 8:
+            names += f" и ещё {len(selected) - 8}"
+        answer = QMessageBox.question(
+            self, "Удалить из приложения?",
+            f"Будет удалено локально целей: {len(selected)}\\n{names}\\n\\nНастройки MikroTik не изменятся."
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
         selected_set = set(selected)
-        self.targets=[record for record in self.targets if record not in selected_set]
-        for target, _kind in selected: self.target_groups.pop(target, None)
-        # Remove now-empty custom groups from the editable group selector as well.
+        removed_groups = {self.target_groups.get(target, "Пользовательские")
+                          for target, _kind in selected}
+        self.targets = [record for record in self.targets if record not in selected_set]
+        for target, _kind in selected:
+            self.target_groups.pop(target, None)
+
         remaining_groups = set(self.target_groups.values())
         if hasattr(self, "target_group"):
             for index in range(self.target_group.count() - 1, -1, -1):
                 group_name = self.target_group.itemText(index)
-                if group_name not in remaining_groups and group_name not in PRESETS and group_name != "Пользовательские":
+                if (group_name not in remaining_groups and group_name not in PRESETS
+                        and group_name != "Пользовательские"):
                     self.target_group.removeItem(index)
-        self.save_settings(); self.render_targets()
-        self.log(f"Локально удалено целей: {len(selected)} из групп: {', '.join(sorted(removed_groups, key=str.casefold))}")
+
+        self.save_settings()
+        self.render_targets()
+        self.log(
+            f"Локально удалено целей: {len(selected)}; группы: "
+            f"{', '.join(sorted(removed_groups, key=str.casefold))}"
+        )
+
     def plan_text(self):
         """Точные команды RouterOS в том виде, в каком они уйдут на роутер."""
         f=self.fields(); found=self.router_state["found"] if self.router_state else None

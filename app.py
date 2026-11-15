@@ -3296,7 +3296,7 @@ class App(QMainWindow):
                     match=not needle or any(needle in child.text(c).casefold() for c in range(child.columnCount()))
                     child.setHidden(bool(needle) and not (own_match or match))
                     child_match=child_match or match
-                node.setHidden(bool(needle) and not (own_match or child_match))
+                node.setHidden(bool(needle) and not (group_visible or own_match or child_match))
                 if not node.isHidden(): visible_children+=1
             group.setHidden(bool(needle) and not (group_visible or visible_children))
             if needle and visible_children: group.setExpanded(True)

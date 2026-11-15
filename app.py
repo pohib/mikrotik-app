@@ -1587,7 +1587,7 @@ class App(QMainWindow):
             "Предупреждения":str(warnings),
             "Успешные проверки":str(passed),
             "WireGuard handshake":handshake.group(1) if handshake else "не подтверждён",
-            "VPN default route":"найден" if nonempty("VPN default route") and "inactive" not in raw["VPN default route"].lower() else "не подтверждён",
+            "VPN default route":"найден" if nonempty("VPN default route") and "inactive" not in raw["VPN default route"].lower() and f"gateway={f['wg_interface']}" in raw["VPN default route"] else "не подтверждён",
             "DoH":"включён и TLS verify=yes" if has("DNS configuration",r"use-doh-server:\s*https://") and has("DNS configuration",r"verify-doh-cert:\s*yes") else "не подтверждён",
             "WAN ping":"успешен" if "received=0" not in raw["WAN ping"].lower() and not failed("WAN ping") else "не прошёл / нет данных",
             "VPN ping":"успешен" if "received=0" not in raw["VPN interface ping"].lower() and not failed("VPN interface ping") else "не прошёл / нет данных",

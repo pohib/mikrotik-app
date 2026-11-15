@@ -736,7 +736,7 @@ class App(QMainWindow):
 
     def page_dns_diagnostics(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        intro=self.panel("DNS / DoH · центр диагностики","Поэтапная проверка DNS → привязка домена → policy routing → WireGuard → VPN-маршрут. Отдельно проверяется выбранный DoH endpoint независимым запросом с ПК.")
+        intro=self.panel("DNS / DoH · центр диагностики","Поэтапная проверка пригодности DoH endpoint непосредственно с MikroTik и доступности DNS для LAN-клиентов. Состояние VPN-маршрутизации показывается отдельно и не блокирует смену DoH.")
         top=QHBoxLayout()
         self.doh_diag_domain=QLineEdit("chatgpt.com"); self.doh_diag_domain.setPlaceholderText("Домен для проверки, например chatgpt.com")
         top.addWidget(self.doh_diag_domain,1)
@@ -752,13 +752,13 @@ class App(QMainWindow):
         endpoint=self.panel("Независимая проверка DoH endpoint","Проверка с компьютера, где запущено приложение. Отправляет DNS-запрос RFC 8484 (POST application/dns-message) и проверяет TLS, HTTP и DNS-ответ. Активный DoH на MikroTik не переключается.")
         erow=QHBoxLayout(); self.doh_test_endpoint=QLineEdit("https://cloudflare-dns.com/dns-query"); self.doh_test_endpoint.setPlaceholderText("https://dns.google/dns-query")
         erow.addWidget(QLabel("Endpoint")); erow.addWidget(self.doh_test_endpoint,1); endpoint.layout().addLayout(erow); l.addWidget(endpoint)
-        note=QLabel("Read-only: настройки роутера не меняются. Проверяются RFC 8484 POST с ПК и непосредственно с RouterOS для текущего и выбранного DoH endpoint, TLS/сертификаты, DNS-ответы, LAN DNS по UDP и TCP и текущая цепочка VPN. Прямой RFC 8484 тест доказывает доступность endpoint с роутера, но не является криптографическим доказательством, что встроенный DNS-resolver RouterOS использовал именно этот upstream в конкретном клиентском запросе.")
+        note=QLabel("Read-only: настройки роутера не меняются. Главный критерий пригодности кандидата — успешный RFC 8484 POST с самого MikroTik с проверкой TLS-сертификата и корректным DNS-ответом. Дополнительно проверяются LAN DNS UDP/TCP и VPN-маршрутизация. Ответ :resolve и LAN-запрос могут обслуживаться из кэша, поэтому не считаются доказательством выбора upstream.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
         stages=self.panel("Карта прохождения DNS → VPN","Статусы каждого этапа и автоматическая локализация вероятного места сбоя.")
         self.doh_stage_table=QTableWidget(11,3); self.doh_stage_table.setHorizontalHeaderLabels(["Этап","Статус","Что проверяется"])
         self.doh_stage_table.verticalHeader().setVisible(False); self.doh_stage_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.doh_stage_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.doh_stage_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents); self.doh_stage_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.doh_stage_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch)
-        for i,(name,detail) in enumerate([("DoH endpoint с ПК","RFC 8484 POST, TLS, HTTP и DNS-ответ"),("Текущий DoH с MikroTik","RFC 8484 POST непосредственно с RouterOS, TLS и DNS-ответ"),("Кандидат DoH с MikroTik","RFC 8484 POST непосредственно с RouterOS, TLS и DNS-ответ"),("HTTPS/TLS активного хоста","Дополнительная проверка транспорта и сертификата"),("DNS-резолвер MikroTik","Настройка DoH и разрешение домена роутером"),("LAN → DNS MikroTik / UDP","DNS-запрос с ПК к LAN DNS роутера"),("LAN → DNS MikroTik / TCP","DNS-запрос по TCP/53 с ПК к LAN DNS роутера"),("Привязка домена к VPN","FWD-запись и динамические IP в address-list"),("Policy routing","Mangle-правило и счётчик совпадений"),("WireGuard","Peer, handshake и RX/TX"),("VPN-маршрут","Активный default route в VPN-таблице")]):
+        for i,(name,detail) in enumerate([("DoH endpoint с ПК","Дополнительная независимая проверка RFC 8484 и TLS"),("Текущий DoH с MikroTik","Контрольный тест; отказ старого сервера не запрещает смену"),("Кандидат DoH с MikroTik","Обязательный RFC 8484 POST, TLS и корректный DNS-ответ"),("HTTPS/TLS активного хоста","Дополнительная проверка текущего хоста"),("DNS-резолвер MikroTik","Конфигурация и resolve; возможен ответ из кэша"),("LAN → DNS MikroTik / UDP","Обязательная проверка доступности DNS для клиентов"),("LAN → DNS MikroTik / TCP","Дополнительная проверка TCP/53; не блокирует смену DoH"),("Привязка домена к VPN","Состояние FWD и динамических IP; отдельно от DoH"),("Policy routing","Состояние Mangle; отдельно от DoH"),("WireGuard","Peer, handshake и RX/TX; отдельно от DoH"),("VPN-маршрут","Default route VPN-таблицы; отдельно от DoH")]):
             self.doh_stage_table.setItem(i,0,QTableWidgetItem(name)); self.doh_stage_table.setItem(i,1,QTableWidgetItem("ОЖИДАНИЕ")); self.doh_stage_table.setItem(i,2,QTableWidgetItem(detail))
         self.doh_stage_table.setMinimumHeight(300); stages.layout().addWidget(self.doh_stage_table); l.addWidget(stages)
         self.doh_diagnosis_verdict=QLabel("Запусти полную диагностику — здесь появится предполагаемое место сбоя."); self.doh_diagnosis_verdict.setObjectName("StatusBar"); self.doh_diagnosis_verdict.setWordWrap(True); l.addWidget(self.doh_diagnosis_verdict)
@@ -892,9 +892,9 @@ class App(QMainWindow):
                             ':put ("HTTP_CODE=" . ($r->"code")); '
                             ':put ("DNS_HEX=" . [:convert from=raw to=hex ($r->"data")])')
                     out=r.exec(script,timeout=25)
-                    sm=re.search(r"FETCH_STATUS\\s*=\\s*(\\w+)",out,re.I)
-                    cm=re.search(r"HTTP_CODE\\s*=\\s*(\\d+)",out,re.I)
-                    hm=re.search(r"DNS_HEX\\s*=\\s*([0-9a-fA-F]+)",out,re.I)
+                    sm=re.search(r"FETCH_STATUS\s*=\s*(\w+)",out,re.I)
+                    cm=re.search(r"HTTP_CODE\s*=\s*(\d+)",out,re.I)
+                    hm=re.search(r"DNS_HEX\s*=\s*([0-9a-fA-F]+)",out,re.I)
                     if not sm or sm.group(1).lower()!="finished": raise ValueError("RouterOS fetch не завершился: "+out)
                     if not cm or int(cm.group(1))!=200: raise ValueError("Ожидался HTTP 200: "+out)
                     if not hm: raise ValueError("RouterOS не вернул DNS wire response: "+out)

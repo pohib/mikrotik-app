@@ -749,16 +749,16 @@ class App(QMainWindow):
         copy=QPushButton("Копировать"); copy.setObjectName("QuietButton"); copy.clicked.connect(lambda:QApplication.clipboard().setText(self.doh_diag_text.toPlainText()))
         save=QPushButton("Сохранить .txt"); save.setObjectName("QuietButton"); save.clicked.connect(self.save_doh_diagnostic_report)
         actions.addWidget(full); actions.addWidget(doh); actions.addStretch(); actions.addWidget(clear); actions.addWidget(copy); actions.addWidget(save); intro.layout().addLayout(actions); l.addWidget(intro)
-        endpoint=self.panel("Независимая проверка DoH endpoint","Проверка с компьютера, где запущено приложение. Выполняет DNS-over-HTTPS GET-запрос к выбранному серверу и проверяет TLS-сертификат. Активный DoH на MikroTik не переключается.")
+        endpoint=self.panel("Независимая проверка DoH endpoint","Проверка с компьютера, где запущено приложение. Отправляет DNS-запрос RFC 8484 (POST application/dns-message) и проверяет TLS, HTTP и DNS-ответ. Активный DoH на MikroTik не переключается.")
         erow=QHBoxLayout(); self.doh_test_endpoint=QLineEdit("https://cloudflare-dns.com/dns-query"); self.doh_test_endpoint.setPlaceholderText("https://dns.google/dns-query")
         erow.addWidget(QLabel("Endpoint")); erow.addWidget(self.doh_test_endpoint,1); endpoint.layout().addLayout(erow); l.addWidget(endpoint)
-        note=QLabel("Read-only: настройки роутера не меняются. Независимый запрос DoH идёт с ПК, а не через DNS-клиент RouterOS. Он подтверждает доступность endpoint с ПК, но не гарантирует доступность с самого роутера. Для проверки клиентского VPN-трафика нужны реальные запросы с LAN-клиента и контроль внешнего IP.")
+        note=QLabel("Read-only: настройки роутера не меняются. Диагностика отдельно проверяет RFC 8484 с ПК, HTTPS/TLS-доступность настроенного DoH-хоста с MikroTik, DNS-резолвер роутера и DNS-запрос LAN-клиента к адресу LAN DNS. HTTPS-проверка роутера подтверждает транспорт и сертификат, но не является самостоятельным RFC 8484-запросом с RouterOS.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
         stages=self.panel("Карта прохождения DNS → VPN","Статусы каждого этапа и автоматическая локализация вероятного места сбоя.")
-        self.doh_stage_table=QTableWidget(6,3); self.doh_stage_table.setHorizontalHeaderLabels(["Этап","Статус","Что проверяется"])
+        self.doh_stage_table=QTableWidget(8,3); self.doh_stage_table.setHorizontalHeaderLabels(["Этап","Статус","Что проверяется"])
         self.doh_stage_table.verticalHeader().setVisible(False); self.doh_stage_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.doh_stage_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.doh_stage_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents); self.doh_stage_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.doh_stage_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch)
-        for i,(name,detail) in enumerate([("DoH endpoint с ПК","TLS, сертификат, HTTP 200 и DNS-ответ"),("DNS на MikroTik","Настройки и разрешение тестового домена"),("Привязка домена к VPN","FWD-запись и динамические IP в address-list"),("Policy routing","Mangle-правило и счётчик совпадений"),("WireGuard","Peer, handshake и RX/TX"),("VPN-маршрут","Активный default route в VPN-таблице")]):
+        for i,(name,detail) in enumerate([("DoH endpoint с ПК","RFC 8484 POST, TLS, HTTP и DNS-ответ"),("DoH-хост с MikroTik","HTTPS/TLS и проверка сертификата с роутера"),("DNS-резолвер MikroTik","Настройка DoH и разрешение домена роутером"),("LAN-клиент → DNS MikroTik","UDP/53-запрос с ПК к LAN DNS роутера"),("Привязка домена к VPN","FWD-запись и динамические IP в address-list"),("Policy routing","Mangle-правило и счётчик совпадений"),("WireGuard","Peer, handshake и RX/TX"),("VPN-маршрут","Активный default route в VPN-таблице")]):
             self.doh_stage_table.setItem(i,0,QTableWidgetItem(name)); self.doh_stage_table.setItem(i,1,QTableWidgetItem("ОЖИДАНИЕ")); self.doh_stage_table.setItem(i,2,QTableWidgetItem(detail))
         self.doh_stage_table.setMinimumHeight(230); stages.layout().addWidget(self.doh_stage_table); l.addWidget(stages)
         self.doh_diagnosis_verdict=QLabel("Запусти полную диагностику — здесь появится предполагаемое место сбоя."); self.doh_diagnosis_verdict.setObjectName("StatusBar"); self.doh_diagnosis_verdict.setWordWrap(True); l.addWidget(self.doh_diagnosis_verdict)
@@ -785,7 +785,7 @@ class App(QMainWindow):
             QMessageBox.warning(self,"Некорректный DoH endpoint","Укажи HTTPS URL без логина и пароля."); return
         def job():
             import urllib.request, urllib.error, ssl, struct, secrets, binascii
-            parts=[f"DNS / DoH DIAGNOSTIC · {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",f"Target domain: {domain}",f"Independent DoH endpoint (from this PC): {endpoint}","Protocol: RFC 8484 DNS wire format (POST application/dns-message)","Router configuration changed: no",""]
+            parts=[f"DNS / DoH DIAGNOSTIC · {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",f"Target domain: {domain}",f"Independent DoH endpoint (from this PC): {endpoint}","Protocol: RFC 8484 DNS wire format (POST application/dns-message)","Router configuration changed: no","Router-side HTTPS check is read-only; it does not change the active DoH endpoint.",""]
             doh_result="ERROR"
             try:
                 ident=secrets.randbelow(65536)
@@ -849,28 +849,83 @@ class App(QMainWindow):
             def ok(key):
                 v=results.get(key,"")
                 return bool(v) and not v.startswith("ERROR:")
-            dns_ok=ok("Resolve selected domain") and not results.get("Resolve selected domain","").startswith("ERROR:")
             dns_cfg=results.get("DNS configuration","")
-            dns_ok=dns_ok and "use-doh-server:" in dns_cfg and "verify-doh-cert: yes" in dns_cfg
+            from urllib.parse import urlparse
+            active_match=re.search(r"use-doh-server:\s*(https://[^\s]+)",dns_cfg,re.I)
+            router_https="NOT_TESTED"
+            router_https_detail="Активный DoH URL не найден в /ip dns print."
+            if active_match:
+                active_url=active_match.group(1).rstrip(",;")
+                active_parsed=urlparse(active_url)
+                if active_parsed.scheme=="https" and active_parsed.hostname:
+                    probe_url=f"https://{active_parsed.hostname}/"
+                    probe_cmd=f"/tool fetch url={ros_q(probe_url)} output=none keep-result=no check-certificate=yes as-value"
+                    try:
+                        probe_out=r.exec(":put ["+probe_cmd+"]",timeout=20)
+                        parts.extend(["▌ Router-side DoH host transport check",f"$ :put [{probe_cmd}]",probe_out or "(пустой вывод)",""])
+                        if re.search(r"status\s*[:=]\s*finished|finished",probe_out,re.I):
+                            router_https="OK"
+                            router_https_detail=f"HTTPS/TLS к {active_parsed.hostname} завершён; проверка сертификата включена."
+                        else:
+                            router_https="WARN"
+                            router_https_detail="RouterOS fetch завершился без явного status=finished; смотри сырой вывод."
+                    except Exception as exc:
+                        router_https="FAIL"
+                        router_https_detail=str(exc)
+                        parts.extend(["▌ Router-side DoH host transport check",f"$ :put [{probe_cmd}]","ERROR: "+str(exc),""])
+            else:
+                parts.extend(["▌ Router-side DoH host transport check",router_https_detail,""])
+            resolve_out=results.get("Resolve selected domain","")
+            router_resolve_ok=ok("Resolve selected domain") and bool(re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b",resolve_out))
+            doh_configured=bool(active_match) and "verify-doh-cert: yes" in dns_cfg
+            dns_ok=doh_configured and router_resolve_ok
+            # Отдельный DNS-запрос с этого ПК непосредственно к LAN DNS MikroTik.
+            lan_dns_state="WARN"
+            lan_dns_detail="LAN DNS query was not completed."
+            try:
+                lan_dns=self.settings.get("lan_dns","").strip()
+                if not lan_dns:
+                    raise ValueError("LAN DNS IP не задан в настройках приложения.")
+                query_id=secrets.randbelow(65536)
+                qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\x00"
+                dns_packet=struct.pack("!HHHHHH",query_id,0x0100,1,0,0,0)+qname+struct.pack("!HH",1,1)
+                with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns_sock:
+                    dns_sock.settimeout(3)
+                    dns_sock.sendto(dns_packet,(lan_dns,53))
+                    dns_answer,_=dns_sock.recvfrom(4096)
+                if len(dns_answer)<12:
+                    raise ValueError("DNS-ответ короче заголовка.")
+                answer_id,answer_flags,_,answer_count,_,_=struct.unpack("!HHHHHH",dns_answer[:12])
+                answer_rcode=answer_flags & 0x000F
+                if answer_id!=query_id or not (answer_flags & 0x8000):
+                    raise ValueError("Получен некорректный или несоответствующий DNS-ответ.")
+                if answer_rcode!=0:
+                    raise ValueError(f"DNS RCODE={answer_rcode}.")
+                lan_dns_state="OK" if answer_count>0 else "WARN"
+                lan_dns_detail=f"Ответ от {lan_dns}:53; RCODE={answer_rcode}; Answer records={answer_count}."
+            except Exception as exc:
+                lan_dns_detail=str(exc)
+            parts.extend(["▌ LAN client → MikroTik DNS",f"Target: {self.settings.get('lan_dns','(not configured)')}:53/UDP",lan_dns_detail,""])
             fwd=ok("Managed FWD") and "type=FWD" in results.get("Managed FWD","")
             ips=ok("Dynamic VPN IPs") and "address=" in results.get("Dynamic VPN IPs","")
             mangle=ok("Managed Mangle counters") and "mark-routing" in results.get("Managed Mangle counters","")
             wg=ok("WireGuard peers") and "last-handshake=" in results.get("WireGuard peers","") and "rx=" in results.get("WireGuard peers","")
-            route=ok("VPN default route") and "routing-table=" in results.get("VPN default route","") and "gateway=" in results.get("VPN default route","")
-            dns_state="OK" if dns_ok else "FAIL"
+            route=ok("VPN default route") and bool(re.search(r"\bA",results.get("VPN default route",""))) and "routing-table=" in results.get("VPN default route","") and "gateway=" in results.get("VPN default route","")
             route_state="OK" if mangle else "FAIL"
-            stages=[("DoH endpoint с ПК","OK" if doh_result=="OK" else ("WARN" if doh_result=="WARN" else "FAIL"),"Независимый HTTPS DNS-запрос"),
-                    ("DNS на MikroTik",dns_state,"DoH включён, сертификат проверяется, домен разрешается"),
+            stages=[("DoH endpoint с ПК","OK" if doh_result=="OK" else ("WARN" if doh_result=="WARN" else "FAIL"),"RFC 8484 POST, TLS и DNS-ответ"),
+                    ("DoH-хост с MikroTik",router_https,router_https_detail),
+                    ("DNS-резолвер MikroTik","OK" if dns_ok else "FAIL","DoH URL и проверка сертификата настроены; роутер разрешил домен (кэш может влиять на результат)"),
+                    ("LAN-клиент → DNS MikroTik",lan_dns_state,lan_dns_detail),
                     ("Привязка домена к VPN","OK" if fwd and ips else "FAIL","FWD-запись и динамические IP"),
                     ("Policy routing",route_state,"Mangle mark-routing присутствует; один снимок счётчика не доказывает маршрут конкретного клиента"),
                     ("WireGuard","OK" if wg else "WARN","Peer/handshake/RX-TX обнаружены"),
-                    ("VPN-маршрут","OK" if route else "FAIL","Default route активен в выбранной таблице")]
+                    ("VPN-маршрут","OK" if route else "FAIL","Активный default route в выбранной таблице")]
             self.q.put(("DOH_DIAGSTATUS",stages))
             failed=[x[0] for x in stages if x[1]=="FAIL"]
             warnings=[x[0] for x in stages if x[1]=="WARN"]
             if failed: verdict="Вероятное место сбоя: "+", ".join(failed)+". Начни с первого этапа со статусом FAIL."
-            elif warnings: verdict="Критических отказов по конфигурации не найдено, но есть неполная проверка: "+", ".join(warnings)+". Проверь клиентский внешний IP и рост счётчика Mangle во время запроса."
-            else: verdict="Все проверенные этапы выглядят исправными. Это ещё не подтверждает VPN egress для LAN-клиента: нужен тест с клиентского устройства."
+            elif warnings: verdict="Есть неполные проверки: "+", ".join(warnings)+". Проверь LAN-клиент и внешний IP через VPN."
+            else: verdict="Все диагностические проверки прошли. Это всё ещё не доказывает VPN egress конкретного приложения: проверь внешний IP LAN-клиента и трафик во время запроса."
             parts.extend(["▌ AUTOMATIC ASSESSMENT",verdict,""])
             self.q.put(("DOH_DIAGOUT","\n".join(parts)))
         self.run_job("Диагностика DNS → VPN (read-only)…",job)

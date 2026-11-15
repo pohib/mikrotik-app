@@ -870,15 +870,12 @@ class App(QMainWindow):
             pt,prx,ptx=self.tr_prev; dt=t-pt
             if dt>0.5: self.tr_rx.append(max(0,rx-prx)/dt); self.tr_tx.append(max(0,tx-ptx)/dt)
         self.tr_prev=(t,rx,tx)
-        if wan_rx is not None and wan_tx is not None:
-            if self.wan_prev:
-                wt,wrx,wtx=self.wan_prev; wdt=t-wt
-                if wdt>0.5 and self.tr_rx and self.tr_tx:
-                    self.normal_rx.append(max(0,(wan_rx-wrx)/wdt-self.tr_rx[-1]))
-                    self.normal_tx.append(max(0,(wan_tx-wtx)/wdt-self.tr_tx[-1]))
-                    self.normal_chart.msg="Сбор данных WAN…"; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
-                    self.normal_hint.setText(f"Обычный трафик (оценка) · RX {fmt_bits(self.normal_rx[-1]*8)} · TX {fmt_bits(self.normal_tx[-1]*8)}. WAN включает VPN-инкапсуляцию, поэтому из него вычитаются счётчики WG.")
-            self.wan_prev=(t,wan_rx,wan_tx)
+        if wan_rx is not None and wan_tx is not None and self.tr_rx and self.tr_tx:
+            # monitor-traffic уже возвращает текущие bit/s; переводим в byte/s и вычитаем WG.
+            self.normal_rx.append(max(0,wan_rx/8-self.tr_rx[-1]))
+            self.normal_tx.append(max(0,wan_tx/8-self.tr_tx[-1]))
+            self.normal_chart.msg="Сбор данных WAN…"; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
+            self.normal_hint.setText(f"Обычный трафик (оценка) · RX {fmt_bits(self.normal_rx[-1]*8)} · TX {fmt_bits(self.normal_tx[-1]*8)}. WAN включает VPN-инкапсуляцию, поэтому из него вычитаются счётчики WG.")
         if self.tr_rx:
             self.tr_labels["rx"].setText(fmt_bits(self.tr_rx[-1]*8)); self.tr_labels["tx"].setText(fmt_bits(self.tr_tx[-1]*8))
             self.tr_labels["peak"].setText(fmt_bits(max(self.tr_rx+self.tr_tx)*8))
@@ -1656,6 +1653,16 @@ QScrollBar::handle:horizontal{background:rgba(255,255,255,45);min-width:28px;bor
 QScrollBar::handle:horizontal:hover{background:rgba(255,255,255,80)}
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0}
 QToolTip{background:#142238;color:#edf4ff;border:1px solid #3b5575;padding:6px}
+/* ---------- enhanced liquid-glass finish ---------- */
+QFrame#Panel{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(58,82,125,105),stop:.42 rgba(19,31,54,174),stop:1 rgba(8,14,26,205));border:1px solid rgba(180,210,255,48);border-top:1px solid rgba(220,235,255,72);border-radius:20px}
+QFrame#Card{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(56,76,112,132),stop:1 rgba(10,17,31,196));border:1px solid rgba(190,215,255,45);border-top:2px solid rgba(115,165,255,190);border-radius:17px}
+QFrame#Hero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(69,112,210,145),stop:.5 rgba(23,42,83,180),stop:1 rgba(35,59,112,140));border:1px solid rgba(190,215,255,95);border-top:1px solid rgba(235,245,255,125);border-radius:22px}
+QLineEdit,QComboBox,QSpinBox{background:rgba(7,13,25,150);border:1px solid rgba(190,215,255,42);border-radius:12px}
+QPlainTextEdit,QTextEdit,QTableWidget{background:rgba(5,10,20,178);border:1px solid rgba(190,215,255,35);border-radius:15px}
+QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(255,255,255,22),stop:1 rgba(255,255,255,7));border:1px solid rgba(190,215,255,48)}
+QPushButton:hover{background:rgba(110,155,235,35);border-color:rgba(175,210,255,145)}
+QLabel#StatusBar{background:rgba(100,135,190,18);border:1px solid rgba(190,215,255,48)}
+
 """
 
 

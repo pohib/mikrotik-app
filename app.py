@@ -3923,3 +3923,4 @@ if __name__=="__main__":
     """)
     win=App(); win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
+    sys.exit(app.exec())

@@ -671,6 +671,11 @@ class App(QMainWindow):
         for label,fn in [("DHCP-клиенты",self.show_dhcp_clients),("Проверить IP клиента",self.diagnose_client),("Счётчики Mangle/DNS",self.show_policy_counters)]:
             b=QPushButton(label); b.clicked.connect(fn); client_box.addWidget(b)
         p.layout().addLayout(client_box)
+        domain_box=QHBoxLayout()
+        self.domain_diag_input=QLineEdit(); self.domain_diag_input.setPlaceholderText("Домен для проверки: youtube.com")
+        domain_box.addWidget(self.domain_diag_input,1)
+        domain_test=QPushButton("Проверить DNS → IP → VPN-list"); domain_test.setObjectName("PrimaryButton"); domain_test.clicked.connect(self.diagnose_domain_route)
+        domain_box.addWidget(domain_test); p.layout().addLayout(domain_box)
         self.diag_text=QTextEdit(); self.diag_text.setObjectName("DiagView"); self.diag_text.setReadOnly(True); self.diag_text.setAcceptRichText(False); self.diag_text.setPlaceholderText("Результаты диагностики появятся здесь…"); self.diag_text.setMinimumHeight(300); p.layout().addWidget(self.diag_text,1)
         l.addWidget(p,1); return w
 
@@ -1529,6 +1534,32 @@ class App(QMainWindow):
                 except Exception as e: out="ERROR: "+str(e)
                 self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
         self.run_job(f"Диагностика LAN-клиента {ip}…",job)
+
+    def diagnose_domain_route(self):
+        raw=self.domain_diag_input.text().strip()
+        try:
+            domain,kind=normalize_target(raw)
+            if kind!="Домен": raise ValueError("Введи доменное имя, а не IP/CIDR.")
+        except Exception as e:
+            QMessageBox.warning(self,"Некорректный домен",str(e)); return
+        def job():
+            r=self.router_conn()
+            commands=[
+                ("DNS resolve через RouterOS",f":put [:resolve {ros_q(domain)}]"),
+                ("DNS cache для домена",f"/ip dns cache print detail where name~{ros_q(domain)}"),
+                ("Динамические IP, созданные DNS FWD",f"/ip firewall address-list print detail where list={ros_q(self.settings['address_list'])} and comment={ros_q('created for '+domain+'.')}"),
+                ("Состояние управляемого FWD",f"/ip dns static print detail where comment={ros_q('VPN-MANAGER:'+domain)}"),
+                ("Счётчики managed Mangle",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
+                ("WireGuard peer counters",f"/interface wireguard peers print detail where interface={ros_q(self.settings['wg_interface'])}"),
+                ("VPN default route",f"/ip route print detail where routing-table={ros_q(self.settings['route_table'])}"),
+            ]
+            self.q.put(("DIAGBEGIN",f"Диагностика маршрута домена {domain}"))
+            for title,command in commands:
+                try: out=self.cmd(r,command,timeout=20)
+                except Exception as e: out="ERROR: "+str(e)
+                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
+            self.q.put(("LOG",f"Собраны DNS/address-list/Mangle/WireGuard evidence для {domain}. Счётчики Mangle и peer глобальные, не per-domain."))
+        self.run_job(f"Проверка маршрута домена {domain}…",job)
 
     def show_policy_counters(self):
         def job():

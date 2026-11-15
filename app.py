@@ -875,6 +875,43 @@ class App(QMainWindow):
                         parts.extend(["▌ Router-side DoH host transport check",f"$ :put [{probe_cmd}]","ERROR: "+str(exc),""])
             else:
                 parts.extend(["▌ Router-side DoH host transport check",router_https_detail,""])
+            # Проверяем RFC 8484 непосредственно с MikroTik: POST DNS wire-format и TLS validation.
+            def router_doh_probe(url):
+                try:
+                    pu=urlparse(url)
+                    if pu.scheme!="https" or not pu.hostname: raise ValueError("Требуется HTTPS endpoint.")
+                    probe_id=secrets.randbelow(65536)
+                    qname=b"".join(bytes([len(x)])+x.encode("idna") for x in domain.rstrip(".").split("."))+b"\\x00"
+                    qpacket=struct.pack("!HHHHHH",probe_id,0x0100,1,0,0,0)+qname+struct.pack("!HH",1,1)
+                    qhex=binascii.hexlify(qpacket).decode("ascii")
+                    headers="Content-Type: application/dns-message,Accept: application/dns-message"
+                    script=(f':local q [:convert from=hex to=raw {ros_q(qhex)}]; '
+                            f':local r [/tool fetch url={ros_q(url)} http-method=post '
+                            f'http-header-field={ros_q(headers)} http-data=$q output=user as-value check-certificate=yes]; '
+                            ':put ("FETCH_STATUS=" . ($r->"status")); '
+                            ':put ("HTTP_CODE=" . ($r->"code")); '
+                            ':put ("DNS_HEX=" . [:convert from=raw to=hex ($r->"data")])')
+                    out=r.exec(script,timeout=25)
+                    sm=re.search(r"FETCH_STATUS\\s*=\\s*(\\w+)",out,re.I)
+                    cm=re.search(r"HTTP_CODE\\s*=\\s*(\\d+)",out,re.I)
+                    hm=re.search(r"DNS_HEX\\s*=\\s*([0-9a-fA-F]+)",out,re.I)
+                    if not sm or sm.group(1).lower()!="finished": raise ValueError("RouterOS fetch не завершился: "+out)
+                    if not cm or int(cm.group(1))!=200: raise ValueError("Ожидался HTTP 200: "+out)
+                    if not hm: raise ValueError("RouterOS не вернул DNS wire response: "+out)
+                    raw=bytes.fromhex(hm.group(1))
+                    if len(raw)<12: raise ValueError("DNS-ответ короче заголовка.")
+                    rid,flags,_,answers,_,_=struct.unpack("!HHHHHH",raw[:12])
+                    rcode=flags & 0x000F
+                    if rid!=probe_id or not (flags & 0x8000): raise ValueError("DNS ID/QR не совпали.")
+                    if rcode!=0 or answers<1: raise ValueError(f"DNS RCODE={rcode}; answers={answers}.")
+                    return "OK",f"RFC 8484 POST с RouterOS: TLS certificate verified; HTTP 200; DNS ID matched; RCODE=0; answers={answers}; response={len(raw)} bytes."
+                except Exception as exc:
+                    return "FAIL",str(exc)
+            active_url=active_match.group(1).rstrip(",;") if active_match else ""
+            active_doh_state,active_doh_detail=router_doh_probe(active_url) if active_url else ("FAIL","Активный DoH URL не найден.")
+            candidate_doh_state,candidate_doh_detail=router_doh_probe(endpoint)
+            parts.extend(["▌ RouterOS → current active DoH · RFC 8484 POST",f"Endpoint: {active_url or '(not configured)'}",active_doh_detail,"",
+                          "▌ RouterOS → candidate DoH · RFC 8484 POST",f"Endpoint: {endpoint}",candidate_doh_detail,""])
             resolve_out=results.get("Resolve selected domain","")
             router_resolve_ok=ok("Resolve selected domain") and bool(re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b",resolve_out))
             doh_configured=bool(active_match) and "verify-doh-cert: yes" in dns_cfg
@@ -912,10 +949,13 @@ class App(QMainWindow):
             wg=ok("WireGuard peers") and "last-handshake=" in results.get("WireGuard peers","") and "rx=" in results.get("WireGuard peers","")
             route=ok("VPN default route") and bool(re.search(r"\bA",results.get("VPN default route",""))) and "routing-table=" in results.get("VPN default route","") and "gateway=" in results.get("VPN default route","")
             route_state="OK" if mangle else "FAIL"
-            stages=[("DoH endpoint с ПК","OK" if doh_result=="OK" else ("WARN" if doh_result=="WARN" else "FAIL"),"RFC 8484 POST, TLS и DNS-ответ"),
-                    ("DoH-хост с MikroTik",router_https,router_https_detail),
-                    ("DNS-резолвер MikroTik","OK" if dns_ok else "FAIL","DoH URL и проверка сертификата настроены; роутер разрешил домен (кэш может влиять на результат)"),
-                    ("LAN-клиент → DNS MikroTik",lan_dns_state,lan_dns_detail),
+            stages=[("DoH endpoint с ПК","OK" if doh_result=="OK" else ("WARN" if doh_result=="WARN" else "FAIL"),"RFC 8484 POST с ПК"),
+                    ("Текущий DoH с MikroTik",active_doh_state,active_doh_detail),
+                    ("Кандидат DoH с MikroTik",candidate_doh_state,candidate_doh_detail),
+                    ("HTTPS/TLS активного хоста",router_https,router_https_detail),
+                    ("DNS-резолвер MikroTik","OK" if dns_ok else "FAIL","DoH URL и сертификат настроены; :resolve может использовать кэш"),
+                    ("LAN-клиент → DNS MikroTik / UDP",lan_dns_state,lan_dns_detail),
+                    ("LAN-клиент → DNS MikroTik / TCP","NOT_TESTED","TCP/53 не проверяется этой версией"),
                     ("Привязка домена к VPN","OK" if fwd and ips else "FAIL","FWD-запись и динамические IP"),
                     ("Policy routing",route_state,"Mangle mark-routing присутствует; один снимок счётчика не доказывает маршрут конкретного клиента"),
                     ("WireGuard","OK" if wg else "WARN","Peer/handshake/RX-TX обнаружены"),
@@ -923,9 +963,11 @@ class App(QMainWindow):
             self.q.put(("DOH_DIAGSTATUS",stages))
             failed=[x[0] for x in stages if x[1]=="FAIL"]
             warnings=[x[0] for x in stages if x[1]=="WARN"]
-            if failed: verdict="Вероятное место сбоя: "+", ".join(failed)+". Начни с первого этапа со статусом FAIL."
-            elif warnings: verdict="Есть неполные проверки: "+", ".join(warnings)+". Проверь LAN-клиент и внешний IP через VPN."
-            else: verdict="Все диагностические проверки прошли. Это всё ещё не доказывает VPN egress конкретного приложения: проверь внешний IP LAN-клиента и трафик во время запроса."
+            if failed: verdict="ПОКА НЕ МЕНЯТЬ DoH. Ошибки: "+", ".join(failed)+". Сначала устрани первый этап FAIL."
+            elif warnings: verdict="КАНДИДАТ НЕ ПОДТВЕРЖДЁН ПОЛНОСТЬЮ. Неполные проверки: "+", ".join(warnings)+". Разбери предупреждения до смены."
+            elif active_doh_state=="OK" and candidate_doh_state=="OK" and doh_result=="OK" and lan_dns_state=="OK":
+                verdict="ТЕХНИЧЕСКИ МОЖНО МЕНЯТЬ DoH: текущий и кандидатный endpoint ответили на настоящий RFC 8484 POST непосредственно с MikroTik с проверкой TLS-сертификата; независимый запрос с ПК и LAN DNS также прошли. Перед применением сохрани backup/export и подготовь откат. Встроенный DNS-resolver RouterOS не даёт криптографического доказательства upstream для каждого клиентского запроса."
+            else: verdict="НЕДОСТАТОЧНО ДАННЫХ ДЛЯ РЕШЕНИЯ О СМЕНЕ DoH. Проверь RFC 8484 тесты непосредственно с MikroTik."
             parts.extend(["▌ AUTOMATIC ASSESSMENT",verdict,""])
             self.q.put(("DOH_DIAGOUT","\n".join(parts)))
         self.run_job("Диагностика DNS → VPN (read-only)…",job)

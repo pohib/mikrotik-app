@@ -1295,7 +1295,7 @@ class App(QMainWindow):
         export_btn=QPushButton("Экспорт CSV"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
         row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
-        self.target_table=QTableWidget(0,8); self.target_table.setHorizontalHeaderLabels(["Группа","Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(7,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
+        self.target_table=QTreeWidget(); self.target_table.setColumnCount(8); self.target_table.setHeaderLabels(["Группа / цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали",""]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionHidden(7,True); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(300); self.target_table.setIndentation(22); self.target_table.setAnimated(True); p.layout().addWidget(self.target_table,1)
         self.targets_empty=QLabel("Список пока пуст. Добавь домен или IPv4-адрес выше либо загрузи готовый профиль.")
         self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         actions=QHBoxLayout()
@@ -1994,7 +1994,7 @@ class App(QMainWindow):
                         except ValueError: pass
                 in_address_list=cache_ips.intersection(dynamic_ips)
                 detail += f" · DNS cache A: {len(cache_ips)} IP · совпало с динамическим address-list: {len(in_address_list)}"
-                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,bool(in_address_list),len(cache_ips))
+                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,bool(in_address_list),len(cache_ips),sorted(cache_ips),sorted(in_address_list))
         for it in managed_al:
             fields=it["f"]; c=fields.get("comment","")
             if c.startswith("VPN-MANAGER-CIDR:"):
@@ -3227,12 +3227,23 @@ class App(QMainWindow):
         if not hasattr(self,"target_table"): return
         found=self.router_state["found"] if self.router_state else {}
         local={t for t,_ in self.targets}
-        rows=sorted([(t,k,True) for t,k in self.targets], key=lambda row:(self.target_groups.get(row[0], "—").casefold(), row[0].casefold()))+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
-        self.target_table.setRowCount(0)
+        rows=[(t,k,True) for t,k in self.targets]+[(t,f[0],False) for t,f in found.items() if t not in local]
+        rows.sort(key=lambda row:(self.target_groups.get(row[0], "На роутере" if not row[2] else "Пользовательские").casefold(),row[0].casefold()))
+        self.target_table.clear()
         if hasattr(self,"targets_empty"): self.targets_empty.setVisible(not rows)
         self.target_table.setVisible(bool(rows))
+        groups={}
         for t,k,is_local in rows:
             f=found.get(t)
+            group=self.target_groups.get(t,"Пользовательские") if is_local else "На роутере"
+            if group not in groups:
+                root=QTreeWidgetItem([group,"","","","","","",""])
+                root.setData(0,Qt.ItemDataRole.UserRole,None)
+                font=root.font(0); font.setBold(True); root.setFont(0,font)
+                root.setExpanded(True)
+                groups[group]=root
+                self.target_table.addTopLevelItem(root)
+            parent=groups[group]
             if self.router_state is None:
                 remote="Не проверено"; remote_tone="muted"; detail="Нет свежих данных от MikroTik"; target_state="Ожидает проверки"; state_tone="muted"
             elif f is None:
@@ -3245,25 +3256,60 @@ class App(QMainWindow):
                 remote="Найдена"; remote_tone="ok"; detail=f[3]; target_state,state_tone=self.status_for(t,is_local)
             local_label="В локальном списке" if is_local else "Только на роутере"
             source="DNS FWD" if k=="Домен" else "address-list"
-            group=self.target_groups.get(t, "—") if is_local else "—"
-            values=(group,t,k,source,local_label,remote,target_state,detail)
-            i=self.target_table.rowCount(); self.target_table.insertRow(i)
-            for j,val in enumerate(values):
-                item=QTableWidgetItem(val); item.setData(Qt.ItemDataRole.UserRole,t)
-                if j==5:
-                    item.setForeground(QBrush(QColor(TONES[remote_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
-                elif j==6:
-                    item.setForeground(QBrush(QColor(TONES[state_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
-                self.target_table.setItem(i,j,item)
+            values=(t,k,source,local_label,remote,target_state,detail,"")
+            item=QTreeWidgetItem(list(values))
+            item.setData(0,Qt.ItemDataRole.UserRole,t)
+            item.setData(0,Qt.ItemDataRole.UserRole+1,k)
+            item.setForeground(4,QBrush(QColor(TONES[remote_tone])))
+            item.setForeground(5,QBrush(QColor(TONES[state_tone])))
+            for col in (4,5):
+                ft=item.font(col); ft.setBold(True); item.setFont(col,ft)
+            parent.addChild(item)
+            # DNS cache addresses are shown as informational children of their domain.
+            # They are not independent routing targets and are never selected for apply/remove.
+            if k=="Домен" and f is not None:
+                resolved=f[6] if len(f)>6 else []
+                matched=set(f[7]) if len(f)>7 else set()
+                for ip in resolved:
+                    in_list=ip in matched
+                    ip_item=QTreeWidgetItem([ip,"IPv4 · DNS","DNS cache","Автоопределено","В address-list" if in_list else "Не в address-list","Информационный IP","DNS-ответ для домена; адрес может быть общим для CDN",""])
+                    ip_item.setData(0,Qt.ItemDataRole.UserRole,None)
+                    ip_item.setForeground(4,QBrush(QColor(TONES["ok" if in_list else "muted"])))
+                    ip_item.setForeground(5,QBrush(QColor(TONES["muted"])))
+                    item.addChild(ip_item)
         self.filter_targets(self.target_search.text() if hasattr(self,"target_search") else "")
         if hasattr(self,"active_table"): self.render_active()
 
     def filter_targets(self,text):
         if not hasattr(self,"target_table"): return
-        for i in range(self.target_table.rowCount()): self.target_table.setRowHidden(i, not any(text.lower() in self.target_table.item(i,col).text().lower() for col in (0,1)))
+        needle=text.casefold().strip()
+        for gi in range(self.target_table.topLevelItemCount()):
+            group=self.target_table.topLevelItem(gi)
+            group_visible=not needle or needle in group.text(0).casefold()
+            visible_children=0
+            for di in range(group.childCount()):
+                node=group.child(di)
+                own_match=not needle or any(needle in node.text(c).casefold() for c in range(node.columnCount()))
+                child_match=False
+                for ii in range(node.childCount()):
+                    child=node.child(ii)
+                    match=not needle or any(needle in child.text(c).casefold() for c in range(child.columnCount()))
+                    child.setHidden(bool(needle) and not (own_match or match))
+                    child_match=child_match or match
+                node.setHidden(bool(needle) and not (own_match or child_match))
+                if not node.isHidden(): visible_children+=1
+            group.setHidden(bool(needle) and not (group_visible or visible_children))
+            if needle and visible_children: group.setExpanded(True)
+
     def selected_targets(self):
-        rows=sorted({x.row() for x in self.target_table.selectionModel().selectedRows()})
-        return [(self.target_table.item(i,1).data(Qt.ItemDataRole.UserRole),self.target_table.item(i,2).text()) for i in rows]
+        selected=[]
+        for item in self.target_table.selectedItems():
+            target=item.data(0,Qt.ItemDataRole.UserRole)
+            kind=item.data(0,Qt.ItemDataRole.UserRole+1)
+            if target and kind and (target,kind) not in selected:
+                selected.append((target,kind))
+        return selected
+
     def remove_local(self):
         selected=self.selected_targets()
         self.targets=[x for x in self.targets if x not in selected]

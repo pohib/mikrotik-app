@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -455,7 +455,7 @@ class App(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.resize(1500, 960); self.setMinimumSize(1180, 780)
+        self.resize(1360, 860); self.setMinimumSize(1024, 700)
         self.q = queue.Queue(); self.router: Optional[RouterConnection] = None
         self.busy = False; self.targets = []; self.pending_actions = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
         self.settings = self.load_settings()
@@ -498,8 +498,8 @@ class App(QMainWindow):
         self.title_bar=WindowTitleBar(self); outer.addWidget(self.title_bar)
         main_host=QWidget(); main=QHBoxLayout(main_host); main.setContentsMargins(0,0,0,0); main.setSpacing(0)
         outer.addWidget(main_host,1)
-        sidebar = QFrame(); sidebar.setObjectName("Sidebar"); sidebar.setFixedWidth(238)
-        sl = QVBoxLayout(sidebar); sl.setContentsMargins(20,26,20,20); sl.setSpacing(10)
+        sidebar = QFrame(); sidebar.setObjectName("Sidebar"); sidebar.setFixedWidth(218)
+        sl = QVBoxLayout(sidebar); sl.setContentsMargins(16,22,16,16); sl.setSpacing(8)
         logo = QLabel("◈  MIKROTIK") ; logo.setObjectName("Brand")
         sl.addWidget(logo); sub = QLabel("NETWORK  /  VPN CONTROL"); sub.setObjectName("BrandSub"); sl.addWidget(sub); sl.addSpacing(28)
         self.nav = QListWidget(); self.nav.setObjectName("Nav")
@@ -509,13 +509,13 @@ class App(QMainWindow):
         sl.addWidget(self.nav,1)
         foot = self.foot = QLabel("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace"); foot.setObjectName("SidebarFoot"); foot.setWordWrap(True); sl.addWidget(foot)
         main.addWidget(sidebar)
-        content = QWidget(); cv = QVBoxLayout(content); cv.setContentsMargins(32,26,32,24); cv.setSpacing(18); main.addWidget(content,1)
+        content = QWidget(); cv = QVBoxLayout(content); cv.setContentsMargins(24,20,24,18); cv.setSpacing(14); main.addWidget(content,1)
         header = QHBoxLayout(); titlebox = QVBoxLayout(); self.page_title=QLabel("Обзор сети"); self.page_title.setObjectName("PageTitle")
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
         self.conn_badge=QLabel("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); header.addWidget(self.conn_badge)
-        self.auth_btn=QPushButton("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
-        self.log_btn=QPushButton("☷  Журнал операций"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
+        self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
+        self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
@@ -523,10 +523,17 @@ class App(QMainWindow):
         self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         footer=QHBoxLayout()
-        self.status=QLabel("●  Готово  ·  Конфигурация меняется только после явного подтверждения")
+        self.progress=QProgressBar(); self.progress.setObjectName("BusyProgress"); self.progress.setRange(0,0); self.progress.setFixedWidth(110); self.progress.setTextVisible(False); self.progress.hide(); footer.addWidget(self.progress)
+        self.status=QLabel("Готово · Изменения отправляются на роутер только после подтверждения")
         self.status.setObjectName("StatusBar"); footer.addWidget(self.status,1)
         grip=QSizeGrip(root); grip.setFixedSize(18,18); footer.addWidget(grip,0,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignBottom)
         cv.addLayout(footer)
+        self.status.setToolTip("Здесь отображаются текущая операция и результат последнего действия.")
+        self.auth_btn.setToolTip("Открыть окно SSH-подключения или отключиться от роутера.")
+        self.log_btn.setToolTip("Открыть журнал команд, ошибок и действий приложения.")
+        for i in range(8):
+            action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
+        log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(7)); self.addAction(log_action)
         fit_controls(self)
         for fr in self.findChildren(QFrame):
             n = fr.objectName()
@@ -539,7 +546,7 @@ class App(QMainWindow):
         sa = QScrollArea(); sa.setObjectName("PageScroll"); sa.setWidgetResizable(True)
         sa.setFrameShape(QFrame.Shape.NoFrame); sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         sa.setWidget(page); sa.viewport().setAutoFillBackground(False); page.setAutoFillBackground(False)
-        page.layout().setContentsMargins(6, 4, 16, 26)
+        page.layout().setContentsMargins(4, 4, 12, 22)
         return sa
 
     def card(self, title, value="—", hint=""):
@@ -626,6 +633,8 @@ class App(QMainWindow):
         row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
         self.target_table=QTableWidget(0,7); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
+        self.targets_empty=QLabel("Список пока пуст. Добавь домен или IPv4-адрес выше либо загрузи готовый профиль.")
+        self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         actions=QHBoxLayout()
         for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Подготовить применение",self.stage_apply_targets,"Button"),("Подготовить удаление выбранного",self.stage_remove_selected,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
             b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
@@ -649,7 +658,7 @@ class App(QMainWindow):
         control_note.setObjectName("Muted"); control_note.setWordWrap(True); control.layout().addWidget(control_note)
         l.addWidget(control)
         pending=self.panel("Подготовленные изменения","Действия сначала добавляются в очередь. На роутер они попадут только после отдельного нажатия «Применить изменения».")
-        self.pending_label=QLabel("Очередь пуста"); self.pending_label.setObjectName("Muted")
+        self.pending_label=QLabel("Очередь пуста · на роутере ничего не ожидает применения"); self.pending_label.setObjectName("Muted"); self.pending_label.setWordWrap(True)
         pending.layout().addWidget(self.pending_label)
         self.pending_apply_btn=QPushButton("Применить изменения · 0"); self.pending_apply_btn.setObjectName("PrimaryButton"); self.pending_apply_btn.setEnabled(False); self.pending_apply_btn.clicked.connect(self.apply_pending_changes)
         pending.layout().addWidget(self.pending_apply_btn); l.addWidget(pending)
@@ -819,9 +828,9 @@ class App(QMainWindow):
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
                 elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
-                elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
+                elif kind=="ERROR": self.busy=False; self.progress.hide(); self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="PENDING_CLEARED": self.pending_actions=[]; self.update_pending_ui()
-                elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
+                elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
@@ -1082,7 +1091,9 @@ class App(QMainWindow):
         self.q.put(("DIAGOUT",(f"{title}  ·  {command}",out,False,True)))
 
     def run_job(self,label,fn):
-        if self.busy: return
+        if self.busy:
+            self.status.setText("Уже выполняется другая операция · дождись её завершения.")
+            return
         # Snapshot widget values on the GUI thread; worker threads never read Qt widgets.
         if hasattr(self, "inputs"):
             self.settings.update(self.fields())
@@ -1090,7 +1101,7 @@ class App(QMainWindow):
                 for k,w in self.wg_inputs.items():
                     if k != "wg_private_key": self.settings[k] = w.text().strip()
             if hasattr(self, "passphrase"): self.passphrase_value = self.passphrase.text()
-        self.busy=True; self.log(label)
+        self.busy=True; self.progress.show(); self.status.setText("Выполняется: "+label); self.log(label)
         def runner():
             try: fn(); self.q.put(("DONE",None))
             except Exception as e: self.q.put(("ERROR",str(e)))
@@ -1649,6 +1660,7 @@ class App(QMainWindow):
         local={t for t,_ in self.targets}
         rows=[(t,k,True) for t,k in self.targets]+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
         self.target_table.setRowCount(0)
+        if hasattr(self,"targets_empty"): self.targets_empty.setVisible(not rows)
         for t,k,is_local in rows:
             f=found.get(t)
             if self.router_state is None:
@@ -1760,7 +1772,7 @@ class App(QMainWindow):
 
     def update_pending_ui(self):
         if hasattr(self,"pending_label"):
-            self.pending_label.setText("Очередь пуста" if not self.pending_actions else "\n".join(f"{i+1}. {x['title']}" for i,x in enumerate(self.pending_actions)))
+            self.pending_label.setText("Очередь пуста · на роутере ничего не ожидает применения" if not self.pending_actions else "\n".join(f"{i+1}. {x['title']}" for i,x in enumerate(self.pending_actions)))
             self.pending_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}")
             self.pending_apply_btn.setEnabled(bool(self.pending_actions))
 
@@ -1985,7 +1997,7 @@ QListWidget#Nav::item:hover:!selected{background:rgba(255,255,255,14);color:#e4e
 QListWidget#Nav::item:selected{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(70,120,235,150),stop:1 rgba(50,90,190,70));color:#ffffff;border:1px solid rgba(130,175,255,140)}
 
 /* ---------- typography ---------- */
-QLabel#PageTitle{font-size:24pt;font-weight:700;color:#ffffff}
+QLabel#PageTitle{font-size:21pt;font-weight:700;color:#ffffff}
 QLabel#Muted{color:#8499b8;font-size:9pt}
 QLabel#Eyebrow{color:#7db0ff;font-size:8pt;font-weight:800}
 QLabel#HeroTitle{font-size:22pt;font-weight:700;color:#ffffff;padding:2px 0}
@@ -2067,9 +2079,16 @@ QFrame#Card{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(56,76,112
 QFrame#Hero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(69,112,210,145),stop:.5 rgba(23,42,83,180),stop:1 rgba(35,59,112,140));border:1px solid rgba(190,215,255,95);border-top:1px solid rgba(235,245,255,125);border-radius:22px}
 QLineEdit,QComboBox,QSpinBox{background:rgba(7,13,25,150);border:1px solid rgba(190,215,255,42);border-radius:12px}
 QPlainTextEdit,QTextEdit,QTableWidget{background:rgba(5,10,20,178);border:1px solid rgba(190,215,255,35);border-radius:15px}
-QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(255,255,255,22),stop:1 rgba(255,255,255,7));border:1px solid rgba(190,215,255,48)}
+QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(255,255,255,22),stop:1 rgba(255,255,255,7));border:1px solid rgba(190,215,255,48);padding-left:14px;padding-right:14px}
 QPushButton:hover{background:rgba(110,155,235,35);border-color:rgba(175,210,255,145)}
 QLabel#StatusBar{background:rgba(100,135,190,18);border:1px solid rgba(190,215,255,48)}
+QLabel#EmptyState{color:#91a6c6;background:rgba(255,255,255,5);border:1px dashed rgba(160,190,235,55);border-radius:12px;padding:18px;font-size:10pt}
+QProgressBar#BusyProgress{background:rgba(255,255,255,10);border:1px solid rgba(190,215,255,35);border-radius:4px;min-height:7px;max-height:7px}
+QProgressBar#BusyProgress::chunk{background:#5b9aff;border-radius:4px}
+QLineEdit:disabled,QComboBox:disabled{color:#667b9a}
+QPushButton:focus,QLineEdit:focus,QComboBox:focus{outline:0;border:1px solid #83b2ff}
+QTableWidget::item:selected{background:rgba(61,115,205,90)}
+QListWidget#Nav::item{padding:12px 12px}
 
 """
 
@@ -2079,6 +2098,6 @@ if __name__=="__main__":
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME)
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")
-    win=App(); win.show(); QTimer.singleShot(350, win.show_ssh_login)
+    win=App(); win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
     sys.exit(app.exec())

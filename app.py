@@ -10,7 +10,7 @@ try:
 except ImportError:
     paramiko = None
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPointF, QRectF
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint
 from html import escape as esc
 from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import (
@@ -1173,16 +1173,40 @@ class App(QMainWindow):
                     self.disconnect_router()
                 return
 
-            dialog = QDialog(self)
+            class FramelessSSHDialog(QDialog):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                    self._drag_offset = None
+
+                def mousePressEvent(self, event):
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    super().mousePressEvent(event)
+
+                def mouseMoveEvent(self, event):
+                    if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                        self.move(event.globalPosition().toPoint() - self._drag_offset)
+                    super().mouseMoveEvent(event)
+
+                def mouseReleaseEvent(self, event):
+                    self._drag_offset = None
+                    super().mouseReleaseEvent(event)
+
+            dialog = FramelessSSHDialog(self)
             dialog.setObjectName("SSHLoginDialog")
             dialog.setWindowTitle("MikroTik VPN Manager — SSH")
             dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
             dialog.setModal(True)
-            dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint |
-                                  Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowCloseButtonHint)
+            dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             dialog.setMinimumWidth(540)
             dialog.setStyleSheet(self.styleSheet() + """
-                QDialog#SSHLoginDialog { background: #080f1d; }
+                QDialog#SSHLoginDialog { background: #080f1d; border:1px solid #315078; border-radius:20px; }
+                QPushButton#SSHModeButton { background:transparent; border:0; color:#8fa7c8; min-height:38px; font-weight:700; }
+                QPushButton#SSHModeButton:checked { color:#ffffff; }
+                QFrame#SSHModeTrack { background:#081321; border:1px solid #263c5a; border-radius:12px; }
+                QFrame#SSHModeIndicator { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #397cf0,stop:1 #2459c0); border:1px solid #75aaff; border-radius:9px; }
+                QPushButton#SSHClose { background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); color:#c8d8ef; border-radius:9px; min-width:32px; max-width:32px; min-height:32px; max-height:32px; font-size:14pt; }
                 QDialog#SSHLoginDialog QLabel { background: transparent; }
                 QFrame#SSHHeader { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #17366d,stop:.58 #10264b,stop:1 #111d35); border:1px solid #31558b; border-radius:17px; }
                 QLabel#SSHBrandMark { background:#3978ed; color:white; border-radius:13px; font-size:20pt; font-weight:800; min-width:48px; max-width:48px; min-height:48px; max-height:48px; qproperty-alignment:AlignCenter; }
@@ -1225,6 +1249,11 @@ class App(QMainWindow):
             intro.addWidget(heading)
             intro.addWidget(description)
             header_layout.addLayout(intro, 1)
+            close_button = QPushButton("×")
+            close_button.setObjectName("SSHClose")
+            close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            close_button.clicked.connect(dialog.reject)
+            header_layout.addWidget(close_button, 0, Qt.AlignmentFlag.AlignTop)
             outer.addWidget(header)
 
             section = QFrame()
@@ -1258,6 +1287,27 @@ class App(QMainWindow):
             saved_mode = self.settings.get("auth_method", "key")
             auth_mode.setCurrentIndex(max(0, auth_mode.findData(saved_mode)))
 
+            mode_switch = QFrame()
+            mode_switch.setObjectName("SSHModeTrack")
+            mode_switch.setFixedHeight(48)
+            switch_layout = QHBoxLayout(mode_switch)
+            switch_layout.setContentsMargins(4, 4, 4, 4)
+            switch_layout.setSpacing(2)
+            password_tab = QPushButton("Пароль")
+            key_tab = QPushButton("SSH-ключ")
+            for tab in (password_tab, key_tab):
+                tab.setObjectName("SSHModeButton")
+                tab.setCheckable(True)
+                tab.setCursor(Qt.CursorShape.PointingHandCursor)
+                switch_layout.addWidget(tab, 1)
+            mode_indicator = QFrame(mode_switch)
+            mode_indicator.setObjectName("SSHModeIndicator")
+            mode_indicator.lower()
+            mode_animation = QPropertyAnimation(mode_indicator, b"geometry", dialog)
+            mode_animation.setDuration(230)
+            mode_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            section_layout.addWidget(mode_switch)
+
             key = QLineEdit(self.settings.get("key_file", ""))
             key.setPlaceholderText("Путь к приватному SSH-ключу")
             key_row = QWidget()
@@ -1280,7 +1330,6 @@ class App(QMainWindow):
             form.addRow(field_label("Адрес маршрутизатора"), host)
             form.addRow(field_label("SSH-порт"), port)
             form.addRow(field_label("Пользователь"), user)
-            form.addRow(field_label("Способ авторизации"), auth_mode)
             key_label = field_label("Приватный ключ")
             phrase_label = field_label("Passphrase ключа")
             password_label = field_label("Пароль пользователя")
@@ -1298,10 +1347,26 @@ class App(QMainWindow):
                 phrase.setVisible(use_key)
                 password_label.setVisible(not use_key)
                 password.setVisible(not use_key)
+                password_tab.setChecked(not use_key)
+                key_tab.setChecked(use_key)
+                mode_switch.update()
+                target_x = 4 + (mode_switch.width() - 8) // 2 if use_key else 4
+                target = mode_indicator.geometry()
+                target.setX(target_x)
+                target.setY(4)
+                target.setWidth((mode_switch.width() - 8) // 2)
+                target.setHeight(mode_switch.height() - 8)
+                mode_animation.stop()
+                mode_animation.setStartValue(mode_indicator.geometry())
+                mode_animation.setEndValue(target)
+                mode_animation.start()
                 dialog.adjustSize()
 
+            password_tab.clicked.connect(lambda: auth_mode.setCurrentIndex(auth_mode.findData("password")))
+            key_tab.clicked.connect(lambda: auth_mode.setCurrentIndex(auth_mode.findData("key")))
             auth_mode.currentIndexChanged.connect(update_auth_fields)
             update_auth_fields()
+            QTimer.singleShot(0, update_auth_fields)
 
             security = QLabel("◉  При первом подключении проверь fingerprint SSH-сервера. Пароль не сохраняется в файле настроек приложения.")
             security.setObjectName("SSHSecurityNote")
@@ -1353,7 +1418,7 @@ class App(QMainWindow):
             for widget in (host, port, user, key, phrase, password):
                 widget.returnPressed.connect(do_login)
 
-            dialog.resize(620, 680)
+            dialog.resize(620, 650)
             self.log("SSH UI: диалог с выбором способа авторизации создан, вызывается exec()")
             self.status.setText("Ожидание параметров SSH-подключения…")
             result = dialog.exec()

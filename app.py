@@ -1233,11 +1233,13 @@ class App(QMainWindow):
         peer_fields=f"public-key={q(cfg['wg_public_key'])} endpoint-address={q(cfg['wg_endpoint'])} endpoint-port={int(cfg['wg_port'])} allowed-address={q(cfg['wg_allowed'])} persistent-keepalive={int(cfg['wg_keepalive'])}s"
         if peer_count=="1": r.exec(f"/interface wireguard peers set [find where interface={q(wg)}] {peer_fields}",10)
         else: r.exec(f"/interface wireguard peers add interface={q(wg)} {peer_fields}",10)
-        r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])}",10)
+        r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])} mtu={int(cfg['wg_mtu'])}",10)
         self.q.put(("LOG",f"Обновлены ключ и peer интерфейса {wg}; private-key скрыт в журнале."))
         if cfg["wg_address"]:
-            r.exec(f"/ip address remove [find where interface={q(wg)}]",10)
-            r.exec(f"/ip address add address={q(cfg['wg_address'])} interface={q(wg)} comment={q('VPN-MANAGER:WireGuard address')}",10)
+            addr=ipaddress.ip_interface(cfg["wg_address"])
+            family="/ip address" if addr.version==4 else "/ipv6 address"
+            r.exec(f"{family} remove [find where interface={q(wg)}]",10)
+            r.exec(f"{family} add address={q(cfg['wg_address'])} interface={q(wg)} comment={q('VPN-MANAGER:WireGuard address')}",10)
         self.q.put(("LOG","Профиль применён. Mangle, NAT, address-list и default route не изменялись."))
         self.fetch_mangle_status(r)
         self.pending_wg_config=None

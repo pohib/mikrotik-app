@@ -1,4 +1,4 @@
-# MikroTik VPN Manager — v1.1.0
+# MikroTik VPN Manager — v1.2.0
 
 ## Launch (Windows 10/11)
 1. Extract the complete folder from the ZIP.

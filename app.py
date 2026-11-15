@@ -1027,7 +1027,7 @@ class App(QMainWindow):
         if self.busy: return
         # Snapshot widget values on the GUI thread; worker threads never read Qt widgets.
         if hasattr(self, "inputs"):
-            self.settings = self.fields()
+            self.settings.update(self.fields())
             if hasattr(self,"wg_inputs"):
                 for k,w in self.wg_inputs.items():
                     if k != "wg_private_key": self.settings[k] = w.text().strip()

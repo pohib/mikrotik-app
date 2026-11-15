@@ -535,13 +535,15 @@ def add_dialog_chrome(dialog, layout, title):
     header=DialogTitleBar(dialog,title)
     if isinstance(layout,QGridLayout):
         old_items=[]
+        grid_columns=1
         for index in range(layout.count()):
             item=layout.itemAt(index)
             row,column,row_span,column_span=layout.getItemPosition(index)
             old_items.append((item,row,column,row_span,column_span))
+            grid_columns=max(grid_columns,column+column_span)
         while layout.count():
             layout.takeAt(0)
-        layout.addWidget(header,0,0,1,max(1,layout.columnCount()))
+        layout.addWidget(header,0,0,1,grid_columns)
         for item,row,column,row_span,column_span in old_items:
             widget=item.widget()
             if widget is not None:
@@ -2857,6 +2859,10 @@ class App(QMainWindow):
                     try: out=self.cmd(r,command,timeout=20)
                     except Exception as e: out="ERROR: "+str(e)
                     self.q.put(("DIAGOUT",(f"Conntrack клиента {client_ip} → {probe_ip} · {command}",out,False,True)))
+                    if re.search(r"fasttrack=(?:yes|true)",out,re.I):
+                        self.q.put(("DIAGOUT",("ВНИМАНИЕ · FastTrack для потока клиента",f"В conntrack обнаружен fasttrack=yes для {client_ip} → {probe_ip}. Это прямое свидетельство FastTrack для найденной записи соединения.",True,True)))
+                    elif not out.startswith("ERROR:") and out.strip():
+                        self.q.put(("DIAGOUT",("Conntrack · состояние потока",f"Запись соединения найдена для {client_ip} → {probe_ip}. Отсутствие поля fasttrack в выводе не является доказательством, что соединение не ускоряется.",False,True)))
             if client_ip:
                 command=f'/ip firewall connection print count-only where src-address~{ros_q(client_ip)}'
                 try: out=self.cmd(r,command,timeout=20)

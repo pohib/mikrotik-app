@@ -463,6 +463,9 @@ class App(QMainWindow):
     def save_settings(self):
         if hasattr(self, "inputs"):
             self.settings = self.fields()
+        if hasattr(self, "wg_inputs"):
+            for k,w in self.wg_inputs.items():
+                if k != "wg_private_key": self.settings[k] = w.text().strip()
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -666,6 +669,19 @@ class App(QMainWindow):
             else: form.addRow(label,e)
         self.passphrase=QLineEdit(); self.passphrase.setEchoMode(QLineEdit.EchoMode.Password); self.passphrase.setPlaceholderText("Если ключ защищён passphrase"); form.addRow("Passphrase ключа",self.passphrase)
         p.layout().addLayout(form)
+        wg=self.panel("Профиль WireGuard / смена VPN-провайдера","Импортируй конфигурацию провайдера .conf или заполни поля вручную. Правила маршрутизации сохраняются.")
+        wgform=QFormLayout(); self.wg_inputs={}
+        for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive")]:
+            e=QLineEdit("" if key=="wg_private_key" else self.settings.get(key,""))
+            if key=="wg_private_key": e.setEchoMode(QLineEdit.EchoMode.Password); e.setPlaceholderText("Не сохраняется на диск")
+            self.wg_inputs[key]=e; wgform.addRow(label,e)
+        wg.layout().addLayout(wgform)
+        wgbuttons=QHBoxLayout()
+        imp=QPushButton("Импортировать .conf"); imp.clicked.connect(self.import_wireguard_conf)
+        applywg=QPushButton("Применить новый VPN-профиль"); applywg.setObjectName("PrimaryButton"); applywg.clicked.connect(self.apply_wireguard_profile)
+        wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
+        warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address.")
+        warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); conn=QPushButton("Подключиться и проверить"); conn.clicked.connect(self.connect_router); disc=QPushButton("Отключиться"); disc.clicked.connect(self.disconnect_router); row.addWidget(save); row.addWidget(conn); row.addWidget(disc); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
 
     def page_terminal(self):
@@ -991,6 +1007,9 @@ class App(QMainWindow):
         # Snapshot widget values on the GUI thread; worker threads never read Qt widgets.
         if hasattr(self, "inputs"):
             self.settings = self.fields()
+            if hasattr(self,"wg_inputs"):
+                for k,w in self.wg_inputs.items():
+                    if k != "wg_private_key": self.settings[k] = w.text().strip()
             self.passphrase_value = self.passphrase.text() if hasattr(self, "passphrase") else ""
         self.busy=True; self.log(label)
         def runner():
@@ -1100,6 +1119,32 @@ class App(QMainWindow):
         self.run_job("Обновление dashboard…",job)
 
     def run_diagnostics(self): self.run_job("Полная диагностика…",lambda:self.diagnostics(self.router_conn(),False))
+
+    def page_logs(self):
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
+        p=self.panel("Журнал операций","Все события текущего сеанса: подключение, команды RouterOS, изменения и ошибки.")
+        row=QHBoxLayout(); self.log_search=QLineEdit(); self.log_search.setPlaceholderText("Поиск по журналу…"); self.log_search.textChanged.connect(self.filter_log_page)
+        export=QPushButton("Экспорт TXT"); export.clicked.connect(self.export_log_page)
+        clear=QPushButton("Очистить журнал"); clear.setObjectName("DangerButton"); clear.clicked.connect(self.clear_log_page)
+        row.addWidget(self.log_search,1); row.addWidget(export); row.addWidget(clear); p.layout().addLayout(row)
+        self.log_view=QPlainTextEdit(); self.log_view.setReadOnly(True); self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap); self.log_view.setPlaceholderText("Здесь появятся события приложения…"); self.log_view.setMinimumHeight(560); p.layout().addWidget(self.log_view,1)
+        l.addWidget(p,1); return w
+
+    def filter_log_page(self):
+        if not hasattr(self,"log_view"): return
+        q=self.log_search.text().lower() if hasattr(self,"log_search") else ""
+        self.log_view.setPlainText("\\n".join(x for x in self.log_lines if q in x.lower()))
+        self.log_view.moveCursor(QTextCursor.MoveOperation.End)
+
+    def export_log_page(self):
+        path,_=QFileDialog.getSaveFileName(self,"Экспорт журнала",str(Path.home()/"mikrotik-vpn-manager.log"),"Log files (*.log *.txt)")
+        if path:
+            Path(path).write_text("\\n".join(self.log_lines),encoding="utf-8")
+            self.log(f"Журнал экспортирован: {path}")
+
+    def clear_log_page(self):
+        if QMessageBox.question(self,"Очистить журнал","Удалить все записи текущего сеанса?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
+        self.log_lines.clear(); self.filter_log_page()
     def test_vpn(self): self.nav.setCurrentRow(2); self.run_job("Тест ping через WireGuard…",lambda:self.diagnostics(self.router_conn(),True))
     def ping_wan(self): self.run_job("Ping 1.1.1.1 из main…",lambda:self.diag_run("Ping WAN (main)","/tool ping address=1.1.1.1 count=4"))
     def traceroute(self):

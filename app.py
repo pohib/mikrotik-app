@@ -1443,6 +1443,7 @@ class App(QMainWindow):
     def diag_begin(self,title):
         self.diag_text.clear()
         self.diag_text.append(f'<div style="color:#ffffff;font-size:13pt;font-weight:700">{esc(title)}</div><div style="color:#6a80a6">{datetime.now().strftime("%d.%m.%Y %H:%M:%S")}</div>')
+        self.diag_text.verticalScrollBar().setValue(0)
 
     def diag_summary(self,result):
         rows=""
@@ -1457,14 +1458,37 @@ class App(QMainWindow):
         self.diag_text.append(f'<div style="margin-top:14px;color:#7db0ff;font-weight:700">▌ СВОДКА</div><table cellspacing="0" cellpadding="0">{rows}</table>')
 
     def diag_block(self,title,text,error=False,follow=True):
-        sb=self.diag_text.verticalScrollBar(); pos=sb.value()
         head="#fb7185" if error else "#7db0ff"; body="#fda4af" if error else "#b9c8de"
         self.diag_text.append(f'<div style="margin-top:16px;color:{head};font-weight:700">▌ {esc(title)} <span style="color:#5f7499;font-weight:400">· {datetime.now().strftime("%H:%M:%S")}</span></div><pre style="color:{body};margin:4px 0 0 0">{esc(text or "(пустой вывод)")}</pre>')
-        if not follow: sb.setValue(pos)
+        sb=self.diag_text.verticalScrollBar()
+        if follow: sb.setValue(sb.maximum())
+        else: sb.setValue(0)
 
     def diag_run(self,title,command,timeout=30):
-        r=self.router_conn(); out=self.cmd(r,command,timeout)
-        self.q.put(("DIAGOUT",(f"{title}  ·  {command}",out,False,True)))
+        self.q.put(("DIAGBEGIN",title))
+        try:
+            r=self.router_conn(); out=self.cmd(r,command,timeout)
+            self.q.put(("DIAGOUT",(f"{title} · {command}",out,False,False)))
+        except Exception as exc:
+            self.q.put(("DIAGOUT",(title,"ERROR: "+str(exc),True,False)))
+
+    def run_diag_commands(self,title,commands,job_label):
+        """Run a focused read-only diagnostic and render every result in the Diagnostics report."""
+        def job():
+            self.q.put(("DIAGBEGIN",title))
+            try:
+                r=self.router_conn()
+            except Exception as exc:
+                self.q.put(("DIAGOUT",("SSH / подключение","ERROR: "+str(exc),True,False)))
+                return
+            for name,command,timeout in commands:
+                try:
+                    output=self.cmd(r,command,timeout)
+                    error=output.strip().startswith("ERROR:")
+                except Exception as exc:
+                    output="ERROR: "+str(exc); error=True
+                self.q.put(("DIAGOUT",(f"{name} · {command}",output,error,False)))
+        self.run_job(job_label,job)
 
     def run_job(self,label,fn):
         if self.busy:
@@ -2258,23 +2282,32 @@ class App(QMainWindow):
         self.pending_wg_config=None
         self.q.put(("WG_APPLIED",None))
 
-    def test_vpn(self): self.nav.setCurrentRow(2); self.run_job("Тест ping через WireGuard…",lambda:self.diagnostics(self.router_conn(),True))
-    def ping_wan(self): self.run_job("Ping 1.1.1.1 из main…",lambda:self.diag_run("Ping WAN (main)","/tool ping address=1.1.1.1 count=4"))
+    def test_vpn(self):
+        self.nav.setCurrentRow(2)
+        iface=ros_q(self.settings["wg_interface"])
+        self.run_diag_commands("Тест доступности через WireGuard",[
+            ("Ping 1.1.1.1 через WireGuard",f"/tool ping address=1.1.1.1 interface={iface} count=5",25),
+            ("Состояние WireGuard peer",f"/interface wireguard peers print detail where interface={iface}",20),
+            ("VPN default route",f"/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(self.settings['route_table'])}",20),
+        ],"Тест ping через VPN…")
+
+    def ping_wan(self):
+        self.run_diag_commands("Ping WAN · основной маршрут",[
+            ("Ping 1.1.1.1 через main","/tool ping address=1.1.1.1 routing-table=main count=5",25),
+            ("Основной default route","/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main",20),
+        ],"Ping WAN…")
+
     def traceroute(self):
         command="/tool traceroute address=1.1.1.1 max-hops=12 count=1 timeout=1s use-dns=no"
-        self.run_job("Traceroute 1.1.1.1…",lambda:self.diag_run("Traceroute · до 12 узлов, 1 проба",command,25))
+        self.run_diag_commands("Traceroute через основной маршрут",[
+            ("Traceroute 1.1.1.1",command,30),
+        ],"Traceroute 1.1.1.1…")
 
     def show_dhcp_clients(self):
-        def job():
-            r=self.router_conn()
-            for title,command in [
-                ("DHCP leases","/ip dhcp-server lease print detail"),
-                ("ARP clients",f'/ip arp print detail where interface={ros_q(self.settings["lan_interface"])}'),
-            ]:
-                try: out=self.cmd(r,command)
-                except Exception as e: out="ERROR: "+str(e)
-                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
-        self.run_job("Получение списка LAN-клиентов…",job)
+        self.run_diag_commands("DHCP-клиенты и ARP",[
+            ("DHCP leases","/ip dhcp-server lease print detail",25),
+            ("ARP clients",f'/ip arp print detail where interface={ros_q(self.settings["lan_interface"])}',20),
+        ],"Получение списка LAN-клиентов…")
 
     def diagnose_client(self):
         raw=self.client_input.text().strip()
@@ -2286,21 +2319,14 @@ class App(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self,"Некорректный IP клиента",str(e)); return
         ip=str(addr)
-        def job():
-            r=self.router_conn()
-            commands=[
-                ("DHCP lease",f"/ip dhcp-server lease print detail where address={ip}"),
-                ("ARP entry",f"/ip arp print detail where address={ip}"),
-                ("Ping телефона с роутера",f"/ping address={ip} count=4"),
-                ("Mangle counters",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
-                ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"'),
-                ("Client DNS cache",'/ip dns cache print detail where name~"youtube|discord|chatgpt|netflix|google"'),
-            ]
-            for title,command in commands:
-                try: out=self.cmd(r,command)
-                except Exception as e: out="ERROR: "+str(e)
-                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
-        self.run_job(f"Диагностика LAN-клиента {ip}…",job)
+        self.run_diag_commands(f"Проверка LAN-клиента {ip}",[
+            ("DHCP lease",f"/ip dhcp-server lease print detail where address={ip}",20),
+            ("ARP entry",f"/ip arp print detail where address={ip}",20),
+            ("Ping клиента с роутера",f"/tool ping address={ip} count=4",25),
+            ("Mangle counters",f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',20),
+            ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',20),
+            ("Client DNS cache",'/ip dns cache print detail where name~"youtube|discord|chatgpt|netflix|google"',20),
+        ],f"Проверка IP клиента {ip}…")
 
     def diagnose_domain_route(self):
         raw=self.domain_diag_input.text().strip()
@@ -2329,20 +2355,14 @@ class App(QMainWindow):
         self.run_job(f"Проверка маршрута домена {domain}…",job)
 
     def show_policy_counters(self):
-        def job():
-            r=self.router_conn()
-            commands=[
-                ("Mangle counters",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
-                ("NAT counters",f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"'),
-                ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"'),
-                ("DNS filter counters",'/ip firewall filter print stats detail where comment~"BLOCK-DOT|BLOCK-DOQ"'),
-                ("VPN address-list",f'/ip firewall address-list print detail where list={ros_q(self.settings["address_list"])}'),
-            ]
-            for title,command in commands:
-                try: out=self.cmd(r,command)
-                except Exception as e: out="ERROR: "+str(e)
-                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
-        self.run_job("Сбор счётчиков policy routing и DNS…",job)
+        self.run_diag_commands("Счётчики Mangle / NAT / DNS",[
+            ("Mangle counters",f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',20),
+            ("Managed NAT counters",f'/ip firewall nat print stats detail where comment={ros_q(NAT_COMMENT)}',20),
+            ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',20),
+            ("DNS filter counters",'/ip firewall filter print stats detail where comment~"BLOCK-DOT|BLOCK-DOQ"',20),
+            ("VPN address-list",f'/ip firewall address-list print detail where list={ros_q(self.settings["address_list"])}',20),
+            ("DNS cache",'/ip dns cache print count-only',20),
+        ],"Сбор счётчиков Mangle/DNS…")
 
     def set_managed_mangle(self,enabled):
         action="mangle_enable" if enabled else "mangle_disable"

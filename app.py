@@ -3401,6 +3401,13 @@ class App(QMainWindow):
         selected_set = set(selected)
         self.targets=[record for record in self.targets if record not in selected_set]
         for target, _kind in selected: self.target_groups.pop(target, None)
+        # Remove now-empty custom groups from the editable group selector as well.
+        remaining_groups = set(self.target_groups.values())
+        if hasattr(self, "target_group"):
+            for index in range(self.target_group.count() - 1, -1, -1):
+                group_name = self.target_group.itemText(index)
+                if group_name not in remaining_groups and group_name not in PRESETS and group_name != "Пользовательские":
+                    self.target_group.removeItem(index)
         self.save_settings(); self.render_targets()
         self.log(f"Локально удалено целей: {len(selected)} из групп: {', '.join(sorted(removed_groups, key=str.casefold))}")
     def plan_text(self):

@@ -1508,8 +1508,9 @@ class App(QMainWindow):
         if failed("DNS redirect NAT"):
             add("info","DNS redirect","Не удалось прочитать DNS redirect NAT",dns_redirect,"Проверь права SSH и команду выборки правил.")
         else:
-            udp53=bool(re.search(r"protocol=udp.*dst-port=53.*action=redirect",dns_redirect,re.I|re.S))
-            tcp53=bool(re.search(r"protocol=tcp.*dst-port=53.*action=redirect",dns_redirect,re.I|re.S))
+            rule_blocks=[x for x in re.split(r"(?m)(?=^\\s*\\d+\\s+)",dns_redirect) if "action=" in x]
+            udp53=any(re.search(r"protocol=udp",x,re.I) and re.search(r"dst-port=53",x,re.I) and re.search(r"action=redirect",x,re.I) for x in rule_blocks)
+            tcp53=any(re.search(r"protocol=tcp",x,re.I) and re.search(r"dst-port=53",x,re.I) and re.search(r"action=redirect",x,re.I) for x in rule_blocks)
             if not udp53 or not tcp53:
                 missing=("UDP/53" if not udp53 else "")+(" и " if not udp53 and not tcp53 else "")+("TCP/53" if not tcp53 else "")
                 add("warn","DNS redirect",f"Не подтверждён redirect {missing} на DNS MikroTik",dns_redirect,"Проверь отдельные правила redirect для UDP/53 и TCP/53, а также порядок и исключения.")

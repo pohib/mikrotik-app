@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -716,19 +716,44 @@ class AutoDiscoveryDialog(QDialog):
         actions.addWidget(self.status, 1)
         root.addLayout(actions)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Добавить", "Группа сервиса", "Домен", "IP-адреса", "Источник", "Достоверность"])
-        widths = [QHeaderView.ResizeMode.ResizeToContents, QHeaderView.ResizeMode.ResizeToContents,
-                  QHeaderView.ResizeMode.Stretch, QHeaderView.ResizeMode.Stretch,
-                  QHeaderView.ResizeMode.Stretch, QHeaderView.ResizeMode.ResizeToContents]
-        for col, mode in enumerate(widths):
-            self.table.horizontalHeader().setSectionResizeMode(col, mode)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().hide()
-        self.table.setAlternatingRowColors(True)
-        self.table.setMinimumHeight(390)
-        root.addWidget(self.table, 1)
+        # Иерархическое дерево: группа → домен → IP-адреса.
+        filter_row = QHBoxLayout()
+        filter_label = QLabel("Структура зависимостей")
+        filter_label.setObjectName("SectionTitle")
+        filter_row.addWidget(filter_label)
+        filter_row.addStretch()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Фильтр по группе, домену или IP…")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._filter_tree)
+        self.search_input.setMaximumWidth(330)
+        filter_row.addWidget(self.search_input)
+        self.expand_button = QPushButton("Развернуть всё")
+        self.expand_button.clicked.connect(self.tree_expand_all)
+        self.collapse_button = QPushButton("Свернуть всё")
+        self.collapse_button.clicked.connect(self.tree_collapse_all)
+        filter_row.addWidget(self.expand_button)
+        filter_row.addWidget(self.collapse_button)
+        root.addLayout(filter_row)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["Группа / домен / IP", "Источник", "Достоверность"])
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setIndentation(22)
+        self.tree.setRootIsDecorated(True)
+        self.tree.setAnimated(True)
+        self.tree.setExpandsOnDoubleClick(True)
+        self.tree.setMinimumHeight(390)
+        self.tree.setColumnWidth(0, 480)
+        self.tree.setColumnWidth(1, 300)
+        self.tree.header().setStretchLastSection(True)
+        self.tree.itemChanged.connect(self._tree_item_changed)
+        root.addWidget(self.tree, 1)
 
         self.add_ips = QCheckBox("Добавлять найденные IPv4 как отдельные /32 (не рекомендуется для общих CDN)")
         self.add_ips.setChecked(False)
@@ -813,24 +838,73 @@ class AutoDiscoveryDialog(QDialog):
             record["group"] = group
 
     def _render(self):
-        self.table.setRowCount(0)
+        self.tree.blockSignals(True)
+        self.tree.clear()
         grouped = {}
         for domain, record in self.discovered.items():
             grouped.setdefault(record["group"], []).append((domain, record))
-        for group in sorted(grouped, key=str.casefold):
-            entries = sorted(grouped[group], key=lambda item: item[0])
+
+        for group_name in sorted(grouped, key=str.casefold):
+            entries = sorted(grouped[group_name], key=lambda item: item[0])
+            ip_count = sum(len(record["ips"]) for _domain, record in entries)
+            group_item = QTreeWidgetItem([f"{group_name}  ·  {len(entries)} дом.  ·  {ip_count} IP", "", ""])
+            group_item.setFlags(group_item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsAutoTristate)
+            group_item.setCheckState(0, Qt.CheckState.Checked)
+            group_item.setData(0, Qt.ItemDataRole.UserRole, ("group", group_name))
+            group_item.setToolTip(0, "Группа сервиса. Отметка выбирает все домены группы.")
+            self.tree.addTopLevelItem(group_item)
+
             for domain, record in entries:
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                check = QTableWidgetItem()
-                check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
-                check.setCheckState(Qt.CheckState.Checked)
-                self.table.setItem(row, 0, check)
-                self.table.setItem(row, 1, QTableWidgetItem(group))
-                self.table.setItem(row, 2, QTableWidgetItem(domain))
-                self.table.setItem(row, 3, QTableWidgetItem(", ".join(sorted(record["ips"])) or "Нет данных"))
-                self.table.setItem(row, 4, QTableWidgetItem("; ".join(sorted(record["sources"]))))
-                self.table.setItem(row, 5, QTableWidgetItem(record["confidence"]))
+                sources = "; ".join(sorted(record["sources"]))
+                domain_item = QTreeWidgetItem([domain, sources, record["confidence"]])
+                domain_item.setFlags(domain_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                domain_item.setCheckState(0, Qt.CheckState.Checked)
+                domain_item.setData(0, Qt.ItemDataRole.UserRole, ("domain", domain))
+                domain_item.setToolTip(0, f"Группа: {group_name}\nДомен: {domain}\nИсточники: {sources}")
+                domain_item.setToolTip(1, sources)
+                group_item.addChild(domain_item)
+
+                for ip in sorted(record["ips"], key=lambda value: (ipaddress.ip_address(value).version, int(ipaddress.ip_address(value)))):
+                    ip_item = QTreeWidgetItem([ip, "DNS / HAR / наблюдение", "IP-адрес"])
+                    ip_item.setData(0, Qt.ItemDataRole.UserRole, ("ip", ip))
+                    ip_item.setToolTip(0, f"IP-адрес, связанный с {domain}; справочная информация.")
+                    domain_item.addChild(ip_item)
+            group_item.setExpanded(True)
+
+        self.tree.blockSignals(False)
+        self._filter_tree(self.search_input.text() if hasattr(self, "search_input") else "")
+
+    def _tree_item_changed(self, item, column):
+        if column == 0:
+            self.tree.viewport().update()
+
+    def _filter_tree(self, text):
+        needle = text.strip().casefold()
+        for i in range(self.tree.topLevelItemCount()):
+            group_item = self.tree.topLevelItem(i)
+            group_match = needle in group_item.text(0).casefold()
+            any_match = group_match
+            for j in range(group_item.childCount()):
+                domain_item = group_item.child(j)
+                domain_match = group_match or needle in domain_item.text(0).casefold()
+                ip_match = False
+                for k in range(domain_item.childCount()):
+                    ip_item = domain_item.child(k)
+                    visible = not needle or domain_match or needle in ip_item.text(0).casefold()
+                    ip_item.setHidden(not visible)
+                    ip_match = ip_match or visible
+                visible_domain = not needle or domain_match or ip_match
+                domain_item.setHidden(not visible_domain)
+                any_match = any_match or visible_domain
+            group_item.setHidden(bool(needle) and not any_match)
+            if needle and any_match:
+                group_item.setExpanded(True)
+
+    def tree_expand_all(self):
+        self.tree.expandAll()
+
+    def tree_collapse_all(self):
+        self.tree.collapseAll()
 
     def refresh_dependencies(self):
         root_domain = self._is_domain(self.domain_input.text())
@@ -1002,26 +1076,28 @@ class AutoDiscoveryDialog(QDialog):
 
     def selected_target_records(self):
         result = []
-        for row in range(self.table.rowCount()):
-            check = self.table.item(row, 0)
-            if not check or check.checkState() != Qt.CheckState.Checked:
-                continue
-            domain = self.table.item(row, 2).text()
-            group = self.table.item(row, 1).text()
-            result.append((domain, "Домен", group))
-            if self.add_ips.isChecked():
-                for ip in filter(None, self.table.item(row, 3).text().split(", ")):
-                    try:
-                        addr = ipaddress.ip_address(ip)
-                        if addr.version == 4:
-                            result.append((f"{addr}/32", "IPv4-сеть", group))
-                    except ValueError:
-                        pass
+        for i in range(self.tree.topLevelItemCount()):
+            group_item = self.tree.topLevelItem(i)
+            group_name = group_item.text(0).split("  ·  ", 1)[0]
+            for j in range(group_item.childCount()):
+                domain_item = group_item.child(j)
+                if domain_item.checkState(0) != Qt.CheckState.Checked:
+                    continue
+                domain = domain_item.text(0)
+                result.append((domain, "Домен", group_name))
+                if self.add_ips.isChecked():
+                    for k in range(domain_item.childCount()):
+                        ip = domain_item.child(k).text(0)
+                        try:
+                            addr = ipaddress.ip_address(ip)
+                            if addr.version == 4:
+                                result.append((f"{addr}/32", "IPv4-сеть", group_name))
+                        except ValueError:
+                            pass
         return result
 
     def selected_targets(self):
         return [(target, kind) for target, kind, _group in self.selected_target_records()]
-
 
 class App(QMainWindow):
     def __init__(self):

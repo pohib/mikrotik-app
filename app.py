@@ -537,7 +537,7 @@ class App(QMainWindow):
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
         self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
-        self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
+        self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(8)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
@@ -744,7 +744,7 @@ class App(QMainWindow):
         top.addWidget(domain_btn); intro.layout().addLayout(top)
         actions=QHBoxLayout()
         full=QPushButton("Полная диагностика DNS / DoH"); full.setObjectName("PrimaryButton"); full.clicked.connect(self.run_doh_diagnostic)
-        doh=QPushButton("Проверить DoH и TLS"); doh.clicked.connect(self.check_doh_config)
+        doh=QPushButton("Проверить DNS и ошибки DoH"); doh.clicked.connect(self.check_doh_config)
         clear=QPushButton("Очистить отчёт"); clear.setObjectName("QuietButton"); clear.clicked.connect(lambda:self.doh_diag_text.clear())
         copy=QPushButton("Копировать"); copy.setObjectName("QuietButton"); copy.clicked.connect(lambda:QApplication.clipboard().setText(self.doh_diag_text.toPlainText()))
         save=QPushButton("Сохранить .txt"); save.setObjectName("QuietButton"); save.clicked.connect(self.save_doh_diagnostic_report)
@@ -792,6 +792,7 @@ class App(QMainWindow):
         self.run_job("Диагностика DNS / DoH…",job)
 
     def check_doh_config(self):
+        if hasattr(self,"nav"): self.nav.setCurrentRow(4)
         self.run_doh_domain_diagnostic()
 
     def save_doh_diagnostic_report(self):

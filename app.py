@@ -695,6 +695,14 @@ class AutoDiscoveryDialog(QDialog):
                     self._add_domain(domain, "HAR: запрос браузера")
                     if len(self.discovered) > before:
                         count += 1
+                    server_ip = entry.get("serverIPAddress", "")
+                    try:
+                        if server_ip and ipaddress.ip_address(server_ip).version == 4:
+                            current_source, current_ips = self.discovered[domain]
+                            if server_ip not in current_ips:
+                                self.discovered[domain] = (current_source, sorted(set(current_ips + [server_ip])))
+                    except ValueError:
+                        pass
             self._render()
             self.status.setText(f"HAR обработан: обнаружено {count} новых доменов; всего в списке: {len(self.discovered)}.")
         except Exception as exc:

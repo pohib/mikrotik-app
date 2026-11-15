@@ -736,7 +736,7 @@ class App(QMainWindow):
 
     def page_dns_diagnostics(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        intro=self.panel("DNS / DoH · центр диагностики","Read-only проверка DNS на MikroTik: настройки DoH и TLS, разрешение доменов, DNS-кэш, управляемые FWD-записи, динамические IP в VPN address-list, счётчики policy routing и состояние WireGuard.")
+        intro=self.panel("DNS / DoH · центр диагностики","Поэтапная проверка DNS → привязка домена → policy routing → WireGuard → VPN-маршрут. Отдельно проверяется выбранный DoH endpoint независимым запросом с ПК.")
         top=QHBoxLayout()
         self.doh_diag_domain=QLineEdit("chatgpt.com"); self.doh_diag_domain.setPlaceholderText("Домен для проверки, например chatgpt.com")
         top.addWidget(self.doh_diag_domain,1)
@@ -819,9 +819,6 @@ class App(QMainWindow):
                 ("Recent DNS errors",'/log print without-paging where topics~"dns,error"'),
             ]
             results={}
-            for title,command in commands:
-                try: out=r.exec(command,timeout=20) if False else None
-                except Exception: out=None
             try: r=self.router_conn()
             except Exception as exc:
                 results["SSH"]="ERROR: "+str(exc)

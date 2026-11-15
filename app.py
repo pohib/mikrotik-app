@@ -1087,12 +1087,14 @@ class App(QMainWindow):
         p.layout().addLayout(row)
         client_box=QHBoxLayout()
         self.client_input=QLineEdit(); self.client_input.setPlaceholderText("IP телефона в LAN, например 192.168.0.50")
+        self.client_input.setToolTip("Можно указать IP клиента вместе с доменом ниже: тогда диагностика дополнительно снимет conntrack-записи этого клиента к найденным IP сервиса.")
         client_box.addWidget(self.client_input,1)
         for label,fn in [("DHCP-клиенты",self.show_dhcp_clients),("Проверить IP клиента",self.diagnose_client),("Счётчики Mangle/DNS",self.show_policy_counters)]:
             b=QPushButton(label); b.clicked.connect(fn); client_box.addWidget(b)
         p.layout().addLayout(client_box)
         domain_box=QHBoxLayout()
         self.domain_diag_input=QLineEdit(); self.domain_diag_input.setPlaceholderText("Домен для проверки: youtube.com")
+        self.domain_diag_input.setToolTip("Если выше указан IPv4 клиента, отчёт дополнительно покажет conntrack-сессии клиента к адресам этого домена. Для достоверного результата создай трафик с устройства во время проверки.")
         domain_box.addWidget(self.domain_diag_input,1)
         domain_test=QPushButton("Проверить DNS → IP → VPN-list"); domain_test.setObjectName("PrimaryButton"); domain_test.clicked.connect(self.diagnose_domain_route)
         domain_box.addWidget(domain_test); p.layout().addLayout(domain_box)
@@ -2260,14 +2262,18 @@ class App(QMainWindow):
         # This is not packet-level proof: actual LAN forwarding also depends on Mangle,
         # address-list membership and FastTrack state.
         route_probe_ips=[]
-        if domain and not raw.get("Selected domain DNS resolve","").startswith("ERROR:"):
-            for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",raw.get("Selected domain DNS resolve","")):
-                try:
-                    ipaddress.IPv4Address(candidate)
-                    if candidate not in route_probe_ips:
-                        route_probe_ips.append(candidate)
-                except ValueError:
-                    pass
+        if domain:
+            for source_key in ("Selected domain DNS resolve","Selected domain DNS cache","Selected domain dynamic IPs"):
+                source_value=raw.get(source_key,"")
+                if source_value.startswith("ERROR:"):
+                    continue
+                for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",source_value):
+                    try:
+                        ipaddress.IPv4Address(candidate)
+                        if candidate not in route_probe_ips:
+                            route_probe_ips.append(candidate)
+                    except ValueError:
+                        pass
         for probe_ip in route_probe_ips[:5]:
             for table_name,table_value in (("main","main"),("vpn",f["route_table"])):
                 key=f"Route lookup {probe_ip} · {table_name}"
@@ -2769,7 +2775,10 @@ class App(QMainWindow):
             ("DHCP lease",f"/ip dhcp-server lease print detail where address={ip}",20),
             ("ARP entry",f"/ip arp print detail where address={ip}",20),
             ("Ping клиента с роутера",f"/tool ping address={ip} count=4",25),
+            ("Conntrack-сессии клиента",f'/ip firewall connection print detail where src-address~{ros_q(ip)}',20),
             ("Mangle counters",f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',20),
+            ("FastTrack rules and counters",'/ip firewall filter print stats detail where action=fasttrack-connection',20),
+            ("IPv6 neighbors",'/ipv6 neighbor print detail',20),
             ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',20),
             ("Client DNS cache",'/ip dns cache print detail where name~"youtube|discord|chatgpt|netflix|google"',20),
         ],f"Проверка IP клиента {ip}…")

@@ -4040,6 +4040,13 @@ QTreeWidget{background:#080f1d;border:1px solid #263750;border-radius:15px;color
 QTreeWidget::item{padding:9px 7px;border-bottom:1px solid rgba(105,135,180,22);min-height:25px}
 QTreeWidget::item:hover{background:rgba(93,145,225,22)}
 QTreeWidget::item:selected{background:rgba(49,105,205,105);color:#ffffff;border-radius:5px}
+/* Check indicators for selectable rows in the routing tree (QTreeWidgetItem check-state, not QCheckBox). */
+QTreeWidget::indicator{width:17px;height:17px;border:1px solid #536985;border-radius:4px;background:#101b2d;margin-right:5px}
+QTreeWidget::indicator:unchecked{background:#101b2d;border:1px solid #536985}
+QTreeWidget::indicator:unchecked:hover{background:#172943;border:1px solid #83b2ff}
+QTreeWidget::indicator:checked{background:#3978e8;border:1px solid #78aaff}
+QTreeWidget::indicator:indeterminate{background:#2457a8;border:1px solid #78aaff}
+QTreeWidget::indicator:disabled{background:#182335;border:1px solid #35445b}
 QTreeWidget::branch{background:transparent}
 QTreeWidget::branch:has-siblings:!adjoins-item{border-image:none;border-left:1px solid #30425e}
 QTreeWidget::branch:has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}

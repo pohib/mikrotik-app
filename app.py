@@ -1188,6 +1188,35 @@ class AutoDiscoveryDialog(QDialog):
     def selected_targets(self):
         return [(target, kind) for target, kind, _group in self.selected_target_records()]
 
+def classify_routeros_command(command):
+    """Conservative CLI risk classification; unknown syntax is never assumed safe."""
+    raw=command.strip()
+    if not raw: return ("empty","Пустая команда","")
+    if "\n" in raw or "\r" in raw: return ("critical","Многострочная команда","Ввод нескольких строк не поддерживается.")
+    if ";" in raw: return ("critical","Цепочка команд","Содержит разделитель ';' и может выполнить несколько операций.")
+    low=raw.lower().strip()
+    root=low.lstrip("/")
+    mutation=re.search(r"(?i)(?:^|\s)(add|set|remove|enable|disable|move|reset|reset-counters|clear|flush|renew|release|generate-key|run|reboot|restore|upgrade|import|create|delete)(?:\s|$)",root)
+    destructive=(
+        re.search(r"(?i)^/?system\s+(?:reboot|reset-configuration|shutdown)\b",low)
+        or re.search(r"(?i)^/?(?:user|ip firewall|ip route|ip address|ip dns|interface|routing|system scheduler|system script)\s+.*\b(remove|reset|flush|disable|set|add|enable|move|import|restore)\b",low)
+        or re.search(r"(?i)^/?(?:file|backup)\s+.*\b(remove|delete|restore|save)\b",low)
+        or re.search(r"(?i)^/?tool\s+netwatch\b.*\b(add|set|remove)\b",low)
+        or root.startswith(":") or root.startswith("execute ")
+    )
+    if destructive:
+        return ("critical","Высокий риск","Может затронуть доступ к роутеру, Firewall, маршруты, учётные записи, VPN или данные.")
+    if mutation:
+        return ("change","Изменение конфигурации","Команда изменяет состояние или конфигурацию MikroTik.")
+    read_verb=re.search(r"(?i)(?:^|\s)(print|export|get|find|monitor|ping|resolve|traceroute|torch|snmp-get)(?:\s|$)",low)
+    read_root=re.match(r"^/?(?:system|interface|ip|ipv6|routing|wireguard|tool|queue|ppp|user|certificate|file|log|disk|caps-man|wifi|ping|resolve|traceroute)\b",low)
+    if read_root and read_verb:
+        return ("read","Только чтение","Команда распознана как запрос состояния; явных операций изменения не найдено.")
+    if re.match(r"^/?(?:ping|resolve|traceroute)\b",low):
+        return ("read","Только чтение","Сетевая проверка без изменения конфигурации.")
+    return ("unknown","Неизвестная / непроверенная команда","Безопасность автоматически не подтверждена. Проверь синтаксис и побочные эффекты перед выполнением.")
+
+
 class TerminalCommandInput(QLineEdit):
     """Однострочный CLI-ввод с навигацией по истории команд стрелками."""
     def __init__(self, parent=None):
@@ -1942,7 +1971,13 @@ class App(QMainWindow):
         command_caption.setObjectName("TerminalCaption")
         self.terminal_history_hint=QLabel("↑ / ↓  история команд   ·   Enter  выполнить")
         self.terminal_history_hint.setObjectName("TerminalHint")
-        command_header.addWidget(command_caption); command_header.addStretch(1); command_header.addWidget(self.terminal_history_hint)
+        self.terminal_risk_badge=QLabel("ОЖИДАНИЕ КОМАНДЫ"); self.terminal_risk_badge.setObjectName("TerminalRiskBadge")
+        self.terminal_readonly_mode=QCheckBox("Режим только чтение")
+        self.terminal_readonly_mode.setToolTip("Блокирует команды, которые не распознаны как безопасные read-only запросы.")
+        self.terminal_readonly_mode.setChecked(False)
+        self.terminal_readonly_mode.toggled.connect(self.update_terminal_command_hint)
+        command_header.addWidget(command_caption); command_header.addStretch(1)
+        command_header.addWidget(self.terminal_risk_badge); command_header.addWidget(self.terminal_readonly_mode); command_header.addWidget(self.terminal_history_hint)
         pl.addLayout(command_header)
 
         command_row=QHBoxLayout(); command_row.setSpacing(10)
@@ -1954,12 +1989,13 @@ class App(QMainWindow):
         self.terminal_input.setClearButtonEnabled(True)
         self.terminal_input.set_history(getattr(self,"terminal_history",[]))
         self.terminal_input.returnPressed.connect(self.terminal_execute)
+        self.terminal_input.textChanged.connect(self.update_terminal_command_hint)
         execute=QPushButton("Выполнить  ↵"); execute.setObjectName("PrimaryButton"); execute.setMinimumWidth(142); execute.clicked.connect(self.terminal_execute)
         command_row.addWidget(prompt); command_row.addWidget(self.terminal_input,1); command_row.addWidget(execute)
         pl.addLayout(command_row)
 
         l.addWidget(panel,1)
-        note=QLabel("Команды из гайдов сначала подставляются в строку и не выполняются автоматически. Команды изменения и удаления помечены отдельно. История хранится в течение текущего запуска приложения.")
+        note=QLabel("Перед выполнением приложение оценивает риск команды. Изменяющие и неизвестные команды требуют подтверждения; опасные операции выделяются отдельно. Режим «Только чтение» блокирует всё, что не распознано как безопасный запрос. Ручной ввод CLI сохранён.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
 
         guides=self.panel("Справочник команд RouterOS","Выбери команду, посмотри назначение и типичный результат. Нажатие «Вставить» только переносит текст в CLI.")
@@ -2057,15 +2093,46 @@ class App(QMainWindow):
         if item: QApplication.clipboard().setText(item.data(Qt.ItemDataRole.UserRole)[2])
 
 
+    def update_terminal_command_hint(self, *_):
+        if not hasattr(self,"terminal_risk_badge"): return
+        command=self.terminal_input.text().strip()
+        if not command:
+            self.terminal_risk_badge.setText("ОЖИДАНИЕ КОМАНДЫ")
+            self.terminal_risk_badge.setStyleSheet("color:#91a9cc;background:#142238;border:1px solid #304764;border-radius:8px;padding:5px 9px;font-size:8pt;font-weight:800")
+            return
+        level,label,_reason=classify_routeros_command(command)
+        colors={"read":("#8ce9c5","#10372f","#267a62"),"change":("#ffd58a","#3b2b12","#a87527"),"critical":("#ffb3bd","#431b25","#a64254"),"unknown":("#ffd58a","#3b2b12","#a87527")}
+        fg,bg,border=colors.get(level,("#91a9cc","#142238","#304764"))
+        suffix=" · ЗАБЛОКИРОВАНО" if self.terminal_readonly_mode.isChecked() and level!="read" else ""
+        self.terminal_risk_badge.setText(label.upper()+suffix)
+        self.terminal_risk_badge.setStyleSheet(f"color:{fg};background:{bg};border:1px solid {border};border-radius:8px;padding:5px 9px;font-size:8pt;font-weight:800")
+
     def terminal_execute(self):
         if self.busy:
             self.status.setText("●  Дождись завершения текущей операции.")
             return
         command=self.terminal_input.text().strip()
         if not command: return
-        if "\n" in command or "\r" in command:
-            QMessageBox.warning(self,"Некорректная команда","Вводи одну команду RouterOS за раз.")
+        level,risk_label,risk_reason=classify_routeros_command(command)
+        if level=="empty": return
+        if self.terminal_readonly_mode.isChecked() and level!="read":
+            QtMessageBox.warning(self,"Режим только чтение","Команда не распознана как безопасная read-only операция и поэтому не будет выполнена.\n\nОтключи режим только чтение, если действительно хочешь выполнить её.")
             return
+        if level in ("change","critical","unknown"):
+            details={"change":"Команда изменяет конфигурацию или состояние устройства.","critical":"Команда может нарушить доступ к роутеру, изменить критичные сетевые настройки или привести к потере данных.","unknown":"Команда не распознана как безопасная. Считай её потенциально изменяющей до проверки."}[level]
+            box=QtMessageBox(self)
+            box.setIcon(QtMessageBox.Icon.Warning if level!="critical" else QtMessageBox.Icon.Critical)
+            box.setWindowTitle("Подтверждение команды RouterOS")
+            box.setText(f"Категория риска: {risk_label}")
+            box.setInformativeText(details+"\n\n"+risk_reason+"\n\nКоманда будет отправлена без автоматического изменения её текста.")
+            box.setDetailedText(command)
+            box.setStandardButtons(QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No)
+            box.setDefaultButton(QtMessageBox.StandardButton.No)
+            box.button(QtMessageBox.StandardButton.Yes).setText("Выполнить")
+            box.button(QtMessageBox.StandardButton.No).setText("Отмена")
+            if box.exec()!=QtMessageBox.StandardButton.Yes:
+                self.log("Выполнение команды отменено пользователем.")
+                return
         if not hasattr(self,"terminal_history"):
             self.terminal_history=[]
         if not self.terminal_history or self.terminal_history[-1] != command:
@@ -4373,6 +4440,7 @@ QTreeWidget::branch{background:transparent}
 QLabel#TerminalTag{color:#8ce9c5;background:rgba(16,185,129,22);border:1px solid rgba(52,211,153,75);border-radius:9px;padding:8px 11px;font-size:8pt;font-weight:800;letter-spacing:1px}
 QLabel#TerminalCaption{color:#91a9cc;font-size:8pt;font-weight:800;letter-spacing:1.2px}
 QLabel#TerminalHint{color:#7188aa;font-size:8pt}
+QLabel#TerminalRiskBadge{border-radius:8px;padding:5px 9px;font-size:8pt;font-weight:800}
 QFrame#RouterHealthCell{background:rgba(5,11,22,150);border:1px solid rgba(150,185,235,35);border-radius:12px}
 QLabel#RouterHealthValue{color:#edf4ff;font-size:10pt;font-weight:700}
 QLabel#TerminalPrompt{color:#58e0a2;font-family:'Cascadia Mono','Consolas',monospace;font-size:19pt;font-weight:800;padding:0 5px}

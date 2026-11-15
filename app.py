@@ -1486,7 +1486,7 @@ class App(QMainWindow):
             "WAN interface": f"/interface monitor-traffic interface={ros_q(f['wan_interface'])} once",
             "Main default route": "/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main",
             "VPN default route": f"/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f['route_table'])}",
-            "DNS configuration": "/ip dns print detail",
+            "DNS configuration": "/ip dns print",
             "DNS resolve Cloudflare": ':put [:resolve "cloudflare.com"]',
             "DNS resolve YouTube": ':put [:resolve "youtube.com"]',
             "DHCP network": "/ip dhcp-server network print detail",
@@ -1495,9 +1495,9 @@ class App(QMainWindow):
             "WireGuard addresses": f"/ip address print detail where interface={ros_q(f['wg_interface'])}",
             "WireGuard peers": f"/interface wireguard peers print detail where interface={ros_q(f['wg_interface'])}",
             "VPN interface ping": f"/tool ping address=1.1.1.1 interface={ros_q(f['wg_interface'])} count=3",
-            "Managed Mangle": f'/ip firewall mangle print stats terse where comment="{MANGLE_COMMENT}"',
-            "Managed NAT": f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"',
-            "DNS redirect NAT": '/ip firewall nat print stats terse where comment~"DNS-REDIRECT"',
+            "Managed Mangle": f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"',
+            "Managed NAT": "/ip firewall nat print stats detail",
+            "DNS redirect NAT": '/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',
             "Firewall filter": "/ip firewall filter print terse",
             "DNS static FWD": '/ip dns static print terse where comment~"VPN-MANAGER:"',
             "DNS cache": "/ip dns cache print terse",
@@ -1664,11 +1664,23 @@ class App(QMainWindow):
             add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
         nat=raw["Managed NAT"]
         if failed("Managed NAT"):
-            add("info","NAT через WireGuard","Не удалось прочитать управляемое NAT-правило",nat,"Проверь права SSH и команду print stats detail.")
-        elif not nonempty("Managed NAT") or NAT_COMMENT not in nat or "action=masquerade" not in nat or f"out-interface={f['wg_interface']}" not in nat:
-            add("bad","NAT через WireGuard","Не найдено ожидаемое masquerade-правило на WG",nat,"Проверь srcnat, out-interface WireGuard и порядок NAT-правил.")
+            add("info","NAT через WireGuard","Не удалось прочитать NAT-правила",nat,"Проверь права SSH и совместимость команды print stats detail.")
         else:
-            add("ok","NAT через WireGuard","Управляемое masquerade-правило найдено",nat,"Проверь его счётчики при реальном трафике.")
+            nat_entries=parse_terse(nat)
+            wg_nat=next((x for x in nat_entries
+                         if "X" not in x["flags"]
+                         and x["f"].get("chain")=="srcnat"
+                         and x["f"].get("action")=="masquerade"
+                         and x["f"].get("out-interface")==f["wg_interface"]
+                         and x["f"].get("src-address")==f["lan_subnet"]),None)
+            if wg_nat:
+                managed=wg_nat["f"].get("comment")==NAT_COMMENT
+                label="Управляемое masquerade-правило найдено" if managed else "Подходящее masquerade-правило найдено (создано вне приложения)"
+                add("ok","NAT через WireGuard",label,nat,"Проверь счётчики этого правила при реальном трафике.")
+            elif not nat.strip():
+                add("warn","NAT через WireGuard","RouterOS не вернул NAT-правила",nat,"Проверь таблицу /ip firewall nat и параметры src-address/out-interface.")
+            else:
+                add("bad","NAT через WireGuard","Не найдено активное masquerade-правило с ожидаемыми LAN и WireGuard-интерфейсом",nat,"Проверь chain=srcnat, action=masquerade, src-address LAN и out-interface WireGuard.")
         filt=raw["Firewall filter"]
         filter_entries=parse_terse(filt) if not failed("Firewall filter") else []
         active_fasttrack=any(x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"] for x in filter_entries)

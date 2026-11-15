@@ -518,14 +518,22 @@ class AutoDiscoveryDialog(QDialog):
         actions = QHBoxLayout()
         har = QPushButton("Импортировать HAR браузера")
         har.clicked.connect(self.import_har)
-        dns_cache = QPushButton("Загрузить DNS-кэш MikroTik")
-        dns_cache.setToolTip("Сначала открой сервис на клиентском устройстве, затем загрузи DNS-кэш роутера. Кэш не показывает, какой именно клиент создал запрос.")
+        dns_cache = QPushButton("Снять DNS-кэш")
+        dns_cache.setToolTip("Сначала открой сервис на клиентском устройстве, затем сними DNS-кэш роутера. Кэш не показывает, какой именно клиент создал запрос.")
         dns_cache.clicked.connect(self.request_dns_cache)
-        self.status = QLabel("Сначала укажи домен, импортируй HAR или загрузи DNS-кэш MikroTik.")
+        self.monitor_dns = QPushButton("Начать наблюдение")
+        self.monitor_dns.setCheckable(True)
+        self.monitor_dns.setToolTip("Пока окно открыто, периодически считывает DNS-кэш MikroTik. На роутере ничего не меняет.")
+        self.monitor_dns.toggled.connect(self.toggle_dns_monitor)
+        self.dns_monitor_timer = QTimer(self)
+        self.dns_monitor_timer.setInterval(7000)
+        self.dns_monitor_timer.timeout.connect(self.request_dns_cache)
+        self.status = QLabel("Укажи домен, импортируй HAR или открой сервис и сними DNS-кэш MikroTik.")
         self.status.setObjectName("Muted")
         self.status.setWordWrap(True)
         actions.addWidget(har)
         actions.addWidget(dns_cache)
+        actions.addWidget(self.monitor_dns)
         actions.addWidget(self.status, 1)
         root.addLayout(actions)
 
@@ -626,12 +634,27 @@ class AutoDiscoveryDialog(QDialog):
             + f"Доменов в списке: {len(self.discovered)}. IP показаны только для справки."
         )
 
+    def toggle_dns_monitor(self, enabled):
+        if enabled:
+            self.monitor_dns.setText("Остановить наблюдение")
+            self.dns_monitor_timer.start()
+            self.status.setText("Наблюдение включено: снимок DNS-кэша каждые 7 секунд. Открой сервис в браузере.")
+            self.request_dns_cache()
+        else:
+            self.dns_monitor_timer.stop()
+            self.monitor_dns.setText("Начать наблюдение")
+            self.status.setText("Наблюдение DNS остановлено.")
+
     def request_dns_cache(self):
         if not callable(self.dns_reader):
             QMessageBox.warning(self, "Нет подключения", "Загрузка DNS-кэша доступна через подключение SSH к MikroTik.")
             return
-        self.status.setText("Запрашиваю DNS-кэш MikroTik…")
         self.dns_reader(self)
+
+    def closeEvent(self, event):
+        if hasattr(self, "dns_monitor_timer"):
+            self.dns_monitor_timer.stop()
+        super().closeEvent(event)
 
     def import_router_dns_cache(self, output):
         # RouterOS cache entries commonly expose name=... and data=... fields.
@@ -2654,6 +2677,8 @@ class App(QMainWindow):
             QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
 
     def request_discovery_dns_cache(self, dialog):
+        if self.busy:
+            return
         command = "/ip dns cache print detail without-paging"
         def job():
             router = self.router_conn()

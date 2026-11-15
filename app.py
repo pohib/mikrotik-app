@@ -589,8 +589,13 @@ class DialogTitleBar(QFrame):
 
 def add_dialog_chrome(dialog, layout, title):
     dialog.setWindowTitle(title)
-    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+    # Используем системную рамку окна: она обеспечивает изменение размера мышью
+    # за края/углы и штатное разворачивание средствами Windows/Linux.
+    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint |
+                          Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowMinMaxButtonsHint |
+                          Qt.WindowType.WindowCloseButtonHint)
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+    dialog.setMinimumSize(560, 380)
     dialog.setObjectName("AppDialog")
     dialog._ui_icons = getattr(dialog.parent(), "_ui_icons", {}) if dialog.parent() is not None else {}
     dialog.setStyleSheet(STYLE + """

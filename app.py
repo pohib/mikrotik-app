@@ -1530,21 +1530,10 @@ class App(QMainWindow):
         self.run_job("Сбор счётчиков policy routing и DNS…",job)
 
     def set_managed_mangle(self,enabled):
-        verb="enable" if enabled else "disable"
-        warning=("Включить обратно только управляемое правило выборочной VPN-маршрутизации?" if enabled else
-                 "Отключить только правило VPN-MANAGER-DOMAIN-ROUTE? Цели из списка перестанут идти через WireGuard и пойдут по основному маршруту через ZTE. Остальные правила не затрагиваются.")
-        if QMessageBox.question(self,"Подтверждение",warning,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
-        def job():
-            r=self.router_conn()
-            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
-            if count!="1":
-                found=count or "неизвестно"
-                raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {found}. Ничего не меняю.")
-            self.cmd(r,f'/ip firewall mangle {verb} [find where comment="{MANGLE_COMMENT}"]')
-            self.cmd(r,f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"')
-            self.fetch_mangle_status(r)
-            self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Команда переключения выполнена; фактический статус перечитан с роутера.",False,True)))
-        self.run_job(("Включение" if enabled else "Временное отключение")+" управляемого Mangle-правила…",job)
+        action="mangle_enable" if enabled else "mangle_disable"
+        title="Включить выборочную VPN-маршрутизацию" if enabled else "Отключить выборочную VPN-маршрутизацию"
+        self.queue_change(action,title)
+
 
     def import_targets_file(self):
         path,_=QFileDialog.getOpenFileName(self,"Импорт целей","", "Списки целей (*.txt *.csv);;Все файлы (*.*)")
@@ -1783,6 +1772,12 @@ class App(QMainWindow):
                         path="/ip dns static" if kind=="Домен" else "/ip firewall address-list"
                         self.cmd(r,f'{path} remove [find where comment={ros_q(comment)}]')
                     self.cmd(r,"/ip dns cache flush")
+                elif k in ("mangle_enable","mangle_disable"):
+                    count=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
+                    if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое Mangle-правило, найдено: {count or '0'}.")
+                    verb="enable" if k=="mangle_enable" else "disable"
+                    self.cmd(r,f'/ip firewall mangle {verb} [find where comment={ros_q(MANGLE_COMMENT)}]')
+                    self.fetch_mangle_status(r)
                 elif k=="fix_all":
                     self.prepare_router(r)
                     self.cmd(r,"/ip dns set servers=1.1.1.1,1.0.0.1")

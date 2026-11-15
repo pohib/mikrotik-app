@@ -420,7 +420,7 @@ class App(QMainWindow):
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.build_ui(); self.load_targets()
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(120)
-        self.status_timer = QTimer(self); self.status_timer.timeout.connect(self.refresh_dashboard); self.status_timer.start(45000)
+        # Полная диагностика запускается только вручную; периодический полный опрос отключён.
         self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic); self.traffic_timer.start(5000)
 
     def load_settings(self):
@@ -553,7 +553,7 @@ class App(QMainWindow):
         row.addWidget(self.target_input,1); row.addWidget(add); p.layout().addLayout(row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all); row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
-        self.target_table=QTableWidget(0,4); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","Состояние"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(260); p.layout().addWidget(self.target_table,1)
+        self.target_table=QTableWidget(0,6); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
         actions=QHBoxLayout()
         for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Предпросмотр применения",self.preview_apply,"Button"),("Применить на роутер",self.apply_all,"PrimaryButton"),("Удалить выбранное с роутера",self.remove_remote,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
             b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
@@ -563,7 +563,10 @@ class App(QMainWindow):
         safety_row=QHBoxLayout()
         disable=QPushButton("Временно отключить VPN-маршрутизацию"); disable.setObjectName("DangerButton"); disable.clicked.connect(lambda:self.set_managed_mangle(False))
         enable=QPushButton("Включить VPN-маршрутизацию"); enable.setObjectName("PrimaryButton"); enable.clicked.connect(lambda:self.set_managed_mangle(True))
-        safety_row.addWidget(disable); safety_row.addWidget(enable); safety_row.addStretch()
+        safety_row.addWidget(disable); safety_row.addWidget(enable)
+        self.mangle_status=QLabel("●  Статус: не проверен"); self.mangle_status.setObjectName("IndValue")
+        check_mangle=QPushButton("Проверить статус"); check_mangle.clicked.connect(self.refresh_mangle_status)
+        safety_row.addWidget(self.mangle_status,1); safety_row.addWidget(check_mangle)
         control.layout().addLayout(safety_row)
         control_note=QLabel("Переключается только правило VPN-MANAGER-DOMAIN-ROUTE. NAT, DNS, WireGuard и основной маршрут через ZTE не изменяются.")
         control_note.setObjectName("Muted"); control_note.setWordWrap(True); control.layout().addWidget(control_note)
@@ -707,6 +710,7 @@ class App(QMainWindow):
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="TARGETS": self.on_targets(payload)
+                elif kind=="MANGLE_STATUS": self.on_mangle_status(payload)
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)
                 elif kind=="DIAGOUT": self.diag_block(*payload)
                 elif kind=="DIAG":
@@ -920,7 +924,11 @@ class App(QMainWindow):
         known,fp=r.connect(); self.router=r; self.q.put(("CONNECTED",{"known":known,"fp":fp})); return r
 
     def connect_router(self):
-        self.run_job("Подключение и первичная проверка…",lambda:self.diagnostics(self.router_conn(),False))
+        def job():
+            r=self.router_conn()
+            self.fetch_targets(r)
+            self.fetch_mangle_status(r)
+        self.run_job("Подключение к MikroTik и чтение статусов…",job)
 
     def disconnect_router(self):
         r=self.router

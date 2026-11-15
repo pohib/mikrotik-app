@@ -819,7 +819,7 @@ class AutoDiscoveryDialog(QDialog):
             return
         self.domain_input.setText(root_domain)
         group = self._group_for(root_domain, root_domain)
-        self._add_domain(root_domain, "Основной домен", group, "Фактический запрос")
+        self._add_domain(root_domain, "Основной домен, указан пользователем", group, "Указан пользователем")
         matched = []
         for profile, entries in PRESETS.items():
             normalized = [self._is_domain(item) for item in entries]
@@ -1023,7 +1023,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -1039,6 +1039,7 @@ class App(QMainWindow):
             self.settings["doh_bootstrap"] = self.doh_bootstrap.text().strip()
             self.settings["doh_verify_cert"] = "1" if self.doh_verify_cert.isChecked() else "0"
         self.settings["dependency_groups"] = json.dumps(getattr(self, "target_groups", {}), ensure_ascii=False)
+        self.settings["managed_targets"] = json.dumps(getattr(self, "targets", []), ensure_ascii=False)
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -3061,7 +3062,12 @@ class App(QMainWindow):
             QMessageBox.critical(self,"Ошибка экспорта",str(exc))
 
     def load_targets(self):
-        self.targets=[]; self.render_targets()
+        try:
+            stored=json.loads(self.settings.get("managed_targets", "[]"))
+            self.targets=[(str(t), str(k)) for t,k in stored if isinstance(t,str) and isinstance(k,str)]
+        except Exception:
+            self.targets=[]
+        self.render_targets()
     def add_target(self):
         try: t,k=normalize_target(self.target_input.text())
         except Exception as e: QMessageBox.warning(self,"Некорректная цель",str(e)); return
@@ -3106,7 +3112,7 @@ class App(QMainWindow):
                 try: t,k=normalize_target(raw)
                 except Exception: continue
                 if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]=next((name for name, values in PRESETS.items() if raw in values), "Профили"); n+=1
-        self.save_settings(); self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
+        self.save_settings(); self.save_settings(); self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
 
     def load_preset(self):
         name=self.preset.currentText(); n=0

@@ -1155,11 +1155,11 @@ class App(QMainWindow):
         d.setMinimumWidth(540)
         # Используем обычное непрозрачное окно Qt: frameless + WA_TranslucentBackground
         # на некоторых конфигурациях Windows приводили к невидимому диалогу авторизации.
-        d.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint)
+        d.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowCloseButtonHint)
         d.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         d.setObjectName("SSHLoginDialog")
         d.setStyleSheet(self.styleSheet() + """
-            QDialog#SSHLoginDialog { background: transparent; }
+            QDialog#SSHLoginDialog { background: #0b1425; }
             QFrame#LoginShell {
                 background: #0b1425;
                 border: 1px solid rgba(180,210,255,115);
@@ -1324,8 +1324,13 @@ class App(QMainWindow):
         for field in (host, port, user, key, phrase):
             field.returnPressed.connect(do_login)
         d.setDefaultButton(login)
-        d.exec()
-        if d.result() == QDialog.DialogCode.Accepted:
+        d.resize(580, 650)
+        d.setWindowModality(Qt.WindowModality.ApplicationModal)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        result = d.exec()
+        if result == QDialog.DialogCode.Accepted:
             self.connect_router()
 
     def connect_router(self):

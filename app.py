@@ -43,7 +43,7 @@ DOH_PRESETS = {
 }
 
 PRESETS = {
-    "YouTube": ["youtube.com", "youtube-nocookie.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube.googleapis.com", "yt3.ggpht.com", "gstatic.com"],
+    "YouTube": ["youtube.com", "youtube-nocookie.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube.googleapis.com", "yt3.ggpht.com"],
     "Discord": ["discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media", "discordcdn.com"],
     "ChatGPT / OpenAI": ["chatgpt.com", "chat.openai.com", "openai.com", "auth.openai.com", "api.openai.com", "platform.openai.com", "oaistatic.com", "oaiusercontent.com"],
     "Claude": ["claude.ai", "anthropic.com", "claudeusercontent.com"],

@@ -1337,15 +1337,20 @@ class App(QMainWindow):
     def page_routing(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
         p=self.panel("Цели выборочной маршрутизации","Добавляй домены, отдельные IPv4 (/32) и сети CIDR. IPv6 пока не поддерживается.")
-        row=QHBoxLayout(); self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
+        row=QHBoxLayout(); row.setSpacing(8)
+        self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
+        self.target_input.setMinimumWidth(150); self.target_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.target_group=QComboBox(); self.target_group.setEditable(True); self.target_group.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         known_groups={"Пользовательские", *PRESETS.keys(), *self.target_groups.values()}
         self.target_group.addItems(sorted(known_groups, key=str.casefold)); self.target_group.setCurrentText("Пользовательские")
-        self.target_group.setMinimumWidth(190); self.target_group.setToolTip("Выбери существующую группу или введи название новой группы.")
+        self.target_group.setMinimumWidth(170); self.target_group.setMaximumWidth(190)
+        self.target_group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.target_group.setToolTip("Выбери существующую группу или введи название новой группы.")
         self.target_group.lineEdit().setPlaceholderText("Название группы")
+        group_label=QLabel("Группа"); group_label.setFixedWidth(48)
         add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
         auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
-        row.addWidget(self.target_input,1); row.addWidget(QLabel("Группа")); row.addWidget(self.target_group); row.addWidget(add); row.addWidget(auto); p.layout().addLayout(row)
+        row.addWidget(self.target_input,1); row.addWidget(group_label,0); row.addWidget(self.target_group,0); row.addWidget(add,0); row.addWidget(auto,0); p.layout().addLayout(row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); self.preset.setMinimumWidth(180); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("＋ Все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
         import_btn=QPushButton("Импорт"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
         export_btn=QPushButton("Экспорт"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
@@ -3614,10 +3619,20 @@ class App(QMainWindow):
             self.log(f"Отменено из очереди: {removed['title']}. На роутер ничего не отправлялось.")
 
     def cancel_all_pending(self):
-        if not self.pending_actions:return
-        answer=QMessageBox.question(self,"Отменить все изменения",f"Удалить из очереди все {len(self.pending_actions)} неподтверждённых операций? Конфигурация роутера не изменится.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
-        if answer!=QMessageBox.StandardButton.Yes:return
-        count=len(self.pending_actions); self.pending_actions.clear(); self.update_pending_ui()
+        if not self.pending_actions:
+            self.update_pending_ui()
+            return
+        answer=QMessageBox.question(
+            self,"Отменить все изменения",
+            f"Удалить из очереди все {len(self.pending_actions)} неподтверждённых операций? Конфигурация роутера не изменится.",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if answer!=QMessageBox.StandardButton.Yes:
+            return
+        count=len(self.pending_actions)
+        self.pending_actions.clear()
+        self.update_pending_ui()
         self.log(f"Очередь очищена: отменено операций — {count}. На роутер ничего не отправлялось.")
 
     def update_pending_ui(self):
@@ -3745,13 +3760,18 @@ class App(QMainWindow):
         note.setObjectName("Muted"); note.setWordWrap(True); lay.addWidget(title); lay.addWidget(note)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
         body=QWidget(); body.setObjectName("ApplyChangesBody"); body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True); body.setAutoFillBackground(True); body_layout=QVBoxLayout(body); body_layout.setContentsMargins(2,2,8,2); body_layout.setSpacing(12)
+        selection_checks=[]
         for index,a in enumerate(actions):
             description,commands,checks=self.pending_action_details(a)
             card=QFrame(); card.setObjectName("Panel"); cl=QVBoxLayout(card); cl.setContentsMargins(14,12,14,12); cl.setSpacing(8)
-            top=QHBoxLayout(); heading=QLabel(f"{index+1}. {a['title']}"); heading.setObjectName("SectionTitle")
+            top=QHBoxLayout()
+            choose=QCheckBox("Выбрать")
+            choose.setToolTip("Отметить это изменение для массовой отмены.")
+            selection_checks.append((a,choose))
+            heading=QLabel(f"{index+1}. {a['title']}"); heading.setObjectName("SectionTitle")
             remove=QPushButton("Отменить этот блок"); remove.setObjectName("DangerButton")
-            remove.clicked.connect(lambda checked=False,i=index:(self.cancel_pending_action(i),dlg.reject()))
-            top.addWidget(heading,1); top.addWidget(remove); cl.addLayout(top)
+            remove.clicked.connect(lambda checked=False,action=a:(self.cancel_pending_action(self.pending_actions.index(action)) if action in self.pending_actions else None,dlg.reject()))
+            top.addWidget(choose); top.addWidget(heading,1); top.addWidget(remove); cl.addLayout(top)
             info=QLabel(description); info.setObjectName("Muted"); info.setWordWrap(True); cl.addWidget(info)
             label=QLabel("КОМАНДЫ ROUTEROS"); label.setObjectName("CardTitle"); cl.addWidget(label)
             view=QPlainTextEdit(); view.setReadOnly(True); view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap); view.setPlainText("\n".join(commands) if commands else "# Команды не сформированы")
@@ -3760,10 +3780,24 @@ class App(QMainWindow):
             body_layout.addWidget(card)
         body_layout.addStretch(); scroll.setWidget(body); lay.addWidget(scroll,1)
         footer=QHBoxLayout()
+        cancel_selected=QPushButton("Отменить выбранные изменения"); cancel_selected.setObjectName("DangerButton")
+        def cancel_selected_actions():
+            chosen=[action for action,check in selection_checks if check.isChecked()]
+            if not chosen:
+                QMessageBox.information(dlg,"Ничего не выбрано","Отметь флажками одно или несколько изменений.")
+                return
+            chosen_ids={id(action) for action in chosen}
+            before=len(self.pending_actions)
+            self.pending_actions=[action for action in self.pending_actions if id(action) not in chosen_ids]
+            removed=before-len(self.pending_actions)
+            self.update_pending_ui()
+            self.log(f"Отменено выбранных изменений: {removed}. На роутер ничего не отправлялось.")
+            dlg.reject()
+        cancel_selected.clicked.connect(cancel_selected_actions)
         cancel_all=QPushButton("Отменить все изменения"); cancel_all.setObjectName("DangerButton"); cancel_all.clicked.connect(lambda:(dlg.reject(),self.cancel_all_pending()))
         close=QPushButton("Закрыть"); apply=QPushButton("Применить оставшиеся · "+str(len(actions))); apply.setObjectName("PrimaryButton")
         close.clicked.connect(dlg.reject); apply.clicked.connect(dlg.accept)
-        footer.addWidget(cancel_all); footer.addStretch(); footer.addWidget(close); footer.addWidget(apply); lay.addLayout(footer)
+        footer.addWidget(cancel_selected); footer.addWidget(cancel_all); footer.addStretch(); footer.addWidget(close); footer.addWidget(apply); lay.addLayout(footer)
         fit_controls(dlg,40)
         if dlg.exec()!=QDialog.DialogCode.Accepted:return
         if len(self.pending_actions)!=len(actions) or any(x is not y for x,y in zip(self.pending_actions,actions)):

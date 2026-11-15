@@ -1023,7 +1023,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -3105,8 +3105,8 @@ class App(QMainWindow):
             for raw in items:
                 try: t,k=normalize_target(raw)
                 except Exception: continue
-                if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); n+=1
-        self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
+                if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]=next((name for name, values in PRESETS.items() if raw in values), "Профили"); n+=1
+        self.save_settings(); self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
 
     def load_preset(self):
         name=self.preset.currentText(); n=0

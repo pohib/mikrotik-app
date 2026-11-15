@@ -736,6 +736,8 @@ class AutoDiscoveryDialog(QDialog):
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(10)
         add_dialog_chrome(self, root, "Зависимости сервисов")
+        # Центрируем после расчёта геометрии, чтобы окно не открывалось за экраном.
+        QTimer.singleShot(0, self._center_on_parent)
 
         title = QLabel("Собери домены и IP в группы сервисов")
         title.setObjectName("SectionTitle")
@@ -844,6 +846,26 @@ class AutoDiscoveryDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(add)
         root.addLayout(buttons)
+
+    def _center_on_parent(self):
+        parent = self.parentWidget()
+        screen = None
+        if parent is not None:
+            reference = parent.frameGeometry().center()
+            screen = QApplication.screenAt(reference)
+        if screen is None:
+            screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        center = parent.frameGeometry().center() if parent is not None else area.center()
+        if not area.contains(center):
+            center = area.center()
+        x = center.x() - self.width() // 2
+        y = center.y() - self.height() // 2
+        x = max(area.left(), min(x, area.right() - self.width() + 1))
+        y = max(area.top(), min(y, area.bottom() - self.height() + 1))
+        self.move(x, y)
 
     @staticmethod
     def _is_domain(value):

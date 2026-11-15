@@ -3448,22 +3448,26 @@ class App(QMainWindow):
         return selected
 
     def remove_local(self):
-        """Remove selected local targets; selecting a group expands to all its local members."""
+        """Immediately remove selected local targets; group selection removes all its members."""
         if not hasattr(self, "target_table"):
             return
-        selected_items = set(self.target_table.selectedItems())
+
+        selected_items = self.target_table.selectedItems()
+        current_item = self.target_table.currentItem()
         selected = set()
         selected_group_names = set()
+
+        def row_is_selected(item):
+            return item is current_item or item.isSelected() or item.checkState(0) == Qt.CheckState.Checked
 
         for index in range(self.target_table.topLevelItemCount()):
             group_item = self.target_table.topLevelItem(index)
             marker = group_item.data(0, Qt.ItemDataRole.UserRole)
-            is_group = isinstance(marker, tuple) and len(marker) == 2 and marker[0] == "group"
-            if not is_group:
+            if not (isinstance(marker, tuple) and len(marker) == 2 and marker[0] == "group"):
                 continue
+
             group_name = str(marker[1])
-            group_chosen = (group_item in selected_items or
-                            group_item.checkState(0) == Qt.CheckState.Checked)
+            group_chosen = row_is_selected(group_item)
             if group_chosen:
                 selected_group_names.add(group_name)
 
@@ -3471,42 +3475,35 @@ class App(QMainWindow):
                 child = group_item.child(child_index)
                 target = child.data(0, Qt.ItemDataRole.UserRole)
                 kind = child.data(0, Qt.ItemDataRole.UserRole + 1)
-                if not target or not kind:
-                    continue
-                child_chosen = (group_chosen or child in selected_items or
-                                child.checkState(0) == Qt.CheckState.Checked)
-                if child_chosen and (target, kind) in self.targets:
-                    selected.add((target, kind))
+                if target and kind and (group_chosen or row_is_selected(child)):
+                    if (target, kind) in self.targets:
+                        selected.add((target, kind))
 
-        # Group membership is resolved from the persisted mapping, not from
-        # the currently visible tree children (which may be filtered/collapsed).
+        # Resolve selected groups against the complete local configuration,
+        # including entries not currently visible in the filtered tree.
         for target, kind in self.targets:
             if self.target_groups.get(target, "Пользовательские") in selected_group_names:
                 selected.add((target, kind))
 
-        selected = sorted(selected, key=lambda record: record[0].casefold())
         if not selected:
+            self.log("Удаление из приложения: нет выбранных локальных целей.")
             QMessageBox.information(
-                self, "Ничего не выбрано",
-                "Отметь галочкой группу/цель или выдели строку мышью. "
-                "Удаляются только записи из локального списка; настройки MikroTik не изменяются."
+                self, "Нечего удалять",
+                "Выдели строку группы/цели мышью или поставь галочку. "
+                "Будут удалены только локальные записи; MikroTik не изменится."
             )
             return
 
-        names = ", ".join(target for target, _kind in selected[:8])
-        if len(selected) > 8:
-            names += f" и ещё {len(selected) - 8}"
-        answer = QMessageBox.question(
-            self, "Удалить из приложения?",
-            f"Будет удалено локально целей: {len(selected)}\\n{names}\\n\\nНастройки MikroTik не изменятся."
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
+        selected = sorted(selected, key=lambda record: record[0].casefold())
         selected_set = set(selected)
-        removed_groups = {self.target_groups.get(target, "Пользовательские")
-                          for target, _kind in selected}
+        removed_groups = {
+            self.target_groups.get(target, "Пользовательские")
+            for target, _kind in selected
+        }
+
+        before = len(self.targets)
         self.targets = [record for record in self.targets if record not in selected_set]
+        removed = before - len(self.targets)
         for target, _kind in selected:
             self.target_groups.pop(target, None)
 
@@ -3521,9 +3518,11 @@ class App(QMainWindow):
         self.save_settings()
         self.render_targets()
         self.log(
-            f"Локально удалено целей: {len(selected)}; группы: "
-            f"{', '.join(sorted(removed_groups, key=str.casefold))}"
+            f"Удалено из приложения: {removed} целей. Группы: "
+            f"{', '.join(sorted(removed_groups, key=str.casefold))}. "
+            "Конфигурация MikroTik не изменялась."
         )
+        self.statusBar().showMessage(f"Из приложения удалено целей: {removed}", 6000)
 
     def plan_text(self):
         """Точные команды RouterOS в том виде, в каком они уйдут на роутер."""
@@ -3659,21 +3658,16 @@ class App(QMainWindow):
             self.log(f"Отменено из очереди: {removed['title']}. На роутер ничего не отправлялось.")
 
     def cancel_all_pending(self):
-        if not self.pending_actions:
-            self.update_pending_ui()
-            return
-        answer=QMessageBox.question(
-            self,"Отменить все изменения",
-            f"Удалить из очереди все {len(self.pending_actions)} неподтверждённых операций? Конфигурация роутера не изменится.",
-            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
-        )
-        if answer!=QMessageBox.StandardButton.Yes:
-            return
-        count=len(self.pending_actions)
+        """Clear the local pending queue immediately; no router commands are sent."""
+        count = len(self.pending_actions)
         self.pending_actions.clear()
         self.update_pending_ui()
-        self.log(f"Очередь очищена: отменено операций — {count}. На роутер ничего не отправлялось.")
+        if count:
+            self.log(f"Очередь очищена: отменено операций — {count}. На роутер ничего не отправлялось.")
+            if hasattr(self, "statusBar"):
+                self.statusBar().showMessage(f"Отменено изменений: {count}", 6000)
+        else:
+            self.log("Очередь изменений уже пуста.")
 
     def update_pending_ui(self):
         if hasattr(self,"pending_label"):
@@ -3835,7 +3829,10 @@ class App(QMainWindow):
             dlg.reject()
         cancel_selected.clicked.connect(cancel_selected_actions)
         cancel_all=QPushButton("Отменить все изменения"); cancel_all.setObjectName("DangerButton")
-        cancel_all.clicked.connect(lambda:(dlg.reject(),QTimer.singleShot(0,self.cancel_all_pending)))
+        def cancel_all_from_preview():
+            self.cancel_all_pending()
+            dlg.reject()
+        cancel_all.clicked.connect(cancel_all_from_preview)
         close=QPushButton("Закрыть"); apply=QPushButton("Применить оставшиеся · "+str(len(actions))); apply.setObjectName("PrimaryButton")
         close.clicked.connect(dlg.reject); apply.clicked.connect(dlg.accept)
         footer.addWidget(cancel_selected); footer.addWidget(cancel_all); footer.addStretch(); footer.addWidget(close); footer.addWidget(apply); lay.addLayout(footer)

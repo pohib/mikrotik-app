@@ -834,7 +834,8 @@ class AutoDiscoveryDialog(QDialog):
         self.status.setText("Запрашиваю Certificate Transparency и DNS-over-HTTPS. Это может занять некоторое время…")
 
         def worker():
-            candidates = {root_domain}
+            profile_candidates = {self._is_domain(raw) for profile in matched for raw in PRESETS.get(profile, []) if self._is_domain(raw)}
+            candidates = {root_domain} | profile_candidates
             errors = []
             try:
                 url = "https://crt.sh/?q=%25." + urllib.parse.quote(root_domain) + "&output=json"
@@ -848,7 +849,7 @@ class AutoDiscoveryDialog(QDialog):
                             valid = self._is_domain(name)
                             if valid:
                                 candidates.add(valid)
-                candidates = set(sorted(candidates)[:180])
+                candidates = profile_candidates | set(sorted(candidates)[:180])
             except Exception as exc:
                 errors.append("CT: " + str(exc))
             resolved = {}
@@ -1009,8 +1010,11 @@ class App(QMainWindow):
         self.q = queue.Queue(); self.router: Optional[RouterConnection] = None
         self.busy = False; self.targets = []; self.pending_actions = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
         self.settings = self.load_settings()
-        try: self.target_groups = json.loads(self.settings.get("dependency_groups", "{}"))
-        except Exception: self.target_groups = {}
+        try:
+            groups=json.loads(self.settings.get("dependency_groups", "{}"))
+            self.target_groups=groups if isinstance(groups, dict) else {}
+        except Exception:
+            self.target_groups = {}
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
         self.build_ui(); self.load_targets()
@@ -3125,7 +3129,7 @@ class App(QMainWindow):
         if not hasattr(self,"target_table"): return
         found=self.router_state["found"] if self.router_state else {}
         local={t for t,_ in self.targets}
-        rows=[(t,k,True) for t,k in self.targets]+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
+        rows=sorted([(t,k,True) for t,k in self.targets], key=lambda row:(self.target_groups.get(row[0], "—").casefold(), row[0].casefold()))+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
         self.target_table.setRowCount(0)
         if hasattr(self,"targets_empty"): self.targets_empty.setVisible(not rows)
         self.target_table.setVisible(bool(rows))

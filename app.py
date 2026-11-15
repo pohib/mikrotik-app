@@ -43,9 +43,9 @@ DOH_PRESETS = {
 }
 
 PRESETS = {
-    "YouTube": ["youtube.com", "youtube-nocookie.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube.googleapis.com", "yt3.ggpht.com"],
+    "YouTube": ["youtube.com", "youtube-nocookie.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube.googleapis.com", "yt3.ggpht.com", "gstatic.com"],
     "Discord": ["discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media", "discordcdn.com"],
-    "OpenAI": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com"],
+    "ChatGPT / OpenAI": ["chatgpt.com", "chat.openai.com", "openai.com", "auth.openai.com", "api.openai.com", "platform.openai.com", "oaistatic.com", "oaiusercontent.com"],
     "Claude": ["claude.ai", "anthropic.com", "claudeusercontent.com"],
     "WhatsApp": ["whatsapp.com", "whatsapp.net", "wa.me"],
     "Telegram": ["telegram.org", "t.me", "telegram.me", "telegra.ph", "91.108.56.0/22", "91.108.4.0/22", "91.108.8.0/22", "91.108.16.0/22", "91.108.12.0/22", "149.154.160.0/20", "91.105.192.0/23", "91.108.20.0/22", "185.76.151.0/24"],
@@ -483,8 +483,9 @@ class WindowTitleBar(QFrame):
 
 class AutoDiscoveryDialog(QDialog):
     """Сбор доменных зависимостей из профилей, DNS и HAR браузера."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, dns_reader=None):
         super().__init__(parent)
+        self.dns_reader = dns_reader
         self.setWindowTitle("Автоопределение зависимостей сервиса")
         self.resize(980, 650)
         self.discovered = {}
@@ -517,10 +518,14 @@ class AutoDiscoveryDialog(QDialog):
         actions = QHBoxLayout()
         har = QPushButton("Импортировать HAR браузера")
         har.clicked.connect(self.import_har)
-        self.status = QLabel("Сначала укажи домен или импортируй HAR-файл.")
+        dns_cache = QPushButton("Загрузить DNS-кэш MikroTik")
+        dns_cache.setToolTip("Сначала открой сервис на клиентском устройстве, затем загрузи DNS-кэш роутера. Кэш не показывает, какой именно клиент создал запрос.")
+        dns_cache.clicked.connect(self.request_dns_cache)
+        self.status = QLabel("Сначала укажи домен, импортируй HAR или загрузи DNS-кэш MikroTik.")
         self.status.setObjectName("Muted")
         self.status.setWordWrap(True)
         actions.addWidget(har)
+        actions.addWidget(dns_cache)
         actions.addWidget(self.status, 1)
         root.addLayout(actions)
 
@@ -620,6 +625,35 @@ class AutoDiscoveryDialog(QDialog):
             (f"Найден профиль: {', '.join(matched)}. " if matched else "Готовый профиль не найден. ")
             + f"Доменов в списке: {len(self.discovered)}. IP показаны только для справки."
         )
+
+    def request_dns_cache(self):
+        if not callable(self.dns_reader):
+            QMessageBox.warning(self, "Нет подключения", "Загрузка DNS-кэша доступна через подключение SSH к MikroTik.")
+            return
+        self.status.setText("Запрашиваю DNS-кэш MikroTik…")
+        self.dns_reader(self)
+
+    def import_router_dns_cache(self, output):
+        # RouterOS cache entries commonly expose name=... and data=... fields.
+        records = re.findall(r'name="([^"]+)"[^\\n]*?(?:data|address)="([^"]+)"', str(output), flags=re.IGNORECASE)
+        names = set()
+        added = 0
+        for name, data in records:
+            domain = self._is_domain(name)
+            if domain:
+                names.add(domain)
+                self._add_domain(domain, "DNS-кэш MikroTik")
+                ips = self.discovered[domain][1]
+                try:
+                    if ipaddress.ip_address(data).version == 4 and data not in ips:
+                        self.discovered[domain] = (self.discovered[domain][0], sorted(set(ips + [data])))
+                except ValueError:
+                    alias = self._is_domain(data)
+                    if alias:
+                        names.add(alias)
+                        self._add_domain(alias, "CNAME из DNS-кэша MikroTik")
+        self._render()
+        self.status.setText(f"DNS-кэш MikroTik обработан: найдено доменов {len(names)}. Кэш может содержать старые записи и не указывает клиента-источника.")
 
     def import_har(self):
         path, _ = QFileDialog.getOpenFileName(self, "Импорт HAR", str(Path.home()), "HAR files (*.har *.json);;All files (*.*)")
@@ -1370,6 +1404,10 @@ class App(QMainWindow):
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
+                elif kind=="DISCOVERY_DNS_CACHE":
+                    dialog, output = payload
+                    if dialog and dialog.isVisible():
+                        dialog.import_router_dns_cache(output)
                 elif kind=="MANGLE_STATUS": self.on_mangle_status(payload)
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)
                 elif kind=="DIAGOUT": self.diag_block(*payload)
@@ -2598,7 +2636,7 @@ class App(QMainWindow):
         if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.render_targets()
         self.target_input.clear()
     def auto_discover_targets(self):
-        dlg = AutoDiscoveryDialog(self)
+        dlg = AutoDiscoveryDialog(self, self.request_discovery_dns_cache)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         existing = {target for target, _kind in self.targets}
@@ -2614,6 +2652,14 @@ class App(QMainWindow):
             QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
         else:
             QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
+
+    def request_discovery_dns_cache(self, dialog):
+        command = "/ip dns cache print detail without-paging"
+        def job():
+            router = self.router_conn()
+            output = self.cmd(router, command, 30)
+            self.q.put(("DISCOVERY_DNS_CACHE", (dialog, output)))
+        self.run_job("Загрузка DNS-кэша MikroTik для автоопределения…", job)
 
     def load_all_presets(self):
         n=0

@@ -3399,6 +3399,12 @@ if __name__=="__main__":
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME)
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")
+    app.setStyleSheet(STYLE + """
+        QDialog { background:#080f1d; color:#e8effb; }
+        QMessageBox { background:#0a1423; color:#e8effb; }
+        QMessageBox QLabel { color:#e8effb; min-width:280px; }
+        QMessageBox QPushButton { min-width:92px; min-height:34px; }
+    """)
     win=App(); win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
     sys.exit(app.exec())

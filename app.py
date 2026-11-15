@@ -850,6 +850,7 @@ class App(QMainWindow):
     def fetch_targets(self,r):
         alist=self.settings["address_list"]
         dns=parse_terse(r.exec('/ip dns static print terse where comment~"VPN-MANAGER:"'))
+        dns_cache=parse_terse(r.exec('/ip dns cache print terse'))
         managed_al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
         all_al=parse_terse(r.exec(f'/ip firewall address-list print terse where list={ros_q(alist)}'))
         total=len(all_al)
@@ -866,8 +867,17 @@ class App(QMainWindow):
                 detail="DNS static FWD"
                 if fields.get("address-list"): detail+=f' · address-list={fields["address-list"]}'
                 if fields.get("match-subdomain"): detail+=f' · match-subdomain={fields["match-subdomain"]}'
-                detail += f" · динамических IP в address-list: {dyn} (общий счётчик)"
-                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,dyn)
+                match_sub=fields.get("match-subdomain","")=="yes"
+                cache_ips=set()
+                for entry in dns_cache:
+                    cf=entry["f"]; cached_name=cf.get("name","").lower().rstrip(".")
+                    name_match=(cached_name==target or (match_sub and cached_name.endswith("."+target)))
+                    if name_match and cf.get("type","").upper()=="A":
+                        try: cache_ips.add(str(ipaddress.ip_address(cf.get("data",""))))
+                        except ValueError: pass
+                in_address_list=cache_ips.intersection(dynamic_ips)
+                detail += f" · DNS cache A: {len(cache_ips)} IP · совпало с динамическим address-list: {len(in_address_list)}"
+                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail,bool(in_address_list),len(cache_ips))
         for it in managed_al:
             fields=it["f"]; c=fields.get("comment","")
             if c.startswith("VPN-MANAGER-CIDR:"):
@@ -898,7 +908,8 @@ class App(QMainWindow):
         if getattr(self,"mangle_state","unknown")=="disabled": return ("Цель есть · VPN-маршрутизация выключена","warn")
         if getattr(self,"mangle_state","unknown")=="invalid": return ("Цель есть · ошибка правила маршрутизации","bad")
         if f[0]=="Домен":
-            return ("FWD настроена · DNS ещё не наполнил список","info") if len(f)<5 or not f[4] else ("FWD настроена · в общем списке есть динамические IP","ok")
+            if len(f)<6 or not f[5]: return ("FWD настроена · DNS ещё не разрешён","info")
+            return ("DNS разрешён · IP в address-list","ok") if f[4] else ("DNS разрешён · IP не попал в список","warn")
         if len(f)>=5 and not f[4]: return ("Нет IP в address-list","warn")
         return ("Применена на роутере","ok") if is_local else ("Только на роутере","info")
 

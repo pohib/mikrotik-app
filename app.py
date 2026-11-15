@@ -17,8 +17,8 @@ from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinear
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
-    QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
+    QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
+    QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
     QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
 )
 
@@ -524,6 +524,76 @@ def add_dialog_chrome(dialog, layout, title):
     dialog.setObjectName("AppDialog")
     dialog.setStyleSheet(STYLE)
     layout.insertWidget(0, DialogTitleBar(dialog, title))
+
+
+class QMessageBox:
+    """Небольшие системные уведомления в едином frameless-оформлении."""
+    StandardButton = QtMessageBox.StandardButton
+    Icon = QtMessageBox.Icon
+
+    @staticmethod
+    def _show(parent, title, text, icon, buttons, default_button=None):
+        box = QtMessageBox(icon, title, str(text), buttons, parent)
+        add_dialog_chrome(box, box.layout(), title)
+        if default_button is not None:
+            box.setDefaultButton(default_button)
+        return box.exec()
+
+    @staticmethod
+    def information(parent, title, text, buttons=QtMessageBox.StandardButton.Ok, defaultButton=QtMessageBox.StandardButton.NoButton):
+        return QMessageBox._show(parent,title,text,QtMessageBox.Icon.Information,buttons,defaultButton)
+
+    @staticmethod
+    def warning(parent, title, text, buttons=QtMessageBox.StandardButton.Ok, defaultButton=QtMessageBox.StandardButton.NoButton):
+        return QMessageBox._show(parent,title,text,QtMessageBox.Icon.Warning,buttons,defaultButton)
+
+    @staticmethod
+    def critical(parent, title, text, buttons=QtMessageBox.StandardButton.Ok, defaultButton=QtMessageBox.StandardButton.NoButton):
+        return QMessageBox._show(parent,title,text,QtMessageBox.Icon.Critical,buttons,defaultButton)
+
+    @staticmethod
+    def question(parent, title, text, buttons=QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No, defaultButton=QtMessageBox.StandardButton.NoButton):
+        return QMessageBox._show(parent,title,text,QtMessageBox.Icon.Question,buttons,defaultButton)
+
+
+class QFileDialog:
+    """Нативные системные диалоги заменены на Qt-диалоги в общей теме."""
+    @staticmethod
+    def _dialog(parent, caption, directory, name_filter, save=False, folder=False):
+        dialog=QtFileDialog(parent,caption,directory,name_filter)
+        dialog.setOption(QtFileDialog.Option.DontUseNativeDialog,True)
+        if folder:
+            dialog.setFileMode(QtFileDialog.FileMode.Directory)
+            dialog.setOption(QtFileDialog.Option.ShowDirsOnly,True)
+        elif save:
+            dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptSave)
+            dialog.setFileMode(QtFileDialog.FileMode.AnyFile)
+        else:
+            dialog.setAcceptMode(QtFileDialog.AcceptMode.AcceptOpen)
+            dialog.setFileMode(QtFileDialog.FileMode.ExistingFile)
+        add_dialog_chrome(dialog,dialog.layout(),caption)
+        return dialog
+
+    @staticmethod
+    def getOpenFileName(parent=None, caption="", directory="", filter="", *args, **kwargs):
+        dialog=QFileDialog._dialog(parent,caption,directory,filter)
+        if dialog.exec()==QDialog.DialogCode.Accepted and dialog.selectedFiles():
+            return dialog.selectedFiles()[0],filter
+        return "",filter
+
+    @staticmethod
+    def getSaveFileName(parent=None, caption="", directory="", filter="", *args, **kwargs):
+        dialog=QFileDialog._dialog(parent,caption,directory,filter,save=True)
+        if dialog.exec()==QDialog.DialogCode.Accepted and dialog.selectedFiles():
+            return dialog.selectedFiles()[0],filter
+        return "",filter
+
+    @staticmethod
+    def getExistingDirectory(parent=None, caption="", directory="", *args, **kwargs):
+        dialog=QFileDialog._dialog(parent,caption,directory,"",folder=True)
+        if dialog.exec()==QDialog.DialogCode.Accepted and dialog.selectedFiles():
+            return dialog.selectedFiles()[0]
+        return ""
 
 
 class AutoDiscoveryDialog(QDialog):

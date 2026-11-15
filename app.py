@@ -1,5 +1,5 @@
 from __future__ import annotations
-import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math, csv, socket
+import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, math, csv, socket, urllib.request, urllib.parse
 from collections import deque
 from pathlib import Path
 from datetime import datetime
@@ -624,29 +624,38 @@ class QFileDialog:
         return ""
 
 
+class DiscoverySignals(QObject):
+    finished = Signal(object)
+
+
 class AutoDiscoveryDialog(QDialog):
-    """Сбор доменных зависимостей из профилей, DNS и HAR браузера."""
+    """Автоматический сбор зависимостей: профили, Certificate Transparency, DNS-over-HTTPS и HAR."""
     def __init__(self, parent=None, dns_reader=None):
         super().__init__(parent)
         self.dns_reader = dns_reader
         self.setWindowTitle("Автоопределение зависимостей сервиса")
-        self.resize(980, 650)
+        self.resize(1120, 740)
         self.discovered = {}
+        self.scan_thread = None
+        self.signals = DiscoverySignals(self)
+        self.signals.finished.connect(self._finish_scan)
         self.dns_observation_baseline_ready = False
         self.dns_observation_baseline = set()
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("QDialog { background-color:#080f1d; color:#e8effb; } QWidget { color:#e8effb; }")
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 14)
+        root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(10)
-        add_dialog_chrome(self, root, "Автоопределение зависимостей")
+        add_dialog_chrome(self, root, "Зависимости сервисов")
 
-        title = QLabel("Автоопределение доменов и IP")
+        title = QLabel("Собери домены и IP в группы сервисов")
         title.setObjectName("SectionTitle")
         root.addWidget(title)
         note = QLabel(
-            "Укажи основной домен и запусти наблюдение до открытия сервиса: приложение запомнит исходный DNS-кэш, "
-            "а затем добавит новые поддомены и внешние домены, появившиеся во время загрузки. "
-            "HAR помогает собрать хосты запросов, Referer/Origin и редиректы. DNS-наблюдение не доказывает "
-            "принадлежность каждого нового домена именно этому сервису."
+            "Автопоиск получает поддомены из Certificate Transparency (crt.sh), проверяет A/AAAA/CNAME через "
+            "Cloudflare DNS-over-HTTPS и объединяет результаты с готовыми профилями. HAR показывает фактические "
+            "запросы браузера. Certificate Transparency не гарантирует полноту списка, а DNS-адреса CDN могут "
+            "использоваться несколькими сервисами — найденные IP не добавляются в маршрутизацию автоматически."
         )
         note.setObjectName("Muted")
         note.setWordWrap(True)
@@ -654,29 +663,29 @@ class AutoDiscoveryDialog(QDialog):
 
         input_row = QHBoxLayout()
         self.domain_input = QLineEdit()
-        self.domain_input.setPlaceholderText("youtube.com или chatgpt.com")
-        scan = QPushButton("Найти профиль и проверить DNS")
-        scan.setObjectName("PrimaryButton")
-        scan.clicked.connect(self.analyze_domain)
+        self.domain_input.setPlaceholderText("Основной домен: chatgpt.com, youtube.com, example.org")
+        self.domain_input.returnPressed.connect(self.refresh_dependencies)
+        self.scan_button = QPushButton("Обновить зависимости")
+        self.scan_button.setObjectName("PrimaryButton")
+        self.scan_button.clicked.connect(self.refresh_dependencies)
         input_row.addWidget(self.domain_input, 1)
-        input_row.addWidget(scan)
+        input_row.addWidget(self.scan_button)
         root.addLayout(input_row)
 
         actions = QHBoxLayout()
-        har = QPushButton("Импортировать HAR браузера")
+        har = QPushButton("Импорт HAR")
         har.clicked.connect(self.import_har)
-        dns_cache = QPushButton("Снять DNS-кэш")
-        dns_cache.setToolTip("Сначала открой сервис на клиентском устройстве, затем сними DNS-кэш роутера. Кэш не показывает, какой именно клиент создал запрос.")
+        dns_cache = QPushButton("Снять DNS-кэш роутера")
+        dns_cache.setToolTip("Дополнительный источник. DNS-кэш MikroTik не устанавливает, какое приложение создало запрос.")
         dns_cache.clicked.connect(self.request_dns_cache)
-        self.monitor_dns = QPushButton("Начать наблюдение")
+        self.monitor_dns = QPushButton("Наблюдать DNS вручную")
         self.monitor_dns.setCheckable(True)
-        self.monitor_dns.setToolTip("Пока окно открыто, периодически считывает DNS-кэш MikroTik. На роутере ничего не меняет.")
         self.monitor_dns.toggled.connect(self.toggle_dns_monitor)
         self.dns_monitor_timer = QTimer(self)
         self.dns_monitor_timer.setInterval(7000)
         self.dns_monitor_timer.timeout.connect(self.request_dns_cache)
         self.finished.connect(lambda _result: self.dns_monitor_timer.stop())
-        self.status = QLabel("Укажи домен, импортируй HAR или открой сервис и сними DNS-кэш MikroTik.")
+        self.status = QLabel("Введи основной домен и нажми «Обновить зависимости».")
         self.status.setObjectName("Muted")
         self.status.setWordWrap(True)
         actions.addWidget(har)
@@ -685,25 +694,27 @@ class AutoDiscoveryDialog(QDialog):
         actions.addWidget(self.status, 1)
         root.addLayout(actions)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Добавить", "Домен", "IPv4-адреса", "Источник"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Добавить", "Группа сервиса", "Домен", "IP-адреса", "Источник", "Достоверность"])
+        widths = [QHeaderView.ResizeMode.ResizeToContents, QHeaderView.ResizeMode.ResizeToContents,
+                  QHeaderView.ResizeMode.Stretch, QHeaderView.ResizeMode.Stretch,
+                  QHeaderView.ResizeMode.Stretch, QHeaderView.ResizeMode.ResizeToContents]
+        for col, mode in enumerate(widths):
+            self.table.horizontalHeader().setSectionResizeMode(col, mode)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
         self.table.setAlternatingRowColors(True)
-        self.table.setMinimumHeight(330)
+        self.table.setMinimumHeight(390)
         root.addWidget(self.table, 1)
 
-        self.add_ips = QCheckBox("Добавлять найденные IPv4 как отдельные /32")
+        self.add_ips = QCheckBox("Добавлять найденные IPv4 как отдельные /32 (не рекомендуется для общих CDN)")
         self.add_ips.setChecked(False)
         root.addWidget(self.add_ips)
         warning = QLabel(
-            "Рекомендация: обычно добавляй домены, а IP оставляй для диагностики. "
-            "IP CDN могут меняться; доменные FWD-записи на MikroTik динамически наполняют address-list."
+            "Уровни: «Фактический запрос» — домен найден в HAR; «Обнаружен» — найден в CT/DNS; "
+            "«Профиль» — домен взят из встроенного списка. IP используются только как справочная информация, "
+            "пока ты отдельно не отметишь добавление IP."
         )
         warning.setObjectName("InfoNote")
         warning.setWordWrap(True)
@@ -729,57 +740,151 @@ class AutoDiscoveryDialog(QDialog):
             return None
 
     @staticmethod
-    def _resolve_ipv4(domain):
-        try:
-            return sorted({item[4][0] for item in socket.getaddrinfo(domain, None, socket.AF_INET, socket.SOCK_STREAM)})
-        except OSError:
-            return []
+    def _resolve_dns(domain):
+        """Возвращает A/AAAA и CNAME через публичный DoH; не меняет DNS роутера."""
+        result = {"ips": set(), "cnames": set()}
+        for qtype in ("A", "AAAA", "CNAME"):
+            try:
+                url = "https://cloudflare-dns.com/dns-query?name=" + urllib.parse.quote(domain) + "&type=" + qtype
+                req = urllib.request.Request(url, headers={"accept": "application/dns-json", "User-Agent": "MikroTikVPNManager/1.7"})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                for answer in payload.get("Answer", []):
+                    data = str(answer.get("data", "")).rstrip(".")
+                    if qtype in ("A", "AAAA"):
+                        try:
+                            result["ips"].add(str(ipaddress.ip_address(data)))
+                        except ValueError:
+                            pass
+                    else:
+                        alias = AutoDiscoveryDialog._is_domain(data)
+                        if alias and alias != domain:
+                            result["cnames"].add(alias)
+            except Exception:
+                continue
+        return result
 
-    def _add_domain(self, domain, source):
+    def _group_for(self, domain, fallback=""):
+        for profile, entries in PRESETS.items():
+            for raw in entries:
+                item = self._is_domain(raw)
+                if item and (domain == item or domain.endswith("." + item) or item.endswith("." + domain)):
+                    return profile
+        return fallback or domain
+
+    def _add_domain(self, domain, source, group=None, confidence="Обнаружен", ips=None):
         domain = self._is_domain(domain)
         if not domain:
             return
-        if domain in self.discovered:
-            old_source, old_ips = self.discovered[domain]
-            sources = old_source.split("; ")
-            if source not in sources:
-                sources.append(source)
-            self.discovered[domain] = ("; ".join(sources), old_ips)
-        else:
-            self.discovered[domain] = (source, self._resolve_ipv4(domain))
+        record = self.discovered.setdefault(domain, {
+            "sources": set(), "ips": set(), "group": group or self._group_for(domain),
+            "confidence": confidence
+        })
+        record["sources"].add(source)
+        if ips:
+            record["ips"].update(ips)
+        if confidence == "Фактический запрос":
+            record["confidence"] = confidence
+        elif record["confidence"] == "Профиль" and confidence == "Обнаружен":
+            record["confidence"] = confidence
+        if group:
+            record["group"] = group
 
     def _render(self):
         self.table.setRowCount(0)
-        for domain, (source, ips) in sorted(self.discovered.items()):
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            check = QTableWidgetItem()
-            check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
-            check.setCheckState(Qt.CheckState.Checked)
-            self.table.setItem(row, 0, check)
-            self.table.setItem(row, 1, QTableWidgetItem(domain))
-            self.table.setItem(row, 2, QTableWidgetItem(", ".join(ips) if ips else "Не разрешён"))
-            self.table.setItem(row, 3, QTableWidgetItem(source))
+        grouped = {}
+        for domain, record in self.discovered.items():
+            grouped.setdefault(record["group"], []).append((domain, record))
+        for group in sorted(grouped, key=str.casefold):
+            entries = sorted(grouped[group], key=lambda item: item[0])
+            for domain, record in entries:
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                check = QTableWidgetItem()
+                check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
+                check.setCheckState(Qt.CheckState.Checked)
+                self.table.setItem(row, 0, check)
+                self.table.setItem(row, 1, QTableWidgetItem(group))
+                self.table.setItem(row, 2, QTableWidgetItem(domain))
+                self.table.setItem(row, 3, QTableWidgetItem(", ".join(sorted(record["ips"])) or "Нет данных"))
+                self.table.setItem(row, 4, QTableWidgetItem("; ".join(sorted(record["sources"]))))
+                self.table.setItem(row, 5, QTableWidgetItem(record["confidence"]))
 
-    def analyze_domain(self):
-        raw = self.domain_input.text().strip()
-        domain = self._is_domain(raw)
-        if not domain:
-            QMessageBox.warning(self, "Некорректный домен", "Введи доменное имя, например youtube.com. IP/CIDR здесь не подходит.")
+    def refresh_dependencies(self):
+        root_domain = self._is_domain(self.domain_input.text())
+        if not root_domain:
+            QMessageBox.warning(self, "Некорректный домен", "Укажи основной домен, например chatgpt.com.")
             return
-        self._add_domain(domain, "Введён пользователем")
+        if self.scan_thread and self.scan_thread.is_alive():
+            return
+        self.domain_input.setText(root_domain)
+        group = self._group_for(root_domain, root_domain)
+        self._add_domain(root_domain, "Основной домен", group, "Фактический запрос")
         matched = []
         for profile, entries in PRESETS.items():
             normalized = [self._is_domain(item) for item in entries]
-            if any(item and (domain == item or domain.endswith("." + item) or item.endswith("." + domain)) for item in normalized):
+            if any(item and (root_domain == item or root_domain.endswith("." + item) or item.endswith("." + root_domain)) for item in normalized):
                 matched.append(profile)
                 for item in normalized:
                     if item:
-                        self._add_domain(item, "Профиль: " + profile)
+                        self._add_domain(item, "Встроенный профиль: " + profile, profile, "Профиль")
         self._render()
+        self.scan_button.setEnabled(False)
+        self.scan_button.setText("Идёт поиск…")
+        self.status.setText("Запрашиваю Certificate Transparency и DNS-over-HTTPS. Это может занять некоторое время…")
+
+        def worker():
+            candidates = {root_domain}
+            errors = []
+            try:
+                url = "https://crt.sh/?q=%25." + urllib.parse.quote(root_domain) + "&output=json"
+                req = urllib.request.Request(url, headers={"User-Agent": "MikroTikVPNManager/1.7"})
+                with urllib.request.urlopen(req, timeout=18) as response:
+                    rows = json.loads(response.read().decode("utf-8", "replace"))
+                for item in rows:
+                    for name in str(item.get("name_value", "")).splitlines():
+                        name = name.strip().lower().lstrip("*.")
+                        if name == root_domain or name.endswith("." + root_domain):
+                            valid = self._is_domain(name)
+                            if valid:
+                                candidates.add(valid)
+                candidates = set(sorted(candidates)[:180])
+            except Exception as exc:
+                errors.append("CT: " + str(exc))
+            resolved = {}
+            try:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=12) as pool:
+                    futures = {pool.submit(self._resolve_dns, name): name for name in candidates}
+                    for future in as_completed(futures):
+                        name = futures[future]
+                        try:
+                            resolved[name] = future.result()
+                        except Exception:
+                            resolved[name] = {"ips": set(), "cnames": set()}
+            except Exception as exc:
+                errors.append("DNS: " + str(exc))
+            self.signals.finished.emit({"root": root_domain, "group": group, "candidates": sorted(candidates), "resolved": resolved, "errors": errors, "profiles": matched})
+        self.scan_thread = threading.Thread(target=worker, daemon=True)
+        self.scan_thread.start()
+
+    def _finish_scan(self, result):
+        root = result["root"]
+        group = result["group"]
+        for domain in result["candidates"]:
+            data = result["resolved"].get(domain, {})
+            self._add_domain(domain, "Certificate Transparency (crt.sh)" if domain != root else "Основной домен",
+                             self._group_for(domain, group), "Обнаружен", data.get("ips", set()))
+            for alias in data.get("cnames", set()):
+                self._add_domain(alias, "CNAME через Cloudflare DoH", self._group_for(alias, group), "Обнаружен")
+        self._render()
+        self.scan_button.setEnabled(True)
+        self.scan_button.setText("Обновить зависимости")
+        total_ips = sum(len(item["ips"]) for item in self.discovered.values())
+        suffix = (" Ошибки: " + " | ".join(result["errors"])) if result["errors"] else ""
         self.status.setText(
-            (f"Найден профиль: {', '.join(matched)}. " if matched else "Готовый профиль не найден. ")
-            + f"Доменов в списке: {len(self.discovered)}. IP показаны только для справки."
+            f"Группа «{group}»: доменов в списке {len(self.discovered)}, найдено IP/IPv6 {total_ips}. "
+            "CT и DNS дают кандидатов, а не доказательство зависимости." + suffix
         )
 
     def toggle_dns_monitor(self, enabled):
@@ -788,72 +893,50 @@ class AutoDiscoveryDialog(QDialog):
             self.dns_observation_baseline_ready = False
             self.dns_observation_baseline.clear()
             self.dns_monitor_timer.start()
-            self.status.setText("Снимаю исходный DNS-кэш. После этого открой сервис: новые DNS-имена будут добавляться автоматически.")
+            self.status.setText("Снимаю исходный DNS-кэш, затем можно открыть сервис.")
             self.request_dns_cache()
         else:
             self.dns_monitor_timer.stop()
-            self.monitor_dns.setText("Начать наблюдение")
+            self.monitor_dns.setText("Наблюдать DNS вручную")
             self.status.setText("Наблюдение DNS остановлено.")
 
     def request_dns_cache(self):
         if not callable(self.dns_reader):
-            QMessageBox.warning(self, "Нет подключения", "Загрузка DNS-кэша доступна через подключение SSH к MikroTik.")
+            QMessageBox.warning(self, "Нет подключения", "DNS-кэш MikroTik доступен после SSH-подключения.")
             return
         self.dns_reader(self)
 
     def closeEvent(self, event):
-        if hasattr(self, "dns_monitor_timer"):
-            self.dns_monitor_timer.stop()
+        self.dns_monitor_timer.stop()
         super().closeEvent(event)
 
     def import_router_dns_cache(self, output):
-        # RouterOS cache entries commonly expose name=... and data=... fields.
         records = re.findall(r'name="([^"]+)"[^\n]*?(?:data|address)="([^"]+)"', str(output), flags=re.IGNORECASE)
         current_names = {domain for name, _data in records if (domain := self._is_domain(name))}
         if self.monitor_dns.isChecked() and not self.dns_observation_baseline_ready:
             self.dns_observation_baseline = current_names
             self.dns_observation_baseline_ready = True
-            self.status.setText(
-                f"Исходный DNS-кэш зафиксирован ({len(current_names)} имён). Теперь открой сервис и пользуйся им: "
-                "новые имена будут добавляться автоматически."
-            )
+            self.status.setText(f"Исходный DNS-кэш зафиксирован ({len(current_names)} имён). Открой нужный сервис.")
             return
-
-        names = set()
-        added_before = len(self.discovered)
+        added = 0
         for name, data in records:
             domain = self._is_domain(name)
-            if not domain:
+            if not domain or (self.monitor_dns.isChecked() and domain in self.dns_observation_baseline):
                 continue
-            is_new_during_observation = (
-                not self.monitor_dns.isChecked()
-                or domain not in self.dns_observation_baseline
-            )
-            if is_new_during_observation:
-                names.add(domain)
-                self._add_domain(domain, "Новый DNS-запрос во время наблюдения" if self.monitor_dns.isChecked() else "DNS-кэш MikroTik")
-                ips = self.discovered[domain][1]
-                try:
-                    if ipaddress.ip_address(data).version == 4 and data not in ips:
-                        self.discovered[domain] = (self.discovered[domain][0], sorted(set(ips + [data])))
-                except ValueError:
-                    alias = self._is_domain(data)
-                    if alias:
-                        names.add(alias)
-                        self._add_domain(alias, "CNAME из DNS-кэша MikroTik")
+            group = self._group_for(domain)
+            ips = set()
+            try:
+                ipaddress.ip_address(data)
+                ips.add(data)
+            except ValueError:
+                alias = self._is_domain(data)
+                if alias:
+                    self._add_domain(alias, "CNAME из DNS-кэша MikroTik", self._group_for(alias), "Обнаружен")
+            self._add_domain(domain, "DNS-кэш MikroTik", group, "Обнаружен", ips)
             self.dns_observation_baseline.add(domain)
+            added += 1
         self._render()
-        if self.monitor_dns.isChecked():
-            new_count = len(self.discovered) - added_before
-            self.status.setText(
-                f"Наблюдение DNS: новых имён в этом снимке {len(names)}, новых строк в списке {max(0, new_count)}. "
-                "Могут попадаться фоновые запросы других приложений; для точной атрибуции используй HAR."
-            )
-        else:
-            self.status.setText(
-                f"DNS-кэш MikroTik обработан: найдено доменов {len(names)}. "
-                "Кэш может содержать старые записи и не указывает клиента-источника."
-            )
+        self.status.setText(f"DNS-кэш обработан: обновлено доменов {added}. Источник не определяет приложение-клиент.")
 
     def import_har(self):
         path, _ = QFileDialog.getOpenFileName(self, "Импорт HAR", str(Path.home()), "HAR files (*.har *.json);;All files (*.*)")
@@ -868,55 +951,53 @@ class AutoDiscoveryDialog(QDialog):
                 response = entry.get("response", {})
                 request_url = request.get("url", "")
                 request_domain = self._is_domain(urlparse(request_url).hostname or "")
-                candidates = [(request_url, "HAR: запрос браузера")]
-                # Referer/Origin связывают запрос с открытой страницей; Location фиксирует redirect host.
+                candidates = [(request_url, "HAR: фактический запрос")]
                 for header in request.get("headers", []) + response.get("headers", []):
                     header_name = str(header.get("name", "")).lower()
                     if header_name in ("referer", "origin", "location"):
-                        candidates.append((str(header.get("value", "")), f"HAR: заголовок {header_name}"))
-                redirect_url = response.get("redirectURL", "")
-                if redirect_url:
-                    candidates.append((redirect_url, "HAR: HTTP redirect"))
+                        candidates.append((str(header.get("value", "")), "HAR: " + header_name))
+                if response.get("redirectURL"):
+                    candidates.append((response["redirectURL"], "HAR: redirect"))
                 for candidate_url, source in candidates:
-                    host = urlparse(candidate_url).hostname or ""
-                    domain = self._is_domain(host)
-                    if not domain:
-                        continue
-                    before = len(self.discovered)
-                    self._add_domain(domain, source)
-                    if len(self.discovered) > before:
+                    host = self._is_domain(urlparse(candidate_url).hostname or "")
+                    if host:
+                        ips = set()
+                        if source == "HAR: фактический запрос":
+                            server_ip = entry.get("serverIPAddress", "")
+                            try:
+                                if server_ip:
+                                    ips.add(str(ipaddress.ip_address(server_ip)))
+                            except ValueError:
+                                pass
+                        self._add_domain(host, source, self._group_for(host, self._is_domain(self.domain_input.text()) or host),
+                                         "Фактический запрос" if source == "HAR: фактический запрос" else "Обнаружен", ips)
                         count += 1
-                # serverIPAddress относится только к URL запроса, не к Referer/Origin.
-                server_ip = entry.get("serverIPAddress", "")
-                try:
-                    if request_domain and server_ip and ipaddress.ip_address(server_ip).version == 4:
-                        current_source, current_ips = self.discovered[request_domain]
-                        if server_ip not in current_ips:
-                            self.discovered[request_domain] = (current_source, sorted(set(current_ips + [server_ip])))
-                except ValueError:
-                    pass
             self._render()
-            self.status.setText(f"HAR обработан: обнаружено {count} новых доменов; всего в списке: {len(self.discovered)}.")
+            self.status.setText(f"HAR обработан: фактические и связанные хосты добавлены; записей: {len(self.discovered)}.")
         except Exception as exc:
             QMessageBox.critical(self, "Ошибка HAR", f"Не удалось прочитать HAR-файл:\n{exc}")
 
-    def selected_targets(self):
+    def selected_target_records(self):
         result = []
-        include_ips = self.add_ips.isChecked()
         for row in range(self.table.rowCount()):
             check = self.table.item(row, 0)
             if not check or check.checkState() != Qt.CheckState.Checked:
                 continue
-            domain = self.table.item(row, 1).text()
-            result.append((domain, "Домен"))
-            if include_ips:
-                for ip in filter(None, (self.table.item(row, 2).text().split(", "))):
+            domain = self.table.item(row, 2).text()
+            group = self.table.item(row, 1).text()
+            result.append((domain, "Домен", group))
+            if self.add_ips.isChecked():
+                for ip in filter(None, self.table.item(row, 3).text().split(", ")):
                     try:
-                        if ip != "Не разрешён" and ipaddress.ip_address(ip).version == 4:
-                            result.append((f"{ip}/32", "IPv4-сеть"))
+                        addr = ipaddress.ip_address(ip)
+                        if addr.version == 4:
+                            result.append((f"{addr}/32", "IPv4-сеть", group))
                     except ValueError:
                         pass
         return result
+
+    def selected_targets(self):
+        return [(target, kind) for target, kind, _group in self.selected_target_records()]
 
 
 class App(QMainWindow):
@@ -928,6 +1009,8 @@ class App(QMainWindow):
         self.q = queue.Queue(); self.router: Optional[RouterConnection] = None
         self.busy = False; self.targets = []; self.pending_actions = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
         self.settings = self.load_settings()
+        try: self.target_groups = json.loads(self.settings.get("dependency_groups", "{}"))
+        except Exception: self.target_groups = {}
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
         self.build_ui(); self.load_targets()
@@ -955,6 +1038,7 @@ class App(QMainWindow):
             self.settings["doh_url"] = self.doh_url.text().strip()
             self.settings["doh_bootstrap"] = self.doh_bootstrap.text().strip()
             self.settings["doh_verify_cert"] = "1" if self.doh_verify_cert.isChecked() else "0"
+        self.settings["dependency_groups"] = json.dumps(getattr(self, "target_groups", {}), ensure_ascii=False)
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1108,7 +1192,7 @@ class App(QMainWindow):
         export_btn=QPushButton("Экспорт CSV"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
         row2.addStretch()
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
-        self.target_table=QTableWidget(0,7); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
+        self.target_table=QTableWidget(0,8); self.target_table.setHorizontalHeaderLabels(["Группа","Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(7,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
         self.targets_empty=QLabel("Список пока пуст. Добавь домен или IPv4-адрес выше либо загрузи готовый профиль.")
         self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         actions=QHBoxLayout()
@@ -2981,7 +3065,7 @@ class App(QMainWindow):
     def add_target(self):
         try: t,k=normalize_target(self.target_input.text())
         except Exception as e: QMessageBox.warning(self,"Некорректная цель",str(e)); return
-        if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.render_targets()
+        if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]="Пользовательские"; self.save_settings(); self.render_targets()
         self.target_input.clear()
     def auto_discover_targets(self):
         dlg = AutoDiscoveryDialog(self, self.request_discovery_dns_cache)
@@ -2989,11 +3073,15 @@ class App(QMainWindow):
             return
         existing = {target for target, _kind in self.targets}
         added = 0
-        for target, kind in dlg.selected_targets():
+        for target, kind, group in dlg.selected_target_records():
             if target not in existing:
                 self.targets.append((target, kind))
+                self.target_groups[target] = group
                 existing.add(target)
                 added += 1
+            elif group:
+                self.target_groups[target] = group
+        self.save_settings()
         self.render_targets()
         self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")
         if added:
@@ -3025,8 +3113,8 @@ class App(QMainWindow):
         for raw in PRESETS[name]:
             try: t,k=normalize_target(raw)
             except: continue
-            if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); n+=1
-        self.render_targets(); self.log(f"Профиль {name}: добавлено {n} целей")
+            if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]=name; n+=1
+        self.save_settings(); self.render_targets(); self.log(f"Профиль {name}: добавлено {n} целей")
     def render_targets(self):
         if not hasattr(self,"target_table"): return
         found=self.router_state["found"] if self.router_state else {}
@@ -3049,13 +3137,14 @@ class App(QMainWindow):
                 remote="Найдена"; remote_tone="ok"; detail=f[3]; target_state,state_tone=self.status_for(t,is_local)
             local_label="В локальном списке" if is_local else "Только на роутере"
             source="DNS FWD" if k=="Домен" else "address-list"
-            values=(t,k,source,local_label,remote,target_state,detail)
+            group=self.target_groups.get(t, "—") if is_local else "—"
+            values=(group,t,k,source,local_label,remote,target_state,detail)
             i=self.target_table.rowCount(); self.target_table.insertRow(i)
             for j,val in enumerate(values):
                 item=QTableWidgetItem(val); item.setData(Qt.ItemDataRole.UserRole,t)
-                if j==4:
+                if j==5:
                     item.setForeground(QBrush(QColor(TONES[remote_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
-                elif j==5:
+                elif j==6:
                     item.setForeground(QBrush(QColor(TONES[state_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
                 self.target_table.setItem(i,j,item)
         self.filter_targets(self.target_search.text() if hasattr(self,"target_search") else "")
@@ -3063,13 +3152,15 @@ class App(QMainWindow):
 
     def filter_targets(self,text):
         if not hasattr(self,"target_table"): return
-        for i in range(self.target_table.rowCount()): self.target_table.setRowHidden(i,text.lower() not in self.target_table.item(i,0).text().lower())
+        for i in range(self.target_table.rowCount()): self.target_table.setRowHidden(i, not any(text.lower() in self.target_table.item(i,col).text().lower() for col in (0,1)))
     def selected_targets(self):
         rows=sorted({x.row() for x in self.target_table.selectionModel().selectedRows()})
-        return [(self.target_table.item(i,0).data(Qt.ItemDataRole.UserRole),self.target_table.item(i,1).text()) for i in rows]
+        return [(self.target_table.item(i,1).data(Qt.ItemDataRole.UserRole),self.target_table.item(i,2).text()) for i in rows]
     def remove_local(self):
         selected=self.selected_targets()
-        self.targets=[x for x in self.targets if x not in selected]; self.render_targets()
+        self.targets=[x for x in self.targets if x not in selected]
+        for target, _kind in selected: self.target_groups.pop(target, None)
+        self.save_settings(); self.render_targets()
     def plan_text(self):
         """Точные команды RouterOS в том виде, в каком они уйдут на роутер."""
         f=self.fields(); found=self.router_state["found"] if self.router_state else None
@@ -3327,14 +3418,14 @@ class App(QMainWindow):
     def apply_pending_changes(self):
         if not self.pending_actions:return
         actions=list(self.pending_actions)
-        dlg=QDialog(self); dlg.resize(980,760)
+        dlg=QDialog(self); dlg.setObjectName("ApplyChangesDialog"); dlg.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True); dlg.setStyleSheet("QDialog#ApplyChangesDialog { background-color:#080f1d; color:#e8effb; } QWidget#ApplyChangesBody { background-color:#080f1d; color:#e8effb; } QScrollArea { background:transparent; border:0; } QScrollArea QWidget { background-color:#080f1d; color:#e8effb; }"); dlg.resize(980,760)
         lay=QVBoxLayout(dlg); lay.setContentsMargins(14,12,14,14); lay.setSpacing(12)
         add_dialog_chrome(dlg,lay,"Проверка и применение изменений")
         title=QLabel(f"Проверь операции · {len(actions)}"); title.setObjectName("SectionTitle")
         note=QLabel("Каждое изменение показано отдельным блоком: пояснение, команды RouterOS и что проверить после применения. До подтверждения команды не отправляются.")
         note.setObjectName("Muted"); note.setWordWrap(True); lay.addWidget(title); lay.addWidget(note)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body=QWidget(); body_layout=QVBoxLayout(body); body_layout.setContentsMargins(2,2,8,2); body_layout.setSpacing(12)
+        body=QWidget(); body.setObjectName("ApplyChangesBody"); body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True); body.setAutoFillBackground(True); body_layout=QVBoxLayout(body); body_layout.setContentsMargins(2,2,8,2); body_layout.setSpacing(12)
         for index,a in enumerate(actions):
             description,commands,checks=self.pending_action_details(a)
             card=QFrame(); card.setObjectName("Panel"); cl=QVBoxLayout(card); cl.setContentsMargins(14,12,14,12); cl.setSpacing(8)
@@ -3606,7 +3697,7 @@ if __name__=="__main__":
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")
     app.setStyleSheet(STYLE + """
-        QDialog { background:#080f1d; color:#e8effb; }
+        QDialog { background:#080f1d; color:#e8effb; } QDialog#ApplyChangesDialog QWidget { color:#e8effb; } QDialog#ApplyChangesDialog QScrollArea { background:#080f1d; } QDialog#ApplyChangesDialog QScrollArea QWidget#ApplyChangesBody { background:#080f1d; }
         QMessageBox { background:#0a1423; color:#e8effb; }
         QMessageBox QLabel { color:#e8effb; min-width:280px; }
         QMessageBox QPushButton { min-width:92px; min-height:34px; }

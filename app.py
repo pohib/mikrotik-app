@@ -784,25 +784,42 @@ class App(QMainWindow):
         if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
             QMessageBox.warning(self,"Некорректный DoH endpoint","Укажи HTTPS URL без логина и пароля."); return
         def job():
-            import urllib.request, urllib.parse, json as _json, ssl
-            parts=[f"DNS / DoH DIAGNOSTIC · {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",f"Target domain: {domain}",f"Independent DoH endpoint (from this PC): {endpoint}","Router configuration changed: no",""]
+            import urllib.request, urllib.error, ssl, struct, secrets, binascii
+            parts=[f"DNS / DoH DIAGNOSTIC · {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",f"Target domain: {domain}",f"Independent DoH endpoint (from this PC): {endpoint}","Protocol: RFC 8484 DNS wire format (POST application/dns-message)","Router configuration changed: no",""]
             doh_result="ERROR"
             try:
-                query=urllib.parse.urlencode({"name":domain,"type":"A"})
-                url=endpoint+("&" if "?" in endpoint else "?")+query
-                req=urllib.request.Request(url,headers={"Accept":"application/dns-json","User-Agent":"MikroTik-VPN-Manager-Diagnostic/1.0"})
+                ident=secrets.randbelow(65536)
+                qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\\x00"
+                packet=struct.pack("!HHHHHH",ident,0x0100,1,0,0,0)+qname+struct.pack("!HH",1,1)
+                req=urllib.request.Request(endpoint,data=packet,headers={"Content-Type":"application/dns-message","Accept":"application/dns-message","User-Agent":"MikroTik-VPN-Manager-Diagnostic/1.0"},method="POST")
                 with urllib.request.urlopen(req,timeout=12,context=ssl.create_default_context()) as response:
-                    body=response.read(65536).decode("utf-8","replace")
-                    data=_json.loads(body)
-                    if response.status==200 and data.get("Status")==0 and data.get("Answer"):
+                    answer=response.read(65536)
+                    if response.status!=200 or len(answer)<12:
+                        raise ValueError(f"Unexpected HTTP/DNS response: HTTP {response.status}, {len(answer)} bytes")
+                    rid,flags,qdcount,ancount,nscount,arcount=struct.unpack("!HHHHHH",answer[:12])
+                    rcode=flags & 0x000F
+                    if rid!=ident: raise ValueError("DNS response ID does not match request")
+                    if not (flags & 0x8000): raise ValueError("Response does not have DNS QR flag")
+                    if rcode==0 and ancount>0:
                         doh_result="OK"
-                        parts.extend(["▌ Independent DoH test · PC → endpoint","TLS certificate: verified",f"HTTP status: {response.status}",f"DNS response: {body}",""])
+                    elif rcode==0:
+                        doh_result="WARN"
                     else:
                         doh_result="WARN"
-                        parts.extend(["▌ Independent DoH test · PC → endpoint",f"HTTP status: {response.status}",f"DNS JSON: {body}","Endpoint answered, but a successful A-record answer was not confirmed.",""])
+                    parts.extend(["▌ Independent DoH test · PC → endpoint","TLS certificate: verified",f"HTTP status: {response.status}",f"DNS response ID: {rid}",f"DNS RCODE: {rcode}",f"Answer records: {ancount}",f"Response bytes: {len(answer)}",f"Response (hex, first 256 bytes): {binascii.hexlify(answer[:256]).decode('ascii')}", ""])
+                    if doh_result=="OK":
+                        parts.append("DoH endpoint successfully returned a DNS answer using RFC 8484 wire format.")
+                    else:
+                        parts.append("Endpoint answered, but a positive DNS answer was not confirmed for this name.")
+                    parts.append("")
+            except urllib.error.HTTPError as exc:
+                try: detail=exc.read(2048).decode("utf-8","replace")
+                except Exception: detail=""
+                doh_result="BAD"
+                parts.extend(["▌ Independent DoH test · PC → endpoint",f"HTTP error: {exc.code} {exc.reason}",f"Response body: {detail or '(empty)'}","TLS connection was established far enough to receive an HTTP response; inspect endpoint path and DoH protocol support.",""])
             except Exception as exc:
                 doh_result="BAD"
-                parts.extend(["▌ Independent DoH test · PC → endpoint","ERROR: "+repr(exc),"TLS / HTTP / DNS request failed from this PC.",""])
+                parts.extend(["▌ Independent DoH test · PC → endpoint","ERROR: "+repr(exc),"TLS / HTTP / DNS wire-format request failed from this PC.",""])
             f=self.settings; alist=f.get("address_list",ADDRESS_LIST_DEFAULT)
             commands=[
                 ("DNS configuration","/ip dns print"),

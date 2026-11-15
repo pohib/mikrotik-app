@@ -795,26 +795,30 @@ class App(QMainWindow):
     def fetch_targets(self,r):
         alist=self.settings["address_list"]
         dns=parse_terse(r.exec('/ip dns static print terse where comment~"VPN-MANAGER:"'))
-        al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
-        def count(command):
-            try:
-                x=r.exec(command).strip(); return int(x) if x.isdigit() else 0
-            except Exception: return 0
-        total=count(f"/ip firewall address-list print count-only where list={ros_q(alist)}")
-        dyn=count(f"/ip firewall address-list print count-only where list={ros_q(alist)} dynamic")
+        managed_al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
+        all_al=parse_terse(r.exec(f'/ip firewall address-list print terse where list={ros_q(alist)}'))
+        total=len(all_al)
+        dyn=sum(1 for it in all_al if "D" in it["flags"])
         found={}
         for it in dns:
-            c=it["f"].get("comment","")
-            if c.startswith("VPN-MANAGER:"): found[c.split(":",1)[1]]=("Домен","X" in it["flags"])
-        for it in al:
-            c=it["f"].get("comment","")
+            fields=it["f"]; c=fields.get("comment","")
+            if c.startswith("VPN-MANAGER:"):
+                target=c.split(":",1)[1]
+                detail="DNS static FWD"
+                if fields.get("address-list"): detail+=f' · address-list={fields["address-list"]}'
+                if fields.get("match-subdomain"): detail+=f' · match-subdomain={fields["match-subdomain"]}'
+                found[target]=("Домен","X" in it["flags"],"I" in it["flags"],detail)
+        for it in managed_al:
+            fields=it["f"]; c=fields.get("comment","")
             if c.startswith("VPN-MANAGER-CIDR:"):
-                t=c.split(":",1)[1]; found[t]=("IPv4-адрес" if t.endswith("/32") else "IPv4-сеть","X" in it["flags"])
+                target=c.split(":",1)[1]
+                kind="IPv4-адрес" if target.endswith("/32") else "IPv4-сеть"
+                found[target]=(kind,"X" in it["flags"],"I" in it["flags"],"Статическая запись address-list")
         self.q.put(("TARGETS",{"found":found,"dyn":dyn,"total":total,"dns_count":len(dns)}))
 
     def on_targets(self,payload):
         self.router_state=payload; self.render_targets()
-        self.set_ind("fwd","ok" if payload["dns_count"]>0 else "off",str(payload["dns_count"]))
+        self.set_ind("fwd","ok" if payload["dns_count"]>0 else "off",f'{payload["dns_count"]} FWD')
         total,dyn=payload["total"],payload["dyn"]
         self.set_ind("ips","ok" if total>0 else "off",f"{dyn} дин. · {total-dyn} стат." if total else "пусто")
 
@@ -823,8 +827,33 @@ class App(QMainWindow):
         if st is None: return ("Не проверено","muted")
         f=st["found"].get(t)
         if f is None: return ("Не применена","muted")
+        if f[2]: return ("Ошибка (invalid)","bad")
         if f[1]: return ("Отключена","warn")
         return ("Активна","ok") if is_local else ("Только на роутере","info")
+
+    def fetch_mangle_status(self,r):
+        entries=parse_terse(r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}'))
+        if len(entries)!=1:
+            state="unknown"
+            label="Не определён" if not entries else f"Неоднозначно: найдено {len(entries)} правил"
+        elif "I" in entries[0]["flags"]:
+            state="invalid"; label="Ошибка (invalid)"
+        elif "X" in entries[0]["flags"]:
+            state="disabled"; label="Отключено"
+        else:
+            state="enabled"; label="Включено"
+        self.q.put(("MANGLE_STATUS",{"state":state,"label":label,"checked":datetime.now().strftime("%H:%M:%S")}))
+
+    def on_mangle_status(self,payload):
+        if not hasattr(self,"mangle_status"): return
+        state=payload["state"]; label=payload["label"]
+        tone={"enabled":"ok","disabled":"warn","invalid":"bad","unknown":"muted"}.get(state,"muted")
+        self.mangle_status.setText(f'●  {label} · проверено {payload["checked"]}')
+        self.mangle_status.setStyleSheet(f"color:{TONES[tone]};font-weight:700")
+
+    def refresh_mangle_status(self):
+        def job(): self.fetch_mangle_status(self.router_conn())
+        self.run_job("Проверка состояния VPN-маршрутизации…",job)
 
     def render_active(self):
         tb=self.active_table; tb.setRowCount(0); sub=self.active_panel.sub_label; st=self.router_state

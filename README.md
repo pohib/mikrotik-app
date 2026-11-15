@@ -1,5 +1,17 @@
 # MikroTik VPN Manager — v1.2.0
 
+## v1.3.0 — UX and usability
+
+- Startup opens the dashboard without forcing an SSH login dialog; connect when ready.
+- Reduced minimum window size and refined spacing for more laptop-friendly layouts.
+- Added Ctrl+1…Ctrl+8 navigation shortcuts and Ctrl+L for the operation log.
+- Added visible indeterminate progress while a router operation is running and clearer busy feedback.
+- Added an explanatory empty state for the routing-target list.
+- Improved focus, table selection and progress styling.
+- Existing staged-change confirmation and router safety checks are retained.
+
+
+
 ## Launch (Windows 10/11)
 1. Extract the complete folder from the ZIP.
 2. Install Python 3.10 or newer from https://www.python.org/downloads/ (enable Python Launcher or PATH).

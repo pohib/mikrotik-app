@@ -430,7 +430,8 @@ class App(QMainWindow):
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
-    def save_settings(self):        if hasattr(self, "inputs"):
+    def save_settings(self):
+        if hasattr(self, "inputs"):
             self.settings = self.fields()
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -631,7 +632,8 @@ class App(QMainWindow):
         copy_btn=QPushButton("Копировать вывод"); copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.terminal_output.toPlainText()))
         clear_btn=QPushButton("Очистить"); clear_btn.clicked.connect(lambda: self.terminal_output.clear())
         bar.addWidget(copy_btn); bar.addWidget(clear_btn); pl.addLayout(bar)
-        self.terminal_output=QPlainTextEdit()        self.terminal_output.setObjectName("TerminalOutput")
+        self.terminal_output=QPlainTextEdit()
+        self.terminal_output.setObjectName("TerminalOutput")
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.terminal_output.setPlaceholderText("Вывод команд RouterOS появится здесь…")
@@ -835,7 +837,8 @@ class App(QMainWindow):
         for tg,f in sorted(found.items()):
             label,tone=self.status_for(tg,tg in local); i=tb.rowCount(); tb.insertRow(i)
             for j,val in enumerate((tg,f[0],"●  "+label)):
-                item=QTableWidgetItem(val)                if j==2:
+                item=QTableWidgetItem(val)
+                if j==2:
                     item.setForeground(QBrush(QColor(TONES[tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
                 tb.setItem(i,j,item)
 

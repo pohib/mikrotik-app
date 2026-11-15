@@ -907,6 +907,7 @@ class App(QMainWindow):
         if f[1]: return ("Запись отключена","warn")
         if getattr(self,"mangle_state","unknown")=="disabled": return ("Цель есть · VPN-маршрутизация выключена","warn")
         if getattr(self,"mangle_state","unknown")=="invalid": return ("Цель есть · ошибка правила маршрутизации","bad")
+        if getattr(self,"mangle_state","unknown")=="unknown": return ("Цель есть · правило маршрутизации не подтверждено","warn")
         if f[0]=="Домен":
             if len(f)<6 or not f[5]: return ("FWD настроена · DNS ещё не разрешён","info")
             return ("DNS разрешён · IP в address-list","ok") if f[4] else ("DNS разрешён · IP не попал в список","warn")

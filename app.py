@@ -2643,13 +2643,32 @@ class App(QMainWindow):
                 ("Счётчики managed Mangle",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
                 ("WireGuard peer counters",f"/interface wireguard peers print detail where interface={ros_q(self.settings['wg_interface'])}"),
                 ("VPN default route",f"/ip route print detail where routing-table={ros_q(self.settings['route_table'])}"),
+                ("IPv6 settings", "/ipv6 settings print"),
+                ("IPv6 default route", "/ipv6 route print detail where dst-address=::/0 and disabled=no"),
+                ("FastTrack counters", "/ip firewall filter print stats detail"),
             ]
             self.q.put(("DIAGBEGIN",f"Диагностика маршрута домена {domain}"))
+            resolved_ips=[]
             for title,command in commands:
                 try: out=self.cmd(r,command,timeout=20)
                 except Exception as e: out="ERROR: "+str(e)
                 self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
-            self.q.put(("LOG",f"Собраны DNS/address-list/Mangle/WireGuard evidence для {domain}. Счётчики Mangle и peer глобальные, не per-domain."))
+                if title=="DNS resolve через RouterOS" and not out.startswith("ERROR:"):
+                    for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9])",out):
+                        try:
+                            ipaddress.IPv4Address(candidate)
+                            if candidate not in resolved_ips: resolved_ips.append(candidate)
+                        except ValueError:
+                            pass
+            for probe_ip in resolved_ips[:5]:
+                for table_name,table_value in (("main","main"),("vpn",self.settings["route_table"])):
+                    command=f"/ip route print detail where {probe_ip} in dst-address and active and routing-table={ros_q(table_value)}"
+                    try: out=self.cmd(r,command,timeout=20)
+                    except Exception as e: out="ERROR: "+str(e)
+                    self.q.put(("DIAGOUT",(f"Активный маршрут {probe_ip} · {table_name} · {command}",out,False,True)))
+            if not resolved_ips:
+                self.q.put(("DIAGOUT",("Проверка активного маршрута","IPv4 из DNS-ответа не получен; route lookup не выполнялся. Для IPv6 требуется отдельная проверка.",False,True)))
+            self.q.put(("LOG",f"Собраны DNS/address-list/Mangle/WireGuard/route-table evidence для {domain}. Счётчики Mangle и peer глобальные, не per-domain."))
         self.run_job(f"Проверка маршрута домена {domain}…",job)
 
     def show_policy_counters(self):

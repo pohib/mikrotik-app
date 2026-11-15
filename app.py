@@ -567,6 +567,10 @@ class App(QMainWindow):
             row=QHBoxLayout(); row.setSpacing(10); dot=Dot(); tl=QLabel(title); tl.setObjectName("IndTitle"); vl=QLabel("—"); vl.setObjectName("IndValue"); vl.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(dot); row.addWidget(tl,1); row.addWidget(vl); dp.layout().addLayout(row); self.dns_ind[key]=(dot,vl)
         dp.layout().addStretch(); mid.addWidget(dp,1); l.addLayout(mid)
+        normal=self.panel("Обычный трафик · оценка","Скорость WAN за вычетом WireGuard; оценка, не отдельный аппаратный счётчик")
+        self.normal_chart=TrafficChart(); normal.layout().addWidget(self.normal_chart,1)
+        self.normal_hint=QLabel("Укажи физический WAN-интерфейс в настройках. Автообновление включается отдельно."); self.normal_hint.setObjectName("Muted"); self.normal_hint.setWordWrap(True); normal.layout().addWidget(self.normal_hint)
+        l.addWidget(normal)
         ap=self.panel("Активные VPN-цели","Подключись к роутеру, чтобы увидеть статусы"); self.active_panel=ap
         self.active_table=QTableWidget(0,3); self.active_table.setHorizontalHeaderLabels(["Цель","Тип","Статус"])
         hh=self.active_table.horizontalHeader(); hh.setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); hh.setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); hh.setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents)
@@ -840,13 +844,19 @@ class App(QMainWindow):
     def poll_traffic(self):
         r=self.router
         if self.tr_busy or not r or not r.client: return
-        self.tr_busy=True; wg=self.settings.get("wg_interface","")
+        self.tr_busy=True; wg=self.settings.get("wg_interface",""); wan=self.settings.get("wan_interface","WAN")
         def work():
             try:
                 out=r.exec(f"/interface wireguard peers print detail where interface={ros_q(wg)}",8)
                 rx=sum(int(x) for x in re.findall(r"\brx=(\d+)",out)); tx=sum(int(x) for x in re.findall(r"\btx=(\d+)",out))
                 hs=re.findall(r"last-handshake=(\S+)",out); peers=out.count("public-key=")
-                self.q.put(("TRAFFIC",(time.monotonic(),rx,tx,hs[0] if hs else None,peers)))
+                wan_rx=wan_tx=None
+                try:
+                    mon=r.exec(f"/interface monitor-traffic interface={ros_q(wan)} once",5)
+                    mr=re.search(r"rx-bits-per-second:\s*(\d+)",mon); mt=re.search(r"tx-bits-per-second:\s*(\d+)",mon)
+                    if mr and mt: wan_rx=int(mr.group(1)); wan_tx=int(mt.group(1))
+                except Exception: pass
+                self.q.put(("TRAFFIC",(time.monotonic(),rx,tx,hs[0] if hs else None,peers,wan_rx,wan_tx)))
             except Exception: self.q.put(("TRAFFIC",None))
             finally: self.tr_busy=False
         threading.Thread(target=work,daemon=True).start()
@@ -855,11 +865,20 @@ class App(QMainWindow):
         if payload is None:
             if not self.tr_rx: self.chart.msg="Нет ответа от роутера…"; self.chart.update()
             return
-        t,rx,tx,hs,peers=payload
+        t,rx,tx,hs,peers,wan_rx,wan_tx=payload
         if self.tr_prev:
             pt,prx,ptx=self.tr_prev; dt=t-pt
             if dt>0.5: self.tr_rx.append(max(0,rx-prx)/dt); self.tr_tx.append(max(0,tx-ptx)/dt)
         self.tr_prev=(t,rx,tx)
+        if wan_rx is not None and wan_tx is not None:
+            if self.wan_prev:
+                wt,wrx,wtx=self.wan_prev; wdt=t-wt
+                if wdt>0.5 and self.tr_rx and self.tr_tx:
+                    self.normal_rx.append(max(0,(wan_rx-wrx)/wdt-self.tr_rx[-1]))
+                    self.normal_tx.append(max(0,(wan_tx-wtx)/wdt-self.tr_tx[-1]))
+                    self.normal_chart.msg="Сбор данных WAN…"; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
+                    self.normal_hint.setText(f"Обычный трафик (оценка) · RX {fmt_bits(self.normal_rx[-1]*8)} · TX {fmt_bits(self.normal_tx[-1]*8)}. WAN включает VPN-инкапсуляцию, поэтому из него вычитаются счётчики WG.")
+            self.wan_prev=(t,wan_rx,wan_tx)
         if self.tr_rx:
             self.tr_labels["rx"].setText(fmt_bits(self.tr_rx[-1]*8)); self.tr_labels["tx"].setText(fmt_bits(self.tr_tx[-1]*8))
             self.tr_labels["peak"].setText(fmt_bits(max(self.tr_rx+self.tr_tx)*8))

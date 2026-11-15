@@ -731,7 +731,7 @@ class App(QMainWindow):
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
                 elif kind=="DISCONNECTED":
                     self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
-                    self.router_state=None; self.render_targets(); self.reset_traffic(); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
+                    self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
                     for k in self.dns_ind: self.set_ind(k,"off","—")
                     self.log("SSH отключён")
                 elif kind=="TEXT": payload[0].setPlainText(payload[1])
@@ -866,7 +866,7 @@ class App(QMainWindow):
         found=st["found"]; local={x for x,_ in self.targets}
         active=sum(1 for f in found.values() if not f[1] and not f[2]); disabled=sum(1 for f in found.values() if f[1]); invalid=sum(1 for f in found.values() if f[2])
         pending=len([x for x in local if x not in found]); ronly=len([x for x in found if x not in local])
-        sub.setText(f"Активно {active} · отключено {disabled} · не применено {pending} · только на роутере {ronly} · address-list: {st['dyn']} дин. IP")
+        sub.setText(f"Активно {active} · отключено {disabled} · ошибочных {invalid} · не применено {pending} · только на роутере {ronly} · address-list: {st['dyn']} дин. IP")
         for tg,f in sorted(found.items()):
             label,tone=self.status_for(tg,tg in local); i=tb.rowCount(); tb.insertRow(i)
             for j,val in enumerate((tg,f[0],"●  "+label)):

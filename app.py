@@ -457,7 +457,7 @@ class App(QMainWindow):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1500, 960); self.setMinimumSize(1180, 780)
         self.q = queue.Queue(); self.router: Optional[RouterConnection] = None
-        self.busy = False; self.targets = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
+        self.busy = False; self.targets = []; self.pending_actions = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
         self.settings = self.load_settings()
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
@@ -510,7 +510,7 @@ class App(QMainWindow):
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
         self.conn_badge=QLabel("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); header.addWidget(self.conn_badge)
-        self.auth_btn=QPushButton("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
+        self.auth_btn=QPushButton("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
         self.log_btn=QPushButton("☷  Журнал операций"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
@@ -553,9 +553,9 @@ class App(QMainWindow):
         description.setObjectName("HeroText"); description.setWordWrap(True)
         intro.addWidget(eyebrow); intro.addWidget(headline); intro.addWidget(description)
         hl.addLayout(intro,1)
-        hero_actions=QVBoxLayout(); connect=QPushButton("Войти по SSH  →"); connect.setObjectName("PrimaryButton"); connect.clicked.connect(self.show_ssh_login); self.dashboard_login_btn=connect
+        hero_actions=QVBoxLayout()
         diag=QPushButton("Обновить состояние"); diag.setObjectName("HeroSecondary"); diag.clicked.connect(self.run_diagnostics)
-        hero_actions.addWidget(connect); hero_actions.addWidget(diag); hero_actions.addStretch(); hl.addLayout(hero_actions)
+        hero_actions.addWidget(diag); hero_actions.addStretch(); hl.addLayout(hero_actions)
         l.addWidget(hero)
         grid=QGridLayout(); grid.setSpacing(14); self.card_values={}; self.card_hints={}
         for i,(key,title,hint) in enumerate([("router","Маршрутизатор","Имя устройства / RouterOS"),("wg","WireGuard","Последний handshake peer"),("rx","Получено","Входящий трафик peer"),("tx","Передано","Исходящий трафик peer"),("vpnroute","VPN-маршрут","Default route в таблице vpn"),("dns","DNS-защита","DoH · redirect · блокировка 853")]):
@@ -623,7 +623,7 @@ class App(QMainWindow):
         self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
         self.target_table=QTableWidget(0,7); self.target_table.setHorizontalHeaderLabels(["Цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали"]); self.target_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.horizontalHeader().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.verticalHeader().hide(); self.target_table.setAlternatingRowColors(True); self.target_table.setShowGrid(False); self.target_table.verticalHeader().setDefaultSectionSize(38); self.target_table.setMinimumHeight(300); p.layout().addWidget(self.target_table,1)
         actions=QHBoxLayout()
-        for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Предпросмотр применения",self.preview_apply,"Button"),("Применить на роутер",self.apply_all,"PrimaryButton"),("Удалить выбранное с роутера",self.remove_remote,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
+        for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Подготовить применение",self.stage_apply_targets,"Button"),("Подготовить удаление выбранного",self.stage_remove_selected,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
             b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
         p.layout().addLayout(actions); l.addWidget(p,1)
         note=QLabel("Логика: DNS FWD / address-list → mangle prerouting → routing table vpn → WireGuard. Основной default route через ZTE не изменяется."); note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
@@ -637,9 +637,18 @@ class App(QMainWindow):
         check_mangle=QPushButton("Проверить статус"); check_mangle.clicked.connect(self.refresh_mangle_status)
         safety_row.addWidget(self.mangle_status,1); safety_row.addWidget(check_mangle)
         control.layout().addLayout(safety_row)
-        control_note=QLabel("Переключается только правило VPN-MANAGER-DOMAIN-ROUTE. NAT, DNS, WireGuard и основной маршрут через ZTE не изменяются.")
+        repair_row=QHBoxLayout()
+        repair=QPushButton("Подготовить «Исправить всё»"); repair.setObjectName("PrimaryButton"); repair.clicked.connect(self.stage_fix_all)
+        clear=QPushButton("Подготовить очистку IP/доменов"); clear.setObjectName("DangerButton"); clear.clicked.connect(self.stage_clear_all)
+        repair_row.addWidget(repair); repair_row.addWidget(clear); control.layout().addLayout(repair_row)
+        control_note=QLabel("«Исправить всё» предложит Cloudflare DNS (1.1.1.1 и 1.0.0.1), проверит/создаст управляемые NAT и Mangle и включит выборочную маршрутизацию. Очистка удалит управляемые DNS FWD и CIDR-записи приложения; основной маршрут через ZTE не затрагивается.")
         control_note.setObjectName("Muted"); control_note.setWordWrap(True); control.layout().addWidget(control_note)
         l.addWidget(control)
+        pending=self.panel("Подготовленные изменения","Действия сначала добавляются в очередь. На роутер они попадут только после отдельного нажатия «Применить изменения».")
+        self.pending_label=QLabel("Очередь пуста"); self.pending_label.setObjectName("Muted")
+        pending.layout().addWidget(self.pending_label)
+        self.pending_apply_btn=QPushButton("Применить изменения · 0"); self.pending_apply_btn.setObjectName("PrimaryButton"); self.pending_apply_btn.setEnabled(False); self.pending_apply_btn.clicked.connect(self.apply_pending_changes)
+        pending.layout().addWidget(self.pending_apply_btn); l.addWidget(pending)
         return w
 
     def page_diagnostics(self):
@@ -787,8 +796,9 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.dashboard_login_btn.setText("SSH подключён · Отключиться"); self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
+                elif kind=="PENDING_CLEARED": self.pending_actions=[]; self.update_pending_ui()
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
@@ -813,7 +823,7 @@ class App(QMainWindow):
                 elif kind=="TERMOUT":
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
                 elif kind=="DISCONNECTED":
-                    self.dashboard_login_btn.setText("Войти по SSH  →"); self.auth_btn.setText("⇧  Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
+                    self.auth_btn.setText("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
                     self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
                     for k in self.dns_ind: self.set_ind(k,"off","—")
@@ -1710,6 +1720,85 @@ class App(QMainWindow):
             count=r.exec(f'/ip firewall address-list print count-only where comment={ros_q(comment)}').strip()
             if count.isdigit() and int(count)>0: return
             self.cmd(r,target_cmd(self.settings,t,k))
+
+    def update_pending_ui(self):
+        if hasattr(self,"pending_label"):
+            self.pending_label.setText("Очередь пуста" if not self.pending_actions else "\n".join(f"{i+1}. {x['title']}" for i,x in enumerate(self.pending_actions)))
+            self.pending_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}")
+            self.pending_apply_btn.setEnabled(bool(self.pending_actions))
+
+    def queue_change(self,kind,title,**data):
+        self.pending_actions.append({"kind":kind,"title":title,**data})
+        self.update_pending_ui()
+        self.log(f"Подготовлено: {title}. На роутер пока ничего не отправлено.")
+
+    def stage_apply_targets(self):
+        if not self.targets:
+            QMessageBox.information(self,"Список пуст","Добавь цели для маршрутизации."); return
+        self.queue_change("apply_targets",f"Применить цели ({len(self.targets)})",targets=list(self.targets))
+
+    def stage_remove_selected(self):
+        selected=self.selected_targets()
+        if not selected:
+            QMessageBox.information(self,"Не выбрано","Выбери строки в таблице."); return
+        self.queue_change("remove_selected",f"Удалить выбранные записи ({len(selected)})",targets=selected)
+
+    def stage_fix_all(self):
+        self.queue_change("fix_all","Исправить управляемую VPN/DNS-конфигурацию и вернуть Cloudflare DNS")
+
+    def stage_clear_all(self):
+        if QMessageBox.question(self,"Очистка VPN-целей","Удалить все DNS FWD и CIDR/IP-записи, созданные этим приложением? Локальный список целей сохранится для повторного применения.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
+        self.queue_change("clear_all","Удалить все управляемые DNS FWD и CIDR/IP-записи")
+
+    def apply_pending_changes(self):
+        if not self.pending_actions:return
+        actions=list(self.pending_actions)
+        lines=["До подтверждения ниже изменения на роутер не отправляются."]
+        for i,a in enumerate(actions,1):
+            lines.append(f"{i}. {a['title']}")
+            if a["kind"]=="fix_all": lines += ["   DNS upstream: 1.1.1.1, 1.0.0.1","   Проверка/создание управляемых NAT и Mangle","   Включение VPN-MANAGER-DOMAIN-ROUTE","   Очистка DNS cache"]
+            elif a["kind"]=="clear_all": lines += ['   Удаление /ip dns static с comment~"VPN-MANAGER:"','   Удаление CIDR/IP с comment~"VPN-MANAGER-CIDR:" из address-list','   Очистка DNS cache']
+            elif a["kind"]=="apply_targets": lines.append("   Проверки, затем добавление выбранных целей и недостающих управляемых правил.")
+            elif a["kind"]=="remove_selected": lines.append("   Удаление только выбранных записей с метками VPN-MANAGER.")
+        dlg=QDialog(self); dlg.setWindowTitle("Применить подготовленные изменения"); dlg.resize(850,560)
+        lay=QVBoxLayout(dlg); title=QLabel("Проверь список операций"); title.setObjectName("SectionTitle")
+        note=QLabel("Основной default route через ZTE не удаляется. Применение начнётся только после подтверждения.")
+        note.setObjectName("Muted"); note.setWordWrap(True)
+        view=QPlainTextEdit(); view.setReadOnly(True); view.setPlainText("\n".join(lines))
+        row=QHBoxLayout(); cancel=QPushButton("Отмена"); ok=QPushButton("Применить на роутер"); ok.setObjectName("PrimaryButton")
+        cancel.clicked.connect(dlg.reject); ok.clicked.connect(dlg.accept); row.addStretch(); row.addWidget(cancel); row.addWidget(ok)
+        lay.addWidget(title); lay.addWidget(note); lay.addWidget(view,1); lay.addLayout(row)
+        if dlg.exec()!=QDialog.DialogCode.Accepted:return
+        def job():
+            r=self.router_conn()
+            for a in actions:
+                k=a["kind"]
+                if k=="apply_targets":
+                    self.prepare_router(r)
+                    for t,kind in a["targets"]: self.apply_target(r,t,kind)
+                    self.cmd(r,"/ip dns cache flush")
+                elif k=="remove_selected":
+                    for t,kind in a["targets"]:
+                        comment=f"VPN-MANAGER:{t}" if kind=="Домен" else f"VPN-MANAGER-CIDR:{t}"
+                        path="/ip dns static" if kind=="Домен" else "/ip firewall address-list"
+                        self.cmd(r,f'{path} remove [find where comment={ros_q(comment)}]')
+                    self.cmd(r,"/ip dns cache flush")
+                elif k=="fix_all":
+                    self.prepare_router(r)
+                    self.cmd(r,"/ip dns set servers=1.1.1.1,1.0.0.1")
+                    count=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
+                    if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое Mangle-правило, найдено: {count or '0'}.")
+                    self.cmd(r,f'/ip firewall mangle enable [find where comment={ros_q(MANGLE_COMMENT)}]')
+                    self.cmd(r,"/ip dns cache flush")
+                elif k=="clear_all":
+                    self.cmd(r,'/ip dns static remove [find where comment~"VPN-MANAGER:"]')
+                    self.cmd(r,f'/ip firewall address-list remove [find where list={ros_q(self.settings["address_list"])} and comment~"VPN-MANAGER-CIDR:"]')
+                    self.cmd(r,"/ip dns cache flush")
+            self.pending_actions=[]
+            self.q.put(("PENDING_CLEARED",None))
+            self.fetch_targets(r); self.fetch_mangle_status(r)
+            self.q.put(("LOG","Подготовленные изменения применены."))
+        self.run_job("Применение очереди изменений…",job)
 
     def apply_all(self):
         if not self.targets: return

@@ -1290,17 +1290,23 @@ class App(QMainWindow):
         add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
         auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
         row.addWidget(self.target_input,1); row.addWidget(add); row.addWidget(auto); p.layout().addLayout(row)
-        row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
-        import_btn=QPushButton("Импорт TXT/CSV"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
-        export_btn=QPushButton("Экспорт CSV"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
+        row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); self.preset.setMinimumWidth(180); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("＋ Все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
+        import_btn=QPushButton("Импорт"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
+        export_btn=QPushButton("Экспорт"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
         row2.addStretch()
-        self.target_search=QLineEdit(); self.target_search.setPlaceholderText("Поиск по списку…"); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
-        self.target_table=QTreeWidget(); self.target_table.setColumnCount(8); self.target_table.setHeaderLabels(["Группа / цель","Тип","Источник","В приложении","На роутере","Состояние цели","Детали",""]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionHidden(7,True); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(300); self.target_table.setIndentation(22); self.target_table.setAnimated(True); p.layout().addWidget(self.target_table,1)
-        self.targets_empty=QLabel("Список пока пуст. Добавь домен или IPv4-адрес выше либо загрузи готовый профиль.")
-        self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
+        self.target_search=QLineEdit(); self.target_search.setObjectName("TargetSearch"); self.target_search.setPlaceholderText("⌕  Поиск группы, домена или IP…"); self.target_search.setMinimumWidth(240); self.target_search.textChanged.connect(self.filter_targets); row2.addWidget(self.target_search,1); p.layout().addLayout(row2)
+        tree_tools=QHBoxLayout(); tree_caption=QLabel("СТРУКТУРА МАРШРУТИЗАЦИИ"); tree_caption.setObjectName("TreeCaption"); tree_tools.addWidget(tree_caption); tree_tools.addStretch()
+        expand_btn=QPushButton("Развернуть всё"); expand_btn.clicked.connect(lambda:self.target_table.expandAll() if hasattr(self,"target_table") else None)
+        collapse_btn=QPushButton("Свернуть всё"); collapse_btn.clicked.connect(lambda:self.target_table.collapseAll() if hasattr(self,"target_table") else None)
+        tree_tools.addWidget(expand_btn); tree_tools.addWidget(collapse_btn); p.layout().addLayout(tree_tools)
+        self.target_table=QTreeWidget(); self.target_table.setObjectName("RoutingTree"); self.target_table.setColumnCount(7); self.target_table.setHeaderLabels(["Группа / домен / IP","Тип","Источник","В приложении","На роутере","Состояние","Детали"]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(340); self.target_table.setIndentation(26); self.target_table.setAnimated(True); self.target_table.setRootIsDecorated(True); self.target_table.setItemsExpandable(True); p.layout().addWidget(self.target_table,1)
+        self.targets_empty=QLabel("Пока нет целей. Добавь домен или IP, загрузи профиль либо запусти автоопределение."); self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
+        action_head=QHBoxLayout(); self.selection_hint=QLabel("Выбери группу, домен или IP в дереве"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
         actions=QHBoxLayout()
-        for text,fn,obj in [("Удалить локально",self.remove_local,"DangerButton"),("Подготовить применение",self.stage_apply_targets,"Button"),("Подготовить удаление выбранного",self.stage_remove_selected,"DangerButton"),("Обновить статусы",self.refresh_address_list,"Button")]:
-            b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
+        local_remove=QPushButton("Удалить из приложения"); local_remove.setObjectName("DangerButton"); local_remove.clicked.connect(self.remove_local); actions.addWidget(local_remove)
+        stage_apply=QPushButton("Применить цели"); stage_apply.setObjectName("PrimaryButton"); stage_apply.clicked.connect(self.stage_apply_targets); actions.addWidget(stage_apply)
+        stage_remove=QPushButton("Подготовить удаление на роутере"); stage_remove.setObjectName("DangerButton"); stage_remove.clicked.connect(self.stage_remove_selected); actions.addWidget(stage_remove)
+        refresh=QPushButton("Обновить статусы"); refresh.clicked.connect(self.refresh_address_list); actions.addWidget(refresh)
         p.layout().addLayout(actions); l.addWidget(p,1)
         note=QLabel("Логика: DNS FWD / address-list → mangle prerouting → routing table vpn → WireGuard. Основной default route через ZTE не изменяется."); note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
         control=self.panel("Управление VPN-маршрутизацией","Временное переключение выборочного трафика между WireGuard и основным маршрутом через ZTE.")
@@ -3237,8 +3243,9 @@ class App(QMainWindow):
             f=found.get(t)
             group=self.target_groups.get(t,"Пользовательские") if is_local else "На роутере"
             if group not in groups:
-                root=QTreeWidgetItem([group,"","","","","","",""])
-                root.setData(0,Qt.ItemDataRole.UserRole,None)
+                root=QTreeWidgetItem([f"▰  {group}","Группа","{len(self.targets)} целей","","","",""])
+                root.setData(0,Qt.ItemDataRole.UserRole,("group",group))
+                root.setToolTip(0,"Выдели группу и нажми «Удалить из приложения» или подготовь удаление на роутере.")
                 font=root.font(0); font.setBold(True); root.setFont(0,font)
                 root.setExpanded(True)
                 groups[group]=root
@@ -3256,10 +3263,11 @@ class App(QMainWindow):
                 remote="Найдена"; remote_tone="ok"; detail=f[3]; target_state,state_tone=self.status_for(t,is_local)
             local_label="В локальном списке" if is_local else "Только на роутере"
             source="DNS FWD" if k=="Домен" else "address-list"
-            values=(t,k,source,local_label,remote,target_state,detail,"")
+            values=(f"   ◦  {t}",k,source,local_label,remote,target_state,detail)
             item=QTreeWidgetItem(list(values))
             item.setData(0,Qt.ItemDataRole.UserRole,t)
             item.setData(0,Qt.ItemDataRole.UserRole+1,k)
+            item.setToolTip(0,"Выдели домен/IP для точечного удаления.")
             item.setForeground(4,QBrush(QColor(TONES[remote_tone])))
             item.setForeground(5,QBrush(QColor(TONES[state_tone])))
             for col in (4,5):
@@ -3272,8 +3280,9 @@ class App(QMainWindow):
                 matched=set(f[7]) if len(f)>7 else set()
                 for ip in resolved:
                     in_list=ip in matched
-                    ip_item=QTreeWidgetItem([ip,"IPv4 · DNS","DNS cache","Автоопределено","В address-list" if in_list else "Не в address-list","Информационный IP","DNS-ответ для домена; адрес может быть общим для CDN",""])
+                    ip_item=QTreeWidgetItem([f"      ↳  {ip}","DNS IP","DNS cache","Автоопределено","В address-list" if in_list else "Не в address-list","Справочно","DNS-ответ домена; может быть общим CDN-адресом"])
                     ip_item.setData(0,Qt.ItemDataRole.UserRole,None)
+                    ip_item.setToolTip(0,"Информационная DNS-запись. Для маршрутизации добавь IP отдельно как самостоятельную цель.")
                     ip_item.setForeground(4,QBrush(QColor(TONES["ok" if in_list else "muted"])))
                     ip_item.setForeground(5,QBrush(QColor(TONES["muted"])))
                     item.addChild(ip_item)
@@ -3302,19 +3311,38 @@ class App(QMainWindow):
             if needle and visible_children: group.setExpanded(True)
 
     def selected_targets(self):
+        """Expand selected group/domain nodes to concrete managed targets."""
         selected=[]
-        for item in self.target_table.selectedItems():
+        if not hasattr(self,"target_table"): return selected
+        def add_target(item):
             target=item.data(0,Qt.ItemDataRole.UserRole)
             kind=item.data(0,Qt.ItemDataRole.UserRole+1)
             if target and kind and (target,kind) not in selected:
                 selected.append((target,kind))
+            for index in range(item.childCount()):
+                add_target(item.child(index))
+        for item in self.target_table.selectedItems():
+            node_type=item.data(0,Qt.ItemDataRole.UserRole)
+            if isinstance(node_type,tuple) and node_type and node_type[0]=="group":
+                for index in range(item.childCount()):
+                    add_target(item.child(index))
+            else:
+                add_target(item)
         return selected
 
     def remove_local(self):
         selected=self.selected_targets()
+        if not selected:
+            QMessageBox.information(self,"Ничего не выбрано","Выбери группу или конкретные домены/IP-цели. DNS IP-подсказки не являются самостоятельными маршрутами.")
+            return
+        names=", ".join(target for target,_kind in selected[:5])
+        if len(selected)>5: names+=f" и ещё {len(selected)-5}"
+        answer=QMessageBox.question(self,"Удалить из приложения?",f"Будет удалено локально целей: {len(selected)}\\n{names}\\n\\nНастройки MikroTik не изменятся.")
+        if answer!=QMessageBox.StandardButton.Yes: return
         self.targets=[x for x in self.targets if x not in selected]
         for target, _kind in selected: self.target_groups.pop(target, None)
         self.save_settings(); self.render_targets()
+        self.log(f"Локально удалено целей: {len(selected)}")
     def plan_text(self):
         """Точные команды RouterOS в том виде, в каком они уйдут на роутер."""
         f=self.fields(); found=self.router_state["found"] if self.router_state else None
@@ -3491,7 +3519,7 @@ class App(QMainWindow):
     def stage_remove_selected(self):
         selected=self.selected_targets()
         if not selected:
-            QMessageBox.information(self,"Не выбрано","Выбери строки в таблице."); return
+            QMessageBox.information(self,"Не выбрано","Выбери группу, домен или IP-цель в дереве."); return
         self.queue_change("remove_selected",f"Удалить выбранные записи ({len(selected)})",targets=selected)
 
     def select_doh_preset(self,name):
@@ -3785,11 +3813,18 @@ QComboBox::down-arrow{image:url(ARROW_URL);width:14px;height:9px}
 QComboBox::down-arrow:on{top:1px}
 QComboBox QAbstractItemView{background:#0a111e;color:#e8edf6;border:1px solid #2b4163;outline:0;padding:4px;selection-background-color:#22427f;selection-color:#ffffff}
 QPlainTextEdit,QTextEdit,QTableWidget{background:#060a14;border:1px solid rgba(255,255,255,22);border-radius:13px;color:#d8e3f3;gridline-color:#192840;alternate-background-color:rgba(255,255,255,5);selection-background-color:#22427f;selection-color:#ffffff}
-QTreeWidget{background:#060a14;border:1px solid rgba(255,255,255,22);border-radius:13px;color:#d8e3f3;alternate-background-color:rgba(255,255,255,5);selection-background-color:#22427f;selection-color:#ffffff;outline:0}
-QTreeWidget::item{padding:7px 5px;border-bottom:1px solid #15243a}
-QTreeWidget::item:hover{background:rgba(110,155,235,24)}
-QTreeWidget::item:selected{background:rgba(61,115,205,90);color:#ffffff}
-QTreeWidget QHeaderView::section{background:#0b1424;color:#9ab0d0;border:0;border-bottom:1px solid #243752;padding:12px;font-size:8pt;font-weight:800}
+QTreeWidget{background:#080f1d;border:1px solid #263750;border-radius:15px;color:#dce7f7;alternate-background-color:rgba(255,255,255,3);selection-background-color:rgba(55,112,210,115);selection-color:#ffffff;outline:0;padding:8px}
+QTreeWidget::item{padding:9px 7px;border-bottom:1px solid rgba(105,135,180,22);min-height:25px}
+QTreeWidget::item:hover{background:rgba(93,145,225,22)}
+QTreeWidget::item:selected{background:rgba(49,105,205,105);color:#ffffff;border-radius:5px}
+QTreeWidget::branch{background:transparent}
+QTreeWidget::branch:has-siblings:!adjoins-item{border-image:none;border-left:1px solid #30425e}
+QTreeWidget::branch:has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}
+QTreeWidget::branch:!has-children:!has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}
+QTreeWidget#RoutingTree QHeaderView::section{background:#111d30;color:#a9bddb;border:0;border-bottom:1px solid #30435f;padding:13px 10px;font-size:8pt;font-weight:800}
+QLabel#TreeCaption{color:#91a9cc;font-size:8pt;font-weight:800;letter-spacing:1px}
+QLineEdit#TargetSearch{min-width:240px;background:#0a1424;border:1px solid #30435f;border-radius:12px;padding:0 14px;color:#edf4ff}
+QLineEdit#TargetSearch:focus{border:1px solid #6a9fff;background:#0c192d}
 QPlainTextEdit{padding:12px;font-family:'Cascadia Mono','Cascadia Code','Consolas',monospace;font-size:9pt}
 QTextEdit#DiagView{padding:12px;font-family:'Cascadia Mono','Cascadia Code','Consolas',monospace;font-size:9pt}
 QHeaderView::section{background:#0b1424;color:#9ab0d0;border:0;border-bottom:1px solid #243752;padding:12px;font-size:8pt;font-weight:800}

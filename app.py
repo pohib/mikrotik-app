@@ -2529,7 +2529,7 @@ class App(QMainWindow):
 
     def pending_action_details(self,a):
         """Пояснение, команды RouterOS и проверки для одной операции."""
-        k=a["kind"]; f=self.settings; commands=[]; checks=[]
+        k=a["kind"]; f=dict(self.settings); f.update(self.fields() if hasattr(self,"inputs") else {}); commands=[]; checks=[]
         if k=="apply_targets":
             commands += ["/ip dns print", "/ip dhcp-server network print detail", f'/ip route print detail where routing-table={ros_q(f["route_table"])}', "/ip firewall filter print detail", "/ip firewall mangle print detail", "/ip firewall nat print detail", "# Условно добавляются, если управляемые правила отсутствуют", mangle_cmd(f), nat_cmd(f)]
             commands += [target_cmd(f,t,kind) for t,kind in a.get("targets",[])] + ["/ip dns cache flush"]

@@ -1,4 +1,4 @@
-# MikroTik VPN Manager — v1.2.0
+# MikroTik VPN Manager — v1.4.0
 
 ## v1.4.0 — Deep diagnostics
 

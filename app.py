@@ -971,12 +971,20 @@ class App(QMainWindow):
         self.chart.msg="Нужен второй замер для расчёта скорости" if len(self.tr_rx)<2 else ""; self.chart.set_data(self.tr_rx,self.tr_tx)
 
     # ---------- статусы VPN-целей ----------
-    def fetch_targets(self,r):
+    def fetch_targets(self,r,cached=None):
         alist=self.settings["address_list"]
-        dns=parse_terse(r.exec('/ip dns static print terse where comment~"VPN-MANAGER:"'))
-        dns_cache=parse_terse(r.exec('/ip dns cache print terse'))
-        managed_al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
-        all_al=parse_terse(r.exec(f'/ip firewall address-list print terse where list={ros_q(alist)}'))
+        if cached is None:
+            dns=parse_terse(r.exec('/ip dns static print terse where comment~"VPN-MANAGER:"'))
+            dns_cache=parse_terse(r.exec('/ip dns cache print terse'))
+            managed_al=parse_terse(r.exec('/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"'))
+            all_al=parse_terse(r.exec(f'/ip firewall address-list print terse where list={ros_q(alist)}'))
+        else:
+            # Reuse evidence from the full diagnostic instead of issuing the
+            # same RouterOS reads a second time after the report is complete.
+            dns=parse_terse(cached.get("DNS static FWD",""))
+            dns_cache=parse_terse(cached.get("DNS cache",""))
+            managed_al=parse_terse(cached.get("Managed CIDR address-list",""))
+            all_al=parse_terse(cached.get("VPN address-list",""))
         total=len(all_al)
         dynamic_entries=[it for it in all_al if "D" in it["flags"]]
         static_entries=[it for it in all_al if "D" not in it["flags"]]
@@ -1367,8 +1375,10 @@ class App(QMainWindow):
             "Managed NAT": f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"',
             "DNS redirect NAT": '/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',
             "Firewall filter": "/ip firewall filter print detail",
-            "DNS static FWD": '/ip dns static print detail where comment~"VPN-MANAGER:"',
-            "VPN address-list": f"/ip firewall address-list print detail where list={ros_q(f['address_list'])}",
+            "DNS static FWD": '/ip dns static print terse where comment~"VPN-MANAGER:"',
+            "DNS cache": "/ip dns cache print terse",
+            "Managed CIDR address-list": '/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"',
+            "VPN address-list": f"/ip firewall address-list print terse where list={ros_q(f['address_list'])}",
             "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and disabled=no",
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
             "WAN ping": "/tool ping address=1.1.1.1 count=3",
@@ -1575,9 +1585,9 @@ class App(QMainWindow):
                 self.q.put(("DIAGOUT",(title+" · собранное доказательство",value,False,False)))
         self.q.put(("LOG",f"Расширенная диагностика завершена: {critical} проблем, {warnings} предупреждений, {passed} успешных проверок. Все проверки read-only; конфигурация роутера не изменялась."))
         try:
-            self.fetch_targets(r)
+            self.fetch_targets(r,raw)
         except Exception as exc:
-            self.q.put(("LOG","Обновление статусов VPN-целей после диагностики: "+str(exc)))
+            self.q.put(("LOG","Обновление статусов VPN-целей из собранного отчёта: "+str(exc)))
     def refresh_dashboard(self):
         if self.busy or not self.router: return
         def job(): self.diagnostics(self.router_conn(),False,True)

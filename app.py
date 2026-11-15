@@ -1190,7 +1190,7 @@ class App(QMainWindow):
             else: raise ValueError("Endpoint должен содержать порт, например vpn.example:51820")
             values={"wg_private_key":interface["privatekey"],"wg_public_key":peers["publickey"],"wg_endpoint":host,"wg_port":port,
                     "wg_allowed":peers.get("allowedips","0.0.0.0/0"),"wg_address":interface.get("address","").split(",")[0].strip(),
-                    "wg_keepalive":peers.get("persistentkeepalive","25"),"wg_mtu":interface.get("mtu",self.wg_inputs["wg_mtu"].text() or "1240")}
+                    "wg_keepalive":("0" if peers.get("persistentkeepalive","25").lower()=="off" else peers.get("persistentkeepalive","25")),"wg_mtu":interface.get("mtu",self.wg_inputs["wg_mtu"].text() or "1240")}
             for k,v in values.items():
                 if k in self.wg_inputs: self.wg_inputs[k].setText(v)
             self.log(f"Импортирован WireGuard-профиль: {Path(path).name}. Проверь параметры перед применением.")
@@ -1202,7 +1202,9 @@ class App(QMainWindow):
         try:
             if len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
             if len(base64.b64decode(cfg["wg_public_key"],validate=True))!=32: raise ValueError("PublicKey должен быть корректным WireGuard-ключом.")
-            if not re.fullmatch(r"[A-Za-z0-9.-]+",cfg["wg_endpoint"]): raise ValueError("Endpoint: укажи домен или IPv4 без порта.")
+            try: ipaddress.ip_address(cfg["wg_endpoint"])
+            except ValueError:
+                if not re.fullmatch(r"[A-Za-z0-9.-]+",cfg["wg_endpoint"]): raise ValueError("Endpoint: укажи домен или IP без порта.")
             port=int(cfg["wg_port"])
             if not 1<=port<=65535: raise ValueError("Endpoint port должен быть от 1 до 65535.")
             keep=int(cfg["wg_keepalive"] or "0")

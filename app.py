@@ -1437,7 +1437,7 @@ class App(QMainWindow):
         if failed("WAN ping"):
             add("info","Доступ в интернет через WAN","Ping-тест не выполнился как команда",raw["WAN ping"],"Это не доказательство отсутствия интернета: проверь права/синтаксис и сопоставь с другими тестами.")
         elif not nonempty("WAN ping") or "received=0" in raw["WAN ping"].lower() or "packet-loss=100%" in raw["WAN ping"].lower():
-            add("bad","Доступ в интернет через WAN","Роутер не получил ответы от 1.1.1.1 через обычную таблицу маршрутизации",raw["WAN ping"],"Проверь WAN, шлюз провайдера, NAT и доступность внешнего IP. Это проверка с самого роутера, не с ПК.")
+            add("warn","Проверка WAN по ICMP","Роутер не получил ICMP-ответы от 1.1.1.1; это само по себе не доказывает отсутствие интернета",raw["WAN ping"],"Сопоставь с DNS и Windows TCP/443. ICMP может фильтроваться провайдером или удалённым узлом.")
         else:
             add("ok","Доступ в интернет через WAN","Проверочный IP доступен с роутера",raw["WAN ping"],"Основной WAN-путь отвечает.")
         if failed("DNS resolve Cloudflare"):
@@ -1459,7 +1459,7 @@ class App(QMainWindow):
             add("info","DHCP / LAN","Не удалось прочитать DHCP network",raw["DHCP network"],"Проверь права SSH и синтаксис команды.")
         elif not has("DHCP network",re.escape(f["lan_subnet"])):
             add("warn","DHCP / LAN","В DHCP network не найдена ожидаемая LAN-подсеть",raw["DHCP network"],"Сверь lan_subnet приложения с DHCP network на MikroTik.")
-        elif not has("DHCP network",r"dns-server=.*(?:192\.168\.|\b"+re.escape(f.get("lan_ip","192.168.0.2"))+r"\b)"):
+        elif not has("DHCP network",r"dns-server=.*\b"+re.escape(f.get("lan_ip","192.168.0.2"))+r"\b"):
             add("info","DHCP / DNS","Не удалось подтвердить, что DHCP выдаёт адрес MikroTik как DNS",raw["DHCP network"],"Проверь dns-server в DHCP network и DNS-настройки клиента.")
         wg=raw["WireGuard peers"]
         handshake=re.search(r"last-handshake=(\S+)",wg,re.I)
@@ -1475,8 +1475,8 @@ class App(QMainWindow):
             add("bad","WireGuard interface","Интерфейс WireGuard не найден",raw["WireGuard interface"],"Сверь имя интерфейса в настройках приложения с RouterOS.")
         if failed("VPN default route"):
             add("info","Policy routing","Не удалось прочитать VPN default route",raw["VPN default route"],"Проверь права SSH и имя routing table.")
-        elif not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower():
-            add("bad","Policy routing","Нет активного default route в отдельной VPN-таблице",raw["VPN default route"],"Проверь routing table, gateway=WireGuard и флаг активности маршрута.")
+        elif not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower() or f"gateway={f['wg_interface']}" not in raw["VPN default route"]:
+            add("bad","Policy routing","Нет активного default route через ожидаемый WireGuard-интерфейс в VPN-таблице",raw["VPN default route"],"Проверь routing table, gateway=WireGuard и флаг активности маршрута.")
         if failed("VPN interface ping"):
             add("info","Трафик через WireGuard","Проба ping через WG не выполнилась",raw["VPN interface ping"],"Проверь поддержку параметра interface в этой версии RouterOS. Это не доказывает отказ туннеля.")
         elif not nonempty("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower() or "packet-loss=100%" in raw["VPN interface ping"].lower():

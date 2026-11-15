@@ -2252,9 +2252,7 @@ class App(QMainWindow):
         cpu=field(resource,"cpu-load")
         temp=field(resource,"cpu-temperature") or field(resource,"board-temperature") or field(resource,"temperature")
         total_raw=field(resource,"total-memory"); free_raw=field(resource,"free-memory")
-        total=int(total_raw) if total_raw.isdigit() else 0
-        free=int(free_raw) if free_raw.isdigit() else 0
-        memory=f"{human_bytes(free)} свободно / {human_bytes(total)}" if total else "Нет данных"
+        memory=f"{free_raw} свободно / {total_raw}" if total_raw and free_raw else "Нет данных"
         self.router_health_values["identity"].setText(identity+(f" · RouterOS {version}" if version else ""))
         self.router_health_values["cpu"].setText(f"{cpu}%" if cpu else "Нет данных")
         self.router_health_values["memory"].setText(memory)
@@ -2273,9 +2271,9 @@ class App(QMainWindow):
         self.router_health_values["lan"].setText(interface_summary(self.settings.get("lan_interface","")))
 
         peer_text=data.get("peers","")
-        handshake=re.search(r"(?im)^\s*last-handshake\s*[:=]\s*(.+)$",peer_text)
-        rx=re.search(r"(?im)^\s*rx\s*[:=]\s*(\d+)",peer_text)
-        tx=re.search(r"(?im)^\s*tx\s*[:=]\s*(\d+)",peer_text)
+        handshake=re.search(r"(?i)\blast-handshake\s*[:=]\s*([^\s]+)",peer_text)
+        rx=re.search(r"(?i)\brx\s*[:=]\s*(\d+)",peer_text)
+        tx=re.search(r"(?i)\btx\s*[:=]\s*(\d+)",peer_text)
         hs=handshake.group(1).strip() if handshake else "нет данных"
         self.router_health_values["wireguard"].setText(f"{hs} · RX {human_bytes(int(rx.group(1)))} / TX {human_bytes(int(tx.group(1)))}" if rx and tx else hs)
 

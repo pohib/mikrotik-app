@@ -859,7 +859,7 @@ class App(QMainWindow):
                 active_parsed=urlparse(active_url)
                 if active_parsed.scheme=="https" and active_parsed.hostname:
                     probe_url=f"https://{active_parsed.hostname}/"
-                    probe_cmd=f"/tool fetch url={ros_q(probe_url)} output=none keep-result=no check-certificate=yes as-value"
+                    probe_cmd=f"/tool fetch url={ros_q(probe_url)} output=none check-certificate=yes as-value"
                     try:
                         probe_out=r.exec(":put ["+probe_cmd+"]",timeout=20)
                         parts.extend(["▌ Router-side DoH host transport check",f"$ :put [{probe_cmd}]",probe_out or "(пустой вывод)",""])

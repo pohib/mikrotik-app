@@ -1224,10 +1224,9 @@ class TerminalCommandInput(QLineEdit):
             self.end(False)
             event.accept()
             return
-        if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if self.history_index == len(self.history):
-                self.draft = self.text()
         super().keyPressEvent(event)
+        if self.history_index == len(self.history):
+            self.draft = self.text()
 
 
 class App(QMainWindow):

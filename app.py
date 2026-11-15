@@ -684,7 +684,7 @@ class App(QMainWindow):
         imp=QPushButton("Импортировать .conf"); imp.clicked.connect(self.import_wireguard_conf)
         applywg=QPushButton("Применить новый VPN-профиль"); applywg.setObjectName("PrimaryButton"); applywg.clicked.connect(self.apply_wireguard_profile)
         wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
-        warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address.")
+        warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address. DNS из .conf не применяется: DNS-политика MikroTik остаётся прежней.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); conn=QPushButton("Подключиться и проверить"); conn.clicked.connect(self.connect_router); disc=QPushButton("Отключиться"); disc.clicked.connect(self.disconnect_router); row.addWidget(save); row.addWidget(conn); row.addWidget(disc); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
 
@@ -776,7 +776,7 @@ class App(QMainWindow):
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
-                elif kind=="WG_APPLIED": self.wg_inputs["wg_private_key"].clear()
+                elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
                 elif kind=="MANGLE_STATUS": self.on_mangle_status(payload)
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)

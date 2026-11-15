@@ -1304,8 +1304,11 @@ class App(QMainWindow):
         tree_tools=QHBoxLayout(); tree_caption=QLabel("СТРУКТУРА МАРШРУТИЗАЦИИ"); tree_caption.setObjectName("TreeCaption"); tree_tools.addWidget(tree_caption); tree_tools.addStretch()
         expand_btn=QPushButton("Развернуть всё"); expand_btn.clicked.connect(lambda:self.target_table.expandAll() if hasattr(self,"target_table") else None)
         collapse_btn=QPushButton("Свернуть всё"); collapse_btn.clicked.connect(lambda:self.target_table.collapseAll() if hasattr(self,"target_table") else None)
-        tree_tools.addWidget(expand_btn); tree_tools.addWidget(collapse_btn); p.layout().addLayout(tree_tools)
-        self.target_table=QTreeWidget(); self.target_table.setObjectName("RoutingTree"); self.target_table.setColumnCount(7); self.target_table.setHeaderLabels(["Группа / домен / IP","Тип","Источник","В приложении","На роутере","Состояние","Детали"]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(340); self.target_table.setIndentation(26); self.target_table.setAnimated(True); self.target_table.setRootIsDecorated(True); self.target_table.setItemsExpandable(True); p.layout().addWidget(self.target_table,1)
+        tree_tools.addWidget(expand_btn); tree_tools.addWidget(collapse_btn)
+        select_all_btn=QPushButton("Отметить всё"); select_all_btn.clicked.connect(lambda: self.set_all_target_checks(True)); tree_tools.addWidget(select_all_btn)
+        clear_checks_btn=QPushButton("Снять отметки"); clear_checks_btn.clicked.connect(lambda: self.set_all_target_checks(False)); tree_tools.addWidget(clear_checks_btn)
+        p.layout().addLayout(tree_tools)
+        self.target_table=QTreeWidget(); self.target_table.setObjectName("RoutingTree"); self.target_table.setColumnCount(7); self.target_table.setHeaderLabels(["Группа / домен / IP","Тип","Источник","В приложении","На роутере","Состояние","Детали"]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.itemChanged.connect(self.on_target_item_changed); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(340); self.target_table.setIndentation(26); self.target_table.setAnimated(True); self.target_table.setRootIsDecorated(True); self.target_table.setItemsExpandable(True); p.layout().addWidget(self.target_table,1)
         self.targets_empty=QLabel("Пока нет целей. Добавь домен или IP, загрузи профиль либо запусти автоопределение."); self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
         action_head=QHBoxLayout(); self.selection_hint=QLabel("Выбери группу, домен или IP в дереве"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
         actions=QHBoxLayout()
@@ -3264,13 +3267,16 @@ class App(QMainWindow):
         if hasattr(self,"targets_empty"): self.targets_empty.setVisible(not rows)
         self.target_table.setVisible(bool(rows))
         groups={}
+        self._updating_target_checks = True
         for t,k,is_local in rows:
             f=found.get(t)
             group=self.target_groups.get(t,"Пользовательские") if is_local else "На роутере"
             if group not in groups:
                 root=QTreeWidgetItem([f"▰  {group}","Группа",f"{sum(1 for _t,_k,_local in rows if (self.target_groups.get(_t, 'Пользовательские') if _local else 'На роутере') == group)} целей","","","",""])
                 root.setData(0,Qt.ItemDataRole.UserRole,("group",group))
-                root.setToolTip(0,"Выдели группу и нажми «Удалить из приложения» или подготовь удаление на роутере.")
+                root.setFlags(root.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                root.setCheckState(0, Qt.CheckState.Unchecked)
+                root.setToolTip(0,"Поставь галочку, чтобы выбрать всю группу. Затем нажми нужное действие удаления.")
                 font=root.font(0); font.setBold(True); root.setFont(0,font)
                 root.setExpanded(True)
                 groups[group]=root
@@ -3292,7 +3298,9 @@ class App(QMainWindow):
             item=QTreeWidgetItem(list(values))
             item.setData(0,Qt.ItemDataRole.UserRole,t)
             item.setData(0,Qt.ItemDataRole.UserRole+1,k)
-            item.setToolTip(0,"Выдели домен/IP для точечного удаления.")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+            item.setToolTip(0,"Поставь галочку для выбора этой цели. Можно отметить несколько целей из разных групп.")
             item.setForeground(4,QBrush(QColor(TONES[remote_tone])))
             item.setForeground(5,QBrush(QColor(TONES[state_tone])))
             for col in (4,5):
@@ -3311,6 +3319,7 @@ class App(QMainWindow):
                     ip_item.setForeground(4,QBrush(QColor(TONES["ok" if in_list else "muted"])))
                     ip_item.setForeground(5,QBrush(QColor(TONES["muted"])))
                     item.addChild(ip_item)
+        self._updating_target_checks = False
         self.filter_targets(self.target_search.text() if hasattr(self,"target_search") else "")
         if hasattr(self,"active_table"): self.render_active()
 
@@ -3335,39 +3344,65 @@ class App(QMainWindow):
             group.setHidden(bool(needle) and not (group_visible or visible_children))
             if needle and visible_children: group.setExpanded(True)
 
+    def set_all_target_checks(self, checked):
+        if not hasattr(self, "target_table"):
+            return
+        self._updating_target_checks = True
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for index in range(self.target_table.topLevelItemCount()):
+            group = self.target_table.topLevelItem(index)
+            group.setCheckState(0, state)
+            for child_index in range(group.childCount()):
+                group.child(child_index).setCheckState(0, state)
+        self._updating_target_checks = False
+
+    def on_target_item_changed(self, item, column):
+        """Keep group checkboxes in sync with their child targets."""
+        if column != 0 or getattr(self, "_updating_target_checks", False):
+            return
+        marker = item.data(0, Qt.ItemDataRole.UserRole)
+        if isinstance(marker, tuple) and marker and marker[0] == "group":
+            checked = item.checkState(0) == Qt.CheckState.Checked
+            self._updating_target_checks = True
+            for index in range(item.childCount()):
+                child = item.child(index)
+                child.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            self._updating_target_checks = False
+
     def selected_targets(self):
-        """Expand selected group/domain nodes to concrete managed targets."""
+        """Collect all checked and row-selected targets, expanding selected groups."""
         selected=[]
         if not hasattr(self,"target_table"): return selected
-        def add_target(item):
-            target=item.data(0,Qt.ItemDataRole.UserRole)
-            kind=item.data(0,Qt.ItemDataRole.UserRole+1)
-            if target and kind and (target,kind) not in selected:
+        selected_items = set(self.target_table.selectedItems())
+        def walk(item, inherited=False):
+            marker = item.data(0, Qt.ItemDataRole.UserRole)
+            is_group = isinstance(marker, tuple) and marker and marker[0] == "group"
+            chosen = inherited or item in selected_items or item.checkState(0) == Qt.CheckState.Checked
+            target = item.data(0, Qt.ItemDataRole.UserRole)
+            kind = item.data(0, Qt.ItemDataRole.UserRole+1)
+            if target and kind and chosen and (target,kind) not in selected:
                 selected.append((target,kind))
             for index in range(item.childCount()):
-                add_target(item.child(index))
-        for item in self.target_table.selectedItems():
-            node_type=item.data(0,Qt.ItemDataRole.UserRole)
-            if isinstance(node_type,tuple) and node_type and node_type[0]=="group":
-                for index in range(item.childCount()):
-                    add_target(item.child(index))
-            else:
-                add_target(item)
+                walk(item.child(index), chosen if is_group else False)
+        for index in range(self.target_table.topLevelItemCount()):
+            walk(self.target_table.topLevelItem(index))
         return selected
 
     def remove_local(self):
-        selected=[target for target in self.selected_targets() if target in self.targets]
+        selected=[record for record in self.selected_targets() if record in self.targets]
         if not selected:
             QMessageBox.information(self,"Ничего не выбрано","Выбери локальную группу, домен или IP-цель. Записи, существующие только на роутере, удаляются через подготовку удаления.")
             return
-        names=", ".join(target for target,_kind in selected[:5])
-        if len(selected)>5: names+=f" и ещё {len(selected)-5}"
+        names=", ".join(target for target,_kind in selected[:8])
+        if len(selected)>8: names+=f" и ещё {len(selected)-8}"
         answer=QMessageBox.question(self,"Удалить из приложения?",f"Будет удалено локально целей: {len(selected)}\\n{names}\\n\\nНастройки MikroTik не изменятся.")
         if answer!=QMessageBox.StandardButton.Yes: return
-        self.targets=[x for x in self.targets if x not in selected]
+        removed_groups = {self.target_groups.get(target, "Пользовательские") for target, _kind in selected}
+        selected_set = set(selected)
+        self.targets=[record for record in self.targets if record not in selected_set]
         for target, _kind in selected: self.target_groups.pop(target, None)
         self.save_settings(); self.render_targets()
-        self.log(f"Локально удалено целей: {len(selected)}")
+        self.log(f"Локально удалено целей: {len(selected)} из групп: {', '.join(sorted(removed_groups, key=str.casefold))}")
     def plan_text(self):
         """Точные команды RouterOS в том виде, в каком они уйдут на роутер."""
         f=self.fields(); found=self.router_state["found"] if self.router_state else None

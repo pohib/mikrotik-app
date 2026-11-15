@@ -1568,11 +1568,6 @@ class App(QMainWindow):
             self.fetch_targets(r)
         except Exception as exc:
             self.q.put(("LOG","Обновление статусов VPN-целей после диагностики: "+str(exc)))
-        if run_ping:
-            # Legacy entry point retained for compatibility. The main full
-            # diagnostic no longer creates temporary routing rules.
-            if failed("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower():
-                raise RuntimeError("Проверочный ping через WireGuard не прошёл; см. автоматический отчёт.")
     def refresh_dashboard(self):
         if self.busy or not self.router: return
         def job(): self.diagnostics(self.router_conn(),False,True)

@@ -1871,7 +1871,7 @@ class App(QMainWindow):
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
                         self.cmd(r,f"/ip dns set servers=1.1.1.1,1.0.0.1 use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
-                        self.cmd(r,"/ip dns set use-doh-server= verify-doh-cert=no")
+                        self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
                     self.cmd(r,"/ip dns cache flush")
                 elif k=="fix_all":
                     self.prepare_router(r)
@@ -1883,7 +1883,7 @@ class App(QMainWindow):
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
-                        self.cmd(r,"/ip dns set use-doh-server= verify-doh-cert=no")
+                        self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
                     count=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
                     if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое Mangle-правило, найдено: {count or '0'}.")
                     self.cmd(r,f'/ip firewall mangle enable [find where comment={ros_q(MANGLE_COMMENT)}]')

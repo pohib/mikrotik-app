@@ -1245,11 +1245,14 @@ class App(QMainWindow):
             self.target_groups = {}
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
         self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
+        self.router_status_busy = False; self.last_router_status = None
         self.build_ui(); self.load_targets()
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(120)
         # Автоматические проверки выключены; пользователь может отдельно включить опрос трафика.
         self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic)
         self.traffic_timer.setInterval(5000)
+        self.router_status_timer = QTimer(self); self.router_status_timer.timeout.connect(self.refresh_router_status)
+        self.router_status_timer.setInterval(30000)
         self.login_dialog = None
 
     def load_settings(self):
@@ -1360,6 +1363,35 @@ class App(QMainWindow):
         diag=QPushButton("Обновить состояние"); diag.setObjectName("HeroSecondary"); diag.clicked.connect(self.run_diagnostics)
         hero_actions.addWidget(diag); hero_actions.addStretch(); hl.addLayout(hero_actions)
         l.addWidget(hero)
+
+        # Компактная оперативная панель: только лёгкие read-only запросы, без полной диагностики.
+        health=self.panel("Состояние роутера","Оперативные показатели MikroTik · обновление вручную или по желанию каждые 30 секунд")
+        health_head=QHBoxLayout()
+        self.router_status_stamp=QLabel("Данные ещё не запрашивались"); self.router_status_stamp.setObjectName("Muted")
+        self.router_status_refresh=QPushButton("Обновить состояние"); self.router_status_refresh.setObjectName("PrimaryButton")
+        self.router_status_refresh.clicked.connect(self.refresh_router_status)
+        self.router_status_auto=QCheckBox("Авто · 30 сек"); self.router_status_auto.setChecked(False)
+        self.router_status_auto.toggled.connect(self.set_router_status_auto)
+        health_head.addWidget(self.router_status_stamp,1); health_head.addWidget(self.router_status_auto); health_head.addWidget(self.router_status_refresh)
+        health.layout().addLayout(health_head)
+        self.router_health_values={}
+        health_grid=QGridLayout(); health_grid.setHorizontalSpacing(18); health_grid.setVerticalSpacing(12)
+        for i,(key,label) in enumerate((
+            ("identity","УСТРОЙСТВО / ROUTEROS"),("cpu","CPU"),("memory","ПАМЯТЬ"),
+            ("uptime","ВРЕМЯ РАБОТЫ"),("temperature","ТЕМПЕРАТУРА"),
+            ("wan","WAN"),("lan","LAN"),("wireguard","WIREGUARD"),("internet","ИНТЕРНЕТ / DNS")
+        )):
+            cell=QFrame(); cell.setObjectName("RouterHealthCell")
+            cl=QVBoxLayout(cell); cl.setContentsMargins(12,10,12,10); cl.setSpacing(3)
+            cap=QLabel(label); cap.setObjectName("CardTitle")
+            val=QLabel("—"); val.setObjectName("RouterHealthValue"); val.setWordWrap(True)
+            cl.addWidget(cap); cl.addWidget(val)
+            self.router_health_values[key]=val
+            health_grid.addWidget(cell,i//3,i%3)
+        for c in range(3): health_grid.setColumnStretch(c,1)
+        health.layout().addLayout(health_grid)
+        l.addWidget(health)
+
         grid=QGridLayout(); grid.setSpacing(14); self.card_values={}; self.card_hints={}
         for i,(key,title,hint) in enumerate([("router","Маршрутизатор","Имя устройства / RouterOS"),("wg","WireGuard","Последний handshake peer"),("rx","Получено","Входящий трафик peer"),("tx","Передано","Исходящий трафик peer"),("vpnroute","VPN-маршрут","Default route в таблице vpn"),("dns","DNS-защита","DoH · redirect · блокировка 853")]):
             f,v,h=self.card(title,"—",hint); f.setProperty("metric",key); self.card_values[key]=v; self.card_hints[key]=h; grid.addWidget(f,i//3,i%3)
@@ -1937,8 +1969,12 @@ class App(QMainWindow):
         self.ros_guide_search=QLineEdit(); self.ros_guide_search.setPlaceholderText("Поиск по названию или команде…"); self.ros_guide_search.setClearButtonEnabled(True)
         filters.addWidget(self.ros_guide_category); filters.addWidget(self.ros_guide_search,1); guides.layout().addLayout(filters)
         guide_split=QSplitter(Qt.Orientation.Horizontal)
-        self.ros_guide_list=QListWidget(); self.ros_guide_list.setMinimumWidth(260); self.ros_guide_list.setMaximumWidth(420)
-        self.ros_guide_details=QTextEdit(); self.ros_guide_details.setReadOnly(True); self.ros_guide_details.setAcceptRichText(False); self.ros_guide_details.setPlaceholderText("Выбери команду слева.")
+        guide_split.setObjectName("RosGuideSplitter")
+        guide_split.setStyleSheet("QSplitter#RosGuideSplitter { background:#080f1d; border:0; } QSplitter#RosGuideSplitter::handle { background:#243957; width:2px; }")
+        self.ros_guide_list=QListWidget(); self.ros_guide_list.setObjectName("RosGuideList"); self.ros_guide_list.setMinimumWidth(260); self.ros_guide_list.setMaximumWidth(420)
+        self.ros_guide_list.setStyleSheet("QListWidget#RosGuideList { background:#0a1424; color:#dce7f8; border:1px solid #2b4163; border-radius:12px; padding:6px; outline:0; } QListWidget#RosGuideList::item { background:transparent; color:#dce7f8; padding:10px 9px; border-radius:7px; border-bottom:1px solid #1b2b43; } QListWidget#RosGuideList::item:hover { background:#142641; } QListWidget#RosGuideList::item:selected { background:#23477b; color:#ffffff; }")
+        self.ros_guide_details=QTextEdit(); self.ros_guide_details.setObjectName("RosGuideDetails"); self.ros_guide_details.setReadOnly(True); self.ros_guide_details.setAcceptRichText(False); self.ros_guide_details.setPlaceholderText("Выбери команду слева.")
+        self.ros_guide_details.setStyleSheet("QTextEdit#RosGuideDetails { background:#080f1d; color:#dce7f8; border:1px solid #2b4163; border-radius:12px; padding:14px; selection-background-color:#244b82; }")
         guide_split.addWidget(self.ros_guide_list); guide_split.addWidget(self.ros_guide_details); guide_split.setStretchFactor(0,1); guide_split.setStretchFactor(1,2)
         guide_split.setMinimumHeight(230); guides.layout().addWidget(guide_split)
         guide_actions=QHBoxLayout()
@@ -2083,6 +2119,7 @@ class App(QMainWindow):
                 elif kind=="PENDING_CLEARED": self.pending_actions=[]; self.update_pending_ui()
                 elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
+                elif kind=="ROUTER_STATUS": self.on_router_status(payload)
                 elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
                 elif kind=="DISCOVERY_DNS_CACHE":
@@ -2152,6 +2189,108 @@ class App(QMainWindow):
         good=[doh,red=="UDP + TCP",dot=="TCP/853 + UDP/853",rem]
         n=sum(1 for x in good if x)
         self.set_ind("overall","ok" if n==4 else ("bad" if n==0 else "warn"),"Защищён" if n==4 else ("Не защищён" if n==0 else f"Частично · {n}/4"))
+
+    # ---------- оперативное состояние роутера ----------
+    def set_router_status_auto(self, enabled):
+        if enabled:
+            self.router_status_timer.start()
+            self.refresh_router_status()
+            self.log("Автообновление оперативного состояния включено: интервал 30 секунд.")
+        else:
+            self.router_status_timer.stop()
+            self.log("Автообновление оперативного состояния выключено.")
+
+    def refresh_router_status(self):
+        if self.busy or self.router_status_busy:
+            return
+        if not self.router or not self.router.client:
+            self.router_status_stamp.setText("Сначала подключись по SSH")
+            return
+        self.router_status_busy = True
+        self.router_status_refresh.setEnabled(False)
+        def work():
+            try:
+                r=self.router_conn()
+                commands = {
+                    "resource": "/system resource print",
+                    "identity": "/system identity print",
+                    "interfaces": "/interface print detail",
+                    "addresses": "/ip address print terse",
+                    "peers": f"/interface wireguard peers print detail where interface={ros_q(self.settings.get('wg_interface',''))}",
+                    "routes": "/ip route print detail where dst-address=0.0.0.0/0",
+                    "ping": "/ping 1.1.1.1 count=3",
+                    "dns": "/resolve example.com"
+                }
+                result={}
+                for key,command in commands.items():
+                    try:
+                        result[key]=r.exec(command,10 if key=="ping" else 8)
+                    except Exception as exc:
+                        result[key]="ERROR: "+str(exc)
+                self.q.put(("ROUTER_STATUS",result))
+            except Exception as exc:
+                self.q.put(("ROUTER_STATUS",{"error":str(exc)}))
+            finally:
+                self.router_status_busy=False
+        threading.Thread(target=work,daemon=True).start()
+
+    def on_router_status(self, data):
+        self.router_status_refresh.setEnabled(True)
+        if data.get("error"):
+            self.router_status_stamp.setText("Ошибка обновления · "+datetime.now().strftime("%H:%M:%S"))
+            self.router_health_values["identity"].setText(data["error"])
+            return
+
+        def field(block,key):
+            match=re.search(r"(?im)^\s*"+re.escape(key)+r"\s*:\s*(.*?)\s*$",block or "")
+            return match.group(1).strip() if match else ""
+
+        resource=data.get("resource","")
+        identity=field(data.get("identity",""),"name") or self.settings.get("host","MikroTik")
+        version=field(resource,"version")
+        uptime=field(resource,"uptime")
+        cpu=field(resource,"cpu-load")
+        temp=field(resource,"temperature")
+        total_raw=field(resource,"total-memory"); free_raw=field(resource,"free-memory")
+        total=int(total_raw) if total_raw.isdigit() else 0
+        free=int(free_raw) if free_raw.isdigit() else 0
+        memory=f"{human_bytes(free)} свободно / {human_bytes(total)}" if total else "Нет данных"
+        self.router_health_values["identity"].setText(identity+(f" · RouterOS {version}" if version else ""))
+        self.router_health_values["cpu"].setText(f"{cpu}%" if cpu else "Нет данных")
+        self.router_health_values["memory"].setText(memory)
+        self.router_health_values["uptime"].setText(uptime or "Нет данных")
+        self.router_health_values["temperature"].setText(temp or "Не поддерживается / нет датчика")
+
+        iface_lines=re.findall(r'(?m)^\s*\d+\s+([A-Z]*)\s+.*?\bname="?([^"\s]+)',data.get("interfaces",""))
+        iface_state={name:("UP" if "R" in flags else "DOWN") for flags,name in iface_lines}
+        addresses=parse_terse(data.get("addresses",""))
+        def interface_summary(name):
+            if not name: return "Не задан"
+            state=iface_state.get(name,"не найден")
+            ips=sorted({x["f"].get("address","") for x in addresses if x["f"].get("interface")==name and x["f"].get("address")})
+            return state+(" · "+", ".join(ips) if ips else " · IP не назначен")
+        self.router_health_values["wan"].setText(interface_summary(self.settings.get("wan_interface","WAN")))
+        self.router_health_values["lan"].setText(interface_summary(self.settings.get("lan_interface","")))
+
+        peer_text=data.get("peers","")
+        handshake=re.search(r"(?im)^\s*last-handshake:\s*(.+)$",peer_text)
+        rx=re.search(r"(?im)^\s*rx:\s*(\d+)",peer_text)
+        tx=re.search(r"(?im)^\s*tx:\s*(\d+)",peer_text)
+        hs=handshake.group(1).strip() if handshake else "нет данных"
+        self.router_health_values["wireguard"].setText(f"{hs} · RX {human_bytes(int(rx.group(1)))} / TX {human_bytes(int(tx.group(1)))}" if rx and tx else hs)
+
+        route_text=data.get("routes","")
+        default_route=bool(re.search(r"(?m)^\s*\d+\s+.*?dst-address=0\.0\.0\.0/0",route_text))
+        route_state="default route найден" if default_route else "default route не подтверждён"
+        ping=data.get("ping","")
+        loss=re.search(r"packet-loss=([0-9]+)%",ping)
+        internet=(f"Ping 1.1.1.1 · loss {loss.group(1)}%" if loss else ("Ping не выполнен" if "ERROR:" in ping else "Ping: нет ответа"))
+        dns=data.get("dns","")
+        dns_state="DNS OK" if dns and "ERROR:" not in dns else "DNS ошибка"
+        self.router_health_values["internet"].setText(f"{internet} · {dns_state} · {route_state}")
+        self.last_router_status=data
+        self.router_status_stamp.setText("Обновлено "+datetime.now().strftime("%H:%M:%S")+" · только чтение")
+        self.log("Оперативное состояние роутера обновлено (read-only).")
 
     # ---------- трафик WireGuard ----------
     def reset_traffic(self,connected=False):
@@ -4232,6 +4371,8 @@ QTreeWidget::branch{background:transparent}
 QLabel#TerminalTag{color:#8ce9c5;background:rgba(16,185,129,22);border:1px solid rgba(52,211,153,75);border-radius:9px;padding:8px 11px;font-size:8pt;font-weight:800;letter-spacing:1px}
 QLabel#TerminalCaption{color:#91a9cc;font-size:8pt;font-weight:800;letter-spacing:1.2px}
 QLabel#TerminalHint{color:#7188aa;font-size:8pt}
+QFrame#RouterHealthCell{background:rgba(5,11,22,150);border:1px solid rgba(150,185,235,35);border-radius:12px}
+QLabel#RouterHealthValue{color:#edf4ff;font-size:10pt;font-weight:700}
 QLabel#TerminalPrompt{color:#58e0a2;font-family:'Cascadia Mono','Consolas',monospace;font-size:19pt;font-weight:800;padding:0 5px}
 QLineEdit#TerminalCommandInput{background:#071222;border:1px solid #36547a;border-radius:13px;padding:0 15px;min-height:48px;color:#f0f6ff;font-family:'Cascadia Mono','Consolas',monospace;font-size:10pt;selection-background-color:#244b82}
 QLineEdit#TerminalCommandInput:hover{border-color:#648fc8}

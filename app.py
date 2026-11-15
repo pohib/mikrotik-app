@@ -526,7 +526,7 @@ class App(QMainWindow):
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.nav.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.nav.setWordWrap(False)
-        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки", "07     Терминал", "08     Журнал"]:
+        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     DNS / DoH", "06     Резервные копии", "07     Настройки", "08     Терминал", "09     Журнал"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
@@ -542,7 +542,7 @@ class App(QMainWindow):
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
         self.pages=[]
-        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
+        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         footer=QHBoxLayout()
         self.progress=QProgressBar(); self.progress.setObjectName("BusyProgress"); self.progress.setRange(0,0); self.progress.setFixedWidth(110); self.progress.setTextVisible(False); self.progress.hide(); footer.addWidget(self.progress)
@@ -553,9 +553,9 @@ class App(QMainWindow):
         self.status.setToolTip("Здесь отображаются текущая операция и результат последнего действия.")
         self.auth_btn.setToolTip("Открыть окно SSH-подключения или отключиться от роутера.")
         self.log_btn.setToolTip("Открыть журнал команд, ошибок и действий приложения.")
-        for i in range(8):
+        for i in range(9):
             action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
-        log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(7)); self.addAction(log_action)
+        log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(8)); self.addAction(log_action)
         fit_controls(self)
         for fr in self.findChildren(QFrame):
             n = fr.objectName()
@@ -734,6 +734,78 @@ class App(QMainWindow):
             b=QPushButton(text); b.clicked.connect(fn); row.addWidget(b)
         p.layout().addLayout(row); self.firewall_text=QPlainTextEdit(); self.firewall_text.setMinimumHeight(300); self.firewall_text.setReadOnly(True); p.layout().addWidget(self.firewall_text,1); l.addWidget(p,1); return w
 
+    def page_dns_diagnostics(self):
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
+        intro=self.panel("DNS / DoH · центр диагностики","Read-only проверка DNS на MikroTik: настройки DoH и TLS, разрешение доменов, DNS-кэш, управляемые FWD-записи, динамические IP в VPN address-list, счётчики policy routing и состояние WireGuard.")
+        top=QHBoxLayout()
+        self.doh_diag_domain=QLineEdit("chatgpt.com"); self.doh_diag_domain.setPlaceholderText("Домен для проверки, например chatgpt.com")
+        top.addWidget(self.doh_diag_domain,1)
+        domain_btn=QPushButton("Проверить домен"); domain_btn.setObjectName("PrimaryButton"); domain_btn.clicked.connect(self.run_doh_domain_diagnostic)
+        top.addWidget(domain_btn); intro.layout().addLayout(top)
+        actions=QHBoxLayout()
+        full=QPushButton("Полная диагностика DNS / DoH"); full.setObjectName("PrimaryButton"); full.clicked.connect(self.run_doh_diagnostic)
+        doh=QPushButton("Проверить DoH и TLS"); doh.clicked.connect(self.check_doh_config)
+        clear=QPushButton("Очистить отчёт"); clear.setObjectName("QuietButton"); clear.clicked.connect(lambda:self.doh_diag_text.clear())
+        copy=QPushButton("Копировать"); copy.setObjectName("QuietButton"); copy.clicked.connect(lambda:QApplication.clipboard().setText(self.doh_diag_text.toPlainText()))
+        save=QPushButton("Сохранить .txt"); save.setObjectName("QuietButton"); save.clicked.connect(self.save_doh_diagnostic_report)
+        actions.addWidget(full); actions.addWidget(doh); actions.addStretch(); actions.addWidget(clear); actions.addWidget(copy); actions.addWidget(save); intro.layout().addLayout(actions); l.addWidget(intro)
+        note=QLabel("Проверки только читают состояние роутера. Настройки DNS, маршруты, firewall и WireGuard не изменяются. Наличие IP в address-list само по себе не доказывает прохождение конкретного соединения через VPN.")
+        note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+        report=self.panel("Результаты диагностики","Выводы и исходные ответы RouterOS.")
+        self.doh_diag_text=QTextEdit(); self.doh_diag_text.setObjectName("DiagView"); self.doh_diag_text.setReadOnly(True); self.doh_diag_text.setAcceptRichText(False); self.doh_diag_text.setPlaceholderText("Подключись по SSH и запусти проверку."); self.doh_diag_text.setMinimumHeight(420)
+        report.layout().addWidget(self.doh_diag_text,1); l.addWidget(report,1); return w
+
+    def run_doh_diagnostic(self):
+        self.run_doh_domain_diagnostic()
+
+    def run_doh_domain_diagnostic(self):
+        domain=self.doh_diag_domain.text().strip() if hasattr(self,"doh_diag_domain") else "chatgpt.com"
+        if not domain: domain="chatgpt.com"
+        try:
+            normalized,kind=normalize_target(domain)
+            if kind!="Домен": raise ValueError("Введи доменное имя, а не IP-адрес или CIDR.")
+            domain=normalized
+        except Exception as exc:
+            QMessageBox.warning(self,"Некорректный домен",str(exc)); return
+        def job():
+            r=self.router_conn(); f=self.settings; alist=f.get("address_list",ADDRESS_LIST_DEFAULT)
+            commands=[
+                ("DNS configuration","/ip dns print"),
+                ("Resolve selected domain",f":put [:resolve {ros_q(domain)}]"),
+                ("Resolve google.com",':put [:resolve "google.com"]'),
+                ("Resolve cloudflare.com",':put [:resolve "cloudflare.com"]'),
+                ("DNS cache",f"/ip dns cache print terse where name~{ros_q(domain)}"),
+                ("Managed FWD",f'/ip dns static print terse where comment={ros_q("VPN-MANAGER:"+domain)}'),
+                ("Dynamic VPN IPs",f'/ip firewall address-list print terse where list={ros_q(alist)} and comment={ros_q("created for "+domain+".")}'),
+                ("VPN address-list entries",f'/ip firewall address-list print count-only where list={ros_q(alist)}'),
+                ("Managed Mangle counters",f'/ip firewall mangle print stats where comment={ros_q(MANGLE_COMMENT)}'),
+                ("WireGuard peers",f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}'),
+                ("VPN default route",f'/ip route print terse where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
+                ("Recent DNS errors",'/log print without-paging where topics~"dns,error"'),
+            ]
+            parts=[f"DNS / DoH DIAGNOSTIC · {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",f"Target domain: {domain}","Read-only: yes",""]
+            for title,command in commands:
+                try: out=r.exec(command,timeout=20)
+                except Exception as exc: out="ERROR: "+str(exc)
+                parts.extend([f"▌ {title}",f"$ {command}",out or "(пустой вывод)",""])
+            self.q.put(("DOH_DIAGOUT","\n".join(parts)))
+        self.run_job("Диагностика DNS / DoH…",job)
+
+    def check_doh_config(self):
+        self.run_doh_domain_diagnostic()
+
+    def save_doh_diagnostic_report(self):
+        content=self.doh_diag_text.toPlainText().strip()
+        if not content:
+            QMessageBox.information(self,"Нет отчёта","Сначала запусти диагностику DNS / DoH."); return
+        name=f"MikroTik-DNS-DoH-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+        path,_=QFileDialog.getSaveFileName(self,"Сохранить отчёт DNS / DoH",str(Path.home()/name),"Текстовый отчёт (*.txt)")
+        if not path:return
+        try:
+            Path(path).write_text(content,encoding="utf-8")
+            QMessageBox.information(self,"Отчёт сохранён",f"Отчёт сохранён:\n{path}")
+        except Exception as exc: QMessageBox.critical(self,"Ошибка сохранения",str(exc))
+
     def page_backups(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Резервные копии","Создаёт .backup и текстовый .rsc export на MikroTik, затем скачивает оба файла по SFTP на этот компьютер.")
@@ -840,7 +912,7 @@ class App(QMainWindow):
         self.run_job("RouterOS CLI: "+command,job)
 
     def pages_changed(self,index):
-        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
+        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):
@@ -875,6 +947,8 @@ class App(QMainWindow):
                 elif kind=="MANGLE_STATUS": self.on_mangle_status(payload)
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)
                 elif kind=="DIAGOUT": self.diag_block(*payload)
+                elif kind=="DOH_DIAGOUT":
+                    self.doh_diag_text.setPlainText(str(payload)); self.doh_diag_text.moveCursor(QTextCursor.MoveOperation.Start)
                 elif kind=="DIAG":
                     result,silent=payload; self.last_diag=result
                     self.dashboard_report.setPlainText("\n".join(f"{k}: {v}" for k,v in result.items()))

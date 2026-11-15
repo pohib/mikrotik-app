@@ -180,11 +180,11 @@ class RouterConnection:
         try:
             output = self._exec_raw(command, timeout)
         except Exception as exc:
-            safe_error = re.sub(r'(?i)(private-key\\s*=\\s*)("[^"]*"|\\S+)', r'\\1[СКРЫТО]', str(exc))
-            self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\\nОШИБКА: {safe_error}"))
+            safe_error = re.sub(r'(?i)(private-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', str(exc))
+            self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\nОШИБКА: {safe_error}"))
             raise
         safe_output = re.sub(r'(?im)(private-key\s*[:=]\s*)(\S+)', r'\1[СКРЫТО]', output)
-        self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\\n{safe_output or '(пустой вывод)'}"))
+        self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\n{safe_output or '(пустой вывод)'}"))
         return output
 
 

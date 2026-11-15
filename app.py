@@ -895,6 +895,8 @@ class App(QMainWindow):
         if f is None: return ("Не применена","muted")
         if f[2]: return ("Ошибка конфигурации","bad")
         if f[1]: return ("Запись отключена","warn")
+        if getattr(self,"mangle_state","unknown")=="disabled": return ("Цель есть · VPN-маршрутизация выключена","warn")
+        if getattr(self,"mangle_state","unknown")=="invalid": return ("Цель есть · ошибка правила маршрутизации","bad")
         if f[0]=="Домен":
             return ("FWD настроена · DNS ещё не наполнил список","info") if len(f)<5 or not f[4] else ("FWD настроена · в общем списке есть динамические IP","ok")
         if len(f)>=5 and not f[4]: return ("Нет IP в address-list","warn")
@@ -920,6 +922,7 @@ class App(QMainWindow):
         tone={"enabled":"ok","disabled":"warn","invalid":"bad","unknown":"muted"}.get(state,"muted")
         self.mangle_status.setText(f'●  {label} · проверено {payload["checked"]}')
         self.mangle_status.setStyleSheet(f"color:{TONES[tone]};font-weight:700")
+        self.render_targets()
 
     def refresh_mangle_status(self):
         def job(): self.fetch_mangle_status(self.router_conn())

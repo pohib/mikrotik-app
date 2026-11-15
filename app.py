@@ -1901,7 +1901,7 @@ class App(QMainWindow):
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.terminal_output.setPlaceholderText("Здесь появятся команды и ответы RouterOS…")
-        self.terminal_output.setMinimumHeight(420)
+        self.terminal_output.setMinimumHeight(330)
         self.terminal_output.setStyleSheet("QPlainTextEdit#TerminalOutput { background:#030914; color:#c9d7e8; border:1px solid #263d5d; border-radius:14px; padding:16px; font-family:'Cascadia Mono','Consolas',monospace; font-size:10pt; selection-background-color:#244b82; }")
         pl.addWidget(self.terminal_output,1)
 
@@ -1927,9 +1927,99 @@ class App(QMainWindow):
         pl.addLayout(command_row)
 
         l.addWidget(panel,1)
-        note=QLabel("Полноценный CLI RouterOS: команды изменения конфигурации выполняются напрямую. История команд хранится в течение текущего запуска приложения. Перед выполнением проверяй команды.")
+        note=QLabel("Команды из гайдов сначала подставляются в строку и не выполняются автоматически. Команды изменения и удаления помечены отдельно. История хранится в течение текущего запуска приложения.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+
+        guides=self.panel("Справочник команд RouterOS","Выбери команду, посмотри назначение и типичный результат. Нажатие «Вставить» только переносит текст в CLI.")
+        filters=QHBoxLayout()
+        self.ros_guide_category=QComboBox()
+        self.ros_guide_category.addItems(["Все разделы","Обзор и система","Интерфейсы и IP","Маршрутизация","Firewall и NAT","DNS","WireGuard","Диагностика"])
+        self.ros_guide_search=QLineEdit(); self.ros_guide_search.setPlaceholderText("Поиск по названию или команде…"); self.ros_guide_search.setClearButtonEnabled(True)
+        filters.addWidget(self.ros_guide_category); filters.addWidget(self.ros_guide_search,1); guides.layout().addLayout(filters)
+        guide_split=QSplitter(Qt.Orientation.Horizontal)
+        self.ros_guide_list=QListWidget(); self.ros_guide_list.setMinimumWidth(260); self.ros_guide_list.setMaximumWidth(420)
+        self.ros_guide_details=QTextEdit(); self.ros_guide_details.setReadOnly(True); self.ros_guide_details.setAcceptRichText(False); self.ros_guide_details.setPlaceholderText("Выбери команду слева.")
+        guide_split.addWidget(self.ros_guide_list); guide_split.addWidget(self.ros_guide_details); guide_split.setStretchFactor(0,1); guide_split.setStretchFactor(1,2)
+        guide_split.setMinimumHeight(230); guides.layout().addWidget(guide_split)
+        guide_actions=QHBoxLayout()
+        self.ros_guide_insert=QPushButton("Вставить в терминал"); self.ros_guide_insert.setObjectName("PrimaryButton"); self.ros_guide_insert.clicked.connect(self.insert_ros_guide_command)
+        guide_copy=QPushButton("Копировать команду"); guide_copy.clicked.connect(self.copy_ros_guide_command)
+        guide_actions.addStretch(); guide_actions.addWidget(guide_copy); guide_actions.addWidget(self.ros_guide_insert); guides.layout().addLayout(guide_actions)
+        l.addWidget(guides)
+        self.ros_guide_category.currentTextChanged.connect(self.filter_ros_guides)
+        self.ros_guide_search.textChanged.connect(self.filter_ros_guides)
+        self.ros_guide_list.currentItemChanged.connect(self.show_ros_guide_details)
+        self.populate_ros_guides()
         return w
+
+    def populate_ros_guides(self):
+        self.ros_guides = [
+            ("Обзор и система","Версия RouterOS","/system resource print","Показывает версию RouterOS, архитектуру, uptime, объём RAM и загрузку CPU.","Только чтение","В выводе ищи version, uptime, cpu-load, free-memory и total-memory."),
+            ("Обзор и система","Идентификатор роутера","/system identity print","Показывает системное имя устройства.","Только чтение","Обычно выводит name= и текущее имя MikroTik."),
+            ("Обзор и система","Список пользователей","/user print","Показывает локальные учётные записи и группы пользователей.","Только чтение","Не показывает пароли. Проверяй наличие лишних учётных записей и чрезмерных прав."),
+            ("Обзор и система","Активные подключения","/ip service print","Показывает включённые управляющие службы и их порты.","Только чтение","Проверь, какие сервисы доступны и ограничено ли поле address."),
+            ("Интерфейсы и IP","Список интерфейсов","/interface print detail","Подробный список физических и виртуальных интерфейсов.","Только чтение","Флаги R обычно означают running; проверь имена LAN, WAN и WireGuard."),
+            ("Интерфейсы и IP","IP-адреса интерфейсов","/ip address print detail","Показывает IP-адреса и интерфейсы, к которым они привязаны.","Только чтение","Сверь адреса и префиксы с планом сети."),
+            ("Интерфейсы и IP","Состояние DHCP-клиента","/ip dhcp-client print detail","Показывает DHCP-клиенты, их интерфейсы и полученные параметры.","Только чтение","Ищи status=bound и корректный gateway."),
+            ("Маршрутизация","Таблица маршрутов IPv4","/ip route print detail","Показывает маршруты, шлюзы, таблицы и флаги активности.","Только чтение","Проверь активный default route (0.0.0.0/0), gateway и routing-table."),
+            ("Маршрутизация","Таблицы маршрутизации","/routing table print detail","Показывает созданные таблицы policy routing.","Только чтение","Убедись, что используемая таблица существует и имеет fib=yes."),
+            ("Маршрутизация","Правила routing rules","/routing rule print detail","Показывает правила выбора таблиц маршрутизации.","Только чтение","Полезно при поиске конфликта между routing rules и mangle."),
+            ("Firewall и NAT","Правила Filter","/ip firewall filter print stats","Показывает фильтрующие правила и счётчики пакетов/байт.","Только чтение","Смотри порядок правил, chain, action и растущие counters."),
+            ("Firewall и NAT","Правила NAT","/ip firewall nat print stats","Показывает NAT-правила и счётчики.","Только чтение","Для masquerade проверь chain=srcnat, out-interface и счётчики."),
+            ("Firewall и NAT","Правила Mangle","/ip firewall mangle print stats","Показывает правила обработки пакетов и счётчики.","Только чтение","Для policy routing проверь mark-routing, условия совпадения и packets/bytes."),
+            ("Firewall и NAT","FastTrack","/ip firewall filter print detail where action=fasttrack-connection","Находит правила FastTrack, которые могут влиять на policy routing.","Только чтение","Проверь, не обходят ли FastTrack-пакеты требуемую обработку mangle."),
+            ("DNS","Настройки DNS","/ip dns print","Показывает DNS-серверы, DoH и параметры DNS-службы.","Только чтение","Проверь servers, use-doh-server, verify-doh-cert и allow-remote-requests."),
+            ("DNS","Статические DNS-записи","/ip dns static print detail","Показывает статические DNS-записи, включая FWD.","Только чтение","Ищи name, type, address-list и match-subdomain."),
+            ("DNS","DNS-кэш","/ip dns cache print","Показывает записи, находящиеся в DNS-кэше.","Только чтение","Кэш динамический; отсутствие записи не доказывает отсутствие DNS-запросов."),
+            ("WireGuard","Интерфейсы WireGuard","/interface wireguard print detail","Показывает WireGuard-интерфейсы и их параметры без приватного ключа.","Только чтение","Проверь listen-port, mtu и наличие нужного интерфейса."),
+            ("WireGuard","Peers WireGuard","/interface wireguard peers print detail","Показывает peer, endpoint, allowed-address и состояние handshake.","Только чтение","Смотри last-handshake, rx и tx; публичный ключ не является секретом."),
+            ("Диагностика","Ping адреса","/ping 1.1.1.1 count=4","Отправляет четыре ICMP-запроса к публичному IPv4-адресу.","Только чтение","Проверь packet-loss и время ответа; ICMP может фильтроваться."),
+            ("Диагностика","DNS resolve","/resolve example.com","Разрешает доменное имя средствами RouterOS.","Только чтение","Показывает IP-адрес или ошибку разрешения имени."),
+            ("Диагностика","Traceroute","/tool traceroute 1.1.1.1","Показывает маршрут до указанного IPv4-адреса.","Только чтение","Звёздочки не всегда означают обрыв: промежуточные узлы могут не отвечать."),
+            ("Диагностика","Соседи L2","/ip neighbor print detail","Показывает обнаруженные устройства в локальном сегменте.","Только чтение","Состав зависит от включённых discovery-протоколов и интерфейсов."),
+            ("Firewall и NAT","Отключить правило по номеру","/ip firewall filter disable [find where comment=\"УКАЖИ_КОММЕНТАРИЙ\"]","Отключает найденное правило Filter по комментарию. Замени placeholder на точный комментарий.","ИЗМЕНЯЕТ КОНФИГУРАЦИЮ","Перед запуском проверь точное совпадение find и сделай backup; не отключай правила управления/защиты наугад."),
+            ("DNS","Очистить DNS-кэш","/ip dns cache flush","Очищает динамический DNS-кэш роутера.","ИЗМЕНЯЕТ СОСТОЯНИЕ","Не удаляет статические DNS-записи, но временно заставляет имена разрешаться заново."),
+        ]
+        self.filter_ros_guides()
+
+    def filter_ros_guides(self):
+        if not hasattr(self,"ros_guide_list"): return
+        category=self.ros_guide_category.currentText()
+        needle=self.ros_guide_search.text().strip().casefold()
+        current=self.ros_guide_list.currentItem()
+        current_command=current.data(Qt.ItemDataRole.UserRole) if current else None
+        self.ros_guide_list.clear()
+        selected=None
+        for entry in self.ros_guides:
+            cat,name,command,description,risk,result=entry
+            if category!="Все разделы" and category!=cat: continue
+            if needle and needle not in " ".join(entry).casefold(): continue
+            item=QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole,entry)
+            if risk.startswith("ИЗМЕНЯЕТ"): item.setForeground(QColor("#fbbf24"))
+            self.ros_guide_list.addItem(item)
+            if current_command and command==current_command: selected=item
+        if selected: self.ros_guide_list.setCurrentItem(selected)
+        elif self.ros_guide_list.count(): self.ros_guide_list.setCurrentRow(0)
+        else: self.ros_guide_details.clear(); self.ros_guide_insert.setEnabled(False)
+
+    def show_ros_guide_details(self,item,_previous=None):
+        if not item:
+            self.ros_guide_details.clear(); self.ros_guide_insert.setEnabled(False); return
+        cat,name,command,description,risk,result=item.data(Qt.ItemDataRole.UserRole)
+        self.ros_guide_details.setPlainText(f"{name}\nРаздел: {cat}\nТип: {risk}\n\nКоманда:\n{command}\n\nНазначение:\n{description}\n\nЧто смотреть в результате:\n{result}")
+        self.ros_guide_insert.setEnabled(True)
+
+    def insert_ros_guide_command(self):
+        item=self.ros_guide_list.currentItem()
+        if not item: return
+        entry=item.data(Qt.ItemDataRole.UserRole)
+        self.terminal_input.setText(entry[2]); self.terminal_input.setFocus(); self.terminal_input.end(False)
+
+    def copy_ros_guide_command(self):
+        item=self.ros_guide_list.currentItem()
+        if item: QApplication.clipboard().setText(item.data(Qt.ItemDataRole.UserRole)[2])
+
 
     def terminal_execute(self):
         if self.busy:

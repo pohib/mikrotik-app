@@ -8,6 +8,9 @@
 - Shows likely fault area, severity, evidence collected during the same run, and next action. A failed/unsupported command is marked inconclusive rather than automatically treated as a network outage.
 - Full diagnostics no longer add temporary routing rules or alter router configuration.
 - Added copy and UTF-8 TXT export of the complete report, including raw command evidence.
+- If a domain is entered in the diagnostics field, the full run also checks its DNS resolution, managed FWD record, DNS cache and dynamic VPN address-list entries.
+- Separately checks Windows TCP/443 to the hostname and directly to 1.1.1.1 to help distinguish DNS failure from general outbound connectivity failure.
+- Redacts WireGuard private and preshared keys from operation logs and exported diagnostic evidence.
 
 ## v1.3.0 — UX and usability
 

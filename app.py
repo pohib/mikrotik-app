@@ -1661,6 +1661,7 @@ class App(QMainWindow):
         rows=[(t,k,True) for t,k in self.targets]+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
         self.target_table.setRowCount(0)
         if hasattr(self,"targets_empty"): self.targets_empty.setVisible(not rows)
+        self.target_table.setVisible(bool(rows))
         for t,k,is_local in rows:
             f=found.get(t)
             if self.router_state is None:

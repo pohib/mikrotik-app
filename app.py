@@ -396,7 +396,7 @@ def make_ui_icons():
             painter.end()
             path = APP_DIR / f"{name}.png"
             if pm.save(str(path), "PNG"):
-                paths[name] = str(path).replace("\\\\", "/")
+                paths[name] = str(path).replace("\\", "/")
         pm = QPixmap(20, 20)
         pm.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pm)
@@ -409,7 +409,7 @@ def make_ui_icons():
         painter.end()
         path = APP_DIR / "dialog_close.png"
         if pm.save(str(path), "PNG"):
-            paths["close"] = str(path).replace("\\\\", "/")
+            paths["close"] = str(path).replace("\\", "/")
     except Exception:
         pass
     return paths

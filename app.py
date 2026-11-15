@@ -11,9 +11,9 @@ try:
 except ImportError:
     paramiko = None
 
-from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint
+from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint, QSize
 from html import escape as esc
-from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
@@ -375,6 +375,46 @@ class RouterOSHighlighter(QSyntaxHighlighter):
             self.setFormat(km.start(2), len(km.group(2)), self.f_val)
 
 
+def make_ui_icons():
+    """Создаёт PNG-иконки интерфейса, не зависящие от системного шрифта и темы Qt."""
+    paths = {}
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        for name, points in {
+            "tree_collapsed": ((6, 3), (13, 9), (6, 15)),
+            "tree_expanded": ((3, 6), (9, 13), (15, 6)),
+        }.items():
+            pm = QPixmap(20, 20)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#a9c5ee"), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline([QPointF(*point) for point in points])
+            painter.end()
+            path = APP_DIR / f"{name}.png"
+            if pm.save(str(path), "PNG"):
+                paths[name] = str(path).replace("\\\\", "/")
+        pm = QPixmap(20, 20)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#e4edf9"), 2.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(5, 5), QPointF(15, 15))
+        painter.drawLine(QPointF(15, 5), QPointF(5, 15))
+        painter.end()
+        path = APP_DIR / "dialog_close.png"
+        if pm.save(str(path), "PNG"):
+            paths["close"] = str(path).replace("\\\\", "/")
+    except Exception:
+        pass
+    return paths
+
+
 def make_arrow_icon():
     """Рисует стрелку-шеврон для выпадающих списков и возвращает путь к PNG (или пустую строку)."""
     try:
@@ -504,9 +544,16 @@ class DialogTitleBar(QFrame):
         for widget in self._drag_widgets:
             widget.installEventFilter(self)
             widget.setCursor(Qt.CursorShape.SizeAllCursor)
-        close = QPushButton("×")
+        close = QPushButton()
         close.setObjectName("DialogClose")
         close.setFixedSize(30, 30)
+        close.setToolTip("Закрыть окно")
+        close_icon = getattr(dialog, "_ui_icons", {}).get("close")
+        if close_icon:
+            close.setIcon(QIcon(close_icon))
+            close.setIconSize(QSize(14, 14))
+        else:
+            close.setText("X")
         close.clicked.connect(dialog.reject)
         row.addWidget(close)
 
@@ -545,6 +592,7 @@ def add_dialog_chrome(dialog, layout, title):
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setObjectName("AppDialog")
+    dialog._ui_icons = getattr(dialog.parent(), "_ui_icons", {}) if dialog.parent() is not None else {}
     dialog.setStyleSheet(STYLE + """
         QDialog#AppDialog { background:#080f1d; color:#e8effb; border:1px solid #315078; }
         QDialog#AppDialog QLabel { color:#e8effb; }
@@ -552,8 +600,9 @@ def add_dialog_chrome(dialog, layout, title):
         QFrame#DialogTitleBar { background:#0d192b; border:1px solid #243b5b; border-radius:11px; }
         QLabel#DialogBrand { background:#2864c8; color:#fff; border-radius:8px; min-width:28px; max-width:28px; min-height:28px; max-height:28px; qproperty-alignment:AlignCenter; font-weight:800; }
         QLabel#DialogHeading { color:#f3f7ff; font-size:10pt; font-weight:750; }
-        QPushButton#DialogClose { background:#17263b; border:1px solid #304663; color:#dce8fa; border-radius:8px; font-size:15pt; }
+        QPushButton#DialogClose { background:#17263b; border:1px solid #304663; color:#dce8fa; border-radius:8px; padding:0; }
         QPushButton#DialogClose:hover { background:#8f3548; border-color:#c65d70; }
+        QPushButton#DialogClose:pressed { background:#6e293a; }
     """)
     header=DialogTitleBar(dialog,title)
     if isinstance(layout,QGridLayout):
@@ -665,6 +714,7 @@ class AutoDiscoveryDialog(QDialog):
         self.dns_observation_baseline_ready = False
         self.dns_observation_baseline = set()
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._ui_icons = getattr(parent, "_ui_icons", {}) if parent is not None else {}
         self.setStyleSheet("QDialog { background-color:#080f1d; color:#e8effb; } QWidget { color:#e8effb; }")
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 16)
@@ -3888,6 +3938,8 @@ QTreeWidget::branch{background:transparent}
 QTreeWidget::branch:has-siblings:!adjoins-item{border-image:none;border-left:1px solid #30425e}
 QTreeWidget::branch:has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}
 QTreeWidget::branch:!has-children:!has-siblings:adjoins-item{border-image:none;border-left:1px solid #30425e}
+QTreeWidget::branch:closed:has-children{image:url(TREE_COLLAPSED_URL);width:20px;height:20px}
+QTreeWidget::branch:open:has-children{image:url(TREE_EXPANDED_URL);width:20px;height:20px}
 QTreeWidget#RoutingTree QHeaderView::section{background:#111d30;color:#a9bddb;border:0;border-bottom:1px solid #30435f;padding:13px 10px;font-size:8pt;font-weight:800}
 QLabel#TreeCaption{color:#91a9cc;font-size:8pt;font-weight:800;letter-spacing:1px}
 QLineEdit#TargetSearch{min-width:240px;background:#0a1424;border:1px solid #30435f;border-radius:12px;padding:0 14px;color:#edf4ff}
@@ -3955,14 +4007,17 @@ QListWidget#Nav::item{padding:12px 12px}
 
 if __name__=="__main__":
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME)
+    _ui_icons = make_ui_icons()
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")
+    STYLE = STYLE.replace("TREE_COLLAPSED_URL", _ui_icons.get("tree_collapsed", ""))
+    STYLE = STYLE.replace("TREE_EXPANDED_URL", _ui_icons.get("tree_expanded", ""))
     app.setStyleSheet(STYLE + """
         QDialog { background:#080f1d; color:#e8effb; } QDialog#ApplyChangesDialog QWidget { color:#e8effb; } QDialog#ApplyChangesDialog QScrollArea { background:#080f1d; } QDialog#ApplyChangesDialog QScrollArea QWidget#ApplyChangesBody { background:#080f1d; }
         QMessageBox { background:#0a1423; color:#e8effb; }
         QMessageBox QLabel { color:#e8effb; min-width:280px; }
         QMessageBox QPushButton { min-width:92px; min-height:34px; }
     """)
-    win=App(); win.show()
+    win=App(); win._ui_icons = _ui_icons; win.show()
     if paramiko is None: QMessageBox.critical(win,"Нет Paramiko","Запусти start.bat — он создаст venv и установит зависимости.")
     sys.exit(app.exec())

@@ -789,7 +789,7 @@ class App(QMainWindow):
             doh_result="ERROR"
             try:
                 ident=secrets.randbelow(65536)
-                qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\\x00"
+                qname=b"".join(bytes([len(label)])+label.encode("idna") for label in domain.rstrip(".").split("."))+b"\x00"
                 packet=struct.pack("!HHHHHH",ident,0x0100,1,0,0,0)+qname+struct.pack("!HH",1,1)
                 req=urllib.request.Request(endpoint,data=packet,headers={"Content-Type":"application/dns-message","Accept":"application/dns-message","User-Agent":"MikroTik-VPN-Manager-Diagnostic/1.0"},method="POST")
                 with urllib.request.urlopen(req,timeout=12,context=ssl.create_default_context()) as response:

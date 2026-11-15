@@ -538,6 +538,19 @@ class App(QMainWindow):
         clr=QPushButton("Очистить"); clr.setObjectName("QuietButton"); clr.clicked.connect(lambda:self.diag_text.clear()); row.addWidget(clr)
         cpy=QPushButton("Копировать"); cpy.setObjectName("QuietButton"); cpy.clicked.connect(lambda:QApplication.clipboard().setText(self.diag_text.toPlainText())); row.addWidget(cpy)
         p.layout().addLayout(row)
+        client_box=QHBoxLayout()
+        self.client_input=QLineEdit(); self.client_input.setPlaceholderText("IP телефона в LAN, например 192.168.0.50")
+        client_box.addWidget(self.client_input,1)
+        for label,fn in [("DHCP-клиенты",self.show_dhcp_clients),("Проверить IP клиента",self.diagnose_client),("Счётчики Mangle/DNS",self.show_policy_counters)]:
+            b=QPushButton(label); b.clicked.connect(fn); client_box.addWidget(b)
+        p.layout().addLayout(client_box)
+        safety_row=QHBoxLayout()
+        disable=QPushButton("Временно отключить VPN-маршрутизацию"); disable.setObjectName("DangerButton"); disable.clicked.connect(lambda:self.set_managed_mangle(False))
+        enable=QPushButton("Включить VPN-маршрутизацию обратно"); enable.setObjectName("PrimaryButton"); enable.clicked.connect(lambda:self.set_managed_mangle(True))
+        safety_row.addWidget(disable); safety_row.addWidget(enable); safety_row.addStretch()
+        p.layout().addLayout(safety_row)
+        note=QLabel("Тестовый переключатель затрагивает только правило VPN-MANAGER-DOMAIN-ROUTE. Остальные правила, NAT, DNS, WireGuard и основной маршрут через ZTE не меняются.")
+        note.setObjectName("Muted"); note.setWordWrap(True); p.layout().addWidget(note)
         self.diag_text=QTextEdit(); self.diag_text.setObjectName("DiagView"); self.diag_text.setReadOnly(True); self.diag_text.setAcceptRichText(False); self.diag_text.setPlaceholderText("Результаты диагностики появятся здесь…"); self.diag_text.setMinimumHeight(300); p.layout().addWidget(self.diag_text,1)
         l.addWidget(p,1); return w
 
@@ -863,6 +876,74 @@ class App(QMainWindow):
     def test_vpn(self): self.nav.setCurrentRow(2); self.run_job("Тест ping через WireGuard…",lambda:self.diagnostics(self.router_conn(),True))
     def ping_wan(self): self.run_job("Ping 1.1.1.1 из main…",lambda:self.diag_run("Ping WAN (main)","/tool ping address=1.1.1.1 count=4"))
     def traceroute(self): self.run_job("Traceroute 1.1.1.1…",lambda:self.diag_run("Traceroute","/tool traceroute address=1.1.1.1",90))
+
+    def show_dhcp_clients(self):
+        def job():
+            r=self.router_conn()
+            for title,command in [
+                ("DHCP leases","/ip dhcp-server lease print detail"),
+                ("ARP clients",f'/ip arp print detail where interface={ros_q(self.settings["lan_interface"])}'),
+            ]:
+                try: out=self.cmd(r,command)
+                except Exception as e: out="ERROR: "+str(e)
+                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
+        self.run_job("Получение списка LAN-клиентов…",job)
+
+    def diagnose_client(self):
+        raw=self.client_input.text().strip()
+        try:
+            addr=ipaddress.ip_address(raw)
+            if addr.version!=4: raise ValueError("Нужен IPv4-адрес телефона.")
+            network=ipaddress.ip_network(self.settings["lan_subnet"],strict=False)
+            if addr not in network: raise ValueError(f"Адрес {addr} не входит в LAN subnet {network}.")
+        except Exception as e:
+            QMessageBox.warning(self,"Некорректный IP клиента",str(e)); return
+        ip=str(addr)
+        def job():
+            r=self.router_conn()
+            commands=[
+                ("DHCP lease",f"/ip dhcp-server lease print detail where address={ip}"),
+                ("ARP entry",f"/ip arp print detail where address={ip}"),
+                ("Ping телефона с роутера",f"/ping address={ip} count=4"),
+                ("Mangle counters",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
+                ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"'),
+                ("Client DNS cache",'/ip dns cache print detail where name~"youtube|discord|chatgpt|netflix|google"'),
+            ]
+            for title,command in commands:
+                try: out=self.cmd(r,command)
+                except Exception as e: out="ERROR: "+str(e)
+                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
+        self.run_job(f"Диагностика LAN-клиента {ip}…",job)
+
+    def show_policy_counters(self):
+        def job():
+            r=self.router_conn()
+            commands=[
+                ("Mangle counters",f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"'),
+                ("NAT counters",f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"'),
+                ("DNS redirect counters",'/ip firewall nat print stats detail where comment~"DNS-REDIRECT"'),
+                ("DNS filter counters",'/ip firewall filter print stats detail where comment~"BLOCK-DOT|BLOCK-DOQ"'),
+                ("VPN address-list",f'/ip firewall address-list print detail where list={ros_q(self.settings["address_list"])}'),
+            ]
+            for title,command in commands:
+                try: out=self.cmd(r,command)
+                except Exception as e: out="ERROR: "+str(e)
+                self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
+        self.run_job("Сбор счётчиков policy routing и DNS…",job)
+
+    def set_managed_mangle(self,enabled):
+        verb="enable" if enabled else "disable"
+        warning=("Включить обратно только управляемое правило выборочной VPN-маршрутизации?" if enabled else
+                 "Отключить только правило VPN-MANAGER-DOMAIN-ROUTE? Цели из списка перестанут идти через WireGuard и пойдут по основному маршруту через ZTE. Остальные правила не затрагиваются.")
+        if QMessageBox.question(self,"Подтверждение",warning,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
+        def job():
+            r=self.router_conn()
+            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
+            if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {count or "неизвестно"}. Ничего не меняю.")
+            self.cmd(r,f'/ip firewall mangle {verb} [find where comment="{MANGLE_COMMENT}"]')
+            self.cmd(r,f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"')
+            self.q.put(("DIAGOUT",("Состояние управляемого Mangle-правила", "Правило "+("включено" if enabled else "отключено")+".",False,True)))
+        self.run_job(("Включение" if enabled else "Временное отключение")+" управляемого Mangle-правила…",job)
 
     def load_targets(self):
         self.targets=[]; self.render_targets()

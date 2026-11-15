@@ -1044,7 +1044,8 @@ class App(QMainWindow):
                  "Отключить только правило VPN-MANAGER-DOMAIN-ROUTE? Цели из списка перестанут идти через WireGuard и пойдут по основному маршруту через ZTE. Остальные правила не затрагиваются.")
         if QMessageBox.question(self,"Подтверждение",warning,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
         def job():
-            r=self.router_conn()            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
+            r=self.router_conn()
+            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
             if count!="1":
                 found=count or "неизвестно"
                 raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {found}. Ничего не меняю.")

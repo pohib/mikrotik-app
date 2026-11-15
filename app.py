@@ -1394,6 +1394,11 @@ class App(QMainWindow):
                 local["Windows TCP 443"]="Соединение с youtube.com:443 установлено"
         except Exception as exc:
             local["Windows TCP 443"]="ERROR: "+str(exc)
+        try:
+            with socket.create_connection(("1.1.1.1",443),timeout=4):
+                local["Windows TCP 1.1.1.1:443"]="Прямое TCP-соединение с 1.1.1.1:443 установлено"
+        except Exception as exc:
+            local["Windows TCP 1.1.1.1:443"]="ERROR: "+str(exc)
 
         def failed(key):
             value=raw.get(key,"")
@@ -1412,9 +1417,13 @@ class App(QMainWindow):
         else:
             add("ok","DNS на Windows-клиенте","Windows получил DNS-ответ для youtube.com",local["Windows DNS"],"Это результат локального resolver Windows; он может отличаться от DNS MikroTik.")
         if local["Windows TCP 443"].startswith("ERROR:"):
-            add("warn","HTTPS на Windows-клиенте","Windows не установил TCP-соединение с youtube.com:443",local["Windows TCP 443"],"Сравни с WAN ping и DNS на роутере. Проверь локальный firewall, прокси/VPN-клиент и доступность HTTPS.")
+            add("warn","HTTPS на Windows-клиенте","Windows не установил TCP-соединение с youtube.com:443",local["Windows TCP 443"],"Сравни с прямым TCP к 1.1.1.1:443, DNS на роутере и WAN ping. Проверь локальный firewall, прокси/VPN-клиент и доступность HTTPS.")
         else:
             add("ok","HTTPS на Windows-клиенте","TCP/443 до youtube.com доступен",local["Windows TCP 443"],"TCP-соединение установлено; это ещё не проверка TLS, HTTP или воспроизведения видео.")
+        if local["Windows TCP 1.1.1.1:443"].startswith("ERROR:"):
+            add("warn","HTTPS по IP на Windows-клиенте","Windows не установил прямое TCP-соединение с 1.1.1.1:443",local["Windows TCP 1.1.1.1:443"],"Если одновременно не работает TCP/443 к домену, ищи общий сбой маршрута/Firewall/прокси. Если IP доступен, а домен нет — проверь DNS.")
+        else:
+            add("ok","HTTPS по IP на Windows-клиенте","Прямое TCP-соединение с 1.1.1.1:443 доступно",local["Windows TCP 1.1.1.1:443"],"Внешний TCP/443 доступен независимо от DNS; TLS/HTTP этим тестом не проверяются.")
 
         # SSH and basic router response are implicit preconditions: this function
         # is only entered after an authenticated SSH session has been obtained.
@@ -1547,6 +1556,7 @@ class App(QMainWindow):
             "DNS security":"DoH + TLS проверяются отдельно; DNS redirect и DNS FWD см. подробности",
             "Windows DNS":"ошибка" if local["Windows DNS"].startswith("ERROR:") else "ответ получен",
             "Windows TCP 443":"недоступен" if local["Windows TCP 443"].startswith("ERROR:") else "доступен",
+            "Windows TCP 1.1.1.1:443":"недоступен" if local["Windows TCP 1.1.1.1:443"].startswith("ERROR:") else "доступен",
         }
         self.q.put(("DIAG",(result,silent)))
         if not silent:

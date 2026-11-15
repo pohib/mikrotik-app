@@ -635,7 +635,7 @@ class AutoDiscoveryDialog(QDialog):
 
     def import_router_dns_cache(self, output):
         # RouterOS cache entries commonly expose name=... and data=... fields.
-        records = re.findall(r'name="([^"]+)"[^\\n]*?(?:data|address)="([^"]+)"', str(output), flags=re.IGNORECASE)
+        records = re.findall(r'name="([^"]+)"[^\n]*?(?:data|address)="([^"]+)"', str(output), flags=re.IGNORECASE)
         names = set()
         added = 0
         for name, data in records:

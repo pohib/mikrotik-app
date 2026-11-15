@@ -3439,7 +3439,27 @@ class App(QMainWindow):
         return selected
 
     def remove_local(self):
-        selected=[record for record in self.selected_targets() if record in self.targets]
+        # A group row is a container, not a routing target. Resolve it explicitly
+        # by its stored group marker instead of relying only on child selection.
+        selected_group_names = set()
+        selected_items = self.target_table.selectedItems() if hasattr(self, "target_table") else []
+        if hasattr(self, "target_table"):
+            for index in range(self.target_table.topLevelItemCount()):
+                group_item = self.target_table.topLevelItem(index)
+                marker = group_item.data(0, Qt.ItemDataRole.UserRole)
+                if not (isinstance(marker, tuple) and len(marker) == 2 and marker[0] == "group"):
+                    continue
+                if group_item in selected_items or group_item.checkState(0) == Qt.CheckState.Checked:
+                    selected_group_names.add(str(marker[1]))
+
+        selected = set(record for record in self.selected_targets() if record in self.targets)
+        # Selecting/checking a group means deleting every local target assigned
+        # to that group, even if a child row is currently filtered or not selected.
+        for target, kind in self.targets:
+            group_name = self.target_groups.get(target, "Пользовательские")
+            if group_name in selected_group_names:
+                selected.add((target, kind))
+        selected = sorted(selected, key=lambda record: record[0].casefold())
         if not selected:
             QMessageBox.information(self,"Ничего не выбрано","Выбери локальную группу, домен или IP-цель. Записи, существующие только на роутере, удаляются через подготовку удаления.")
             return

@@ -536,6 +536,7 @@ class App(QMainWindow):
         header = QHBoxLayout(); titlebox = QVBoxLayout(); self.page_title=QLabel("Обзор сети"); self.page_title.setObjectName("PageTitle")
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
+        self.header_apply_btn=QPushButton("Применить изменения · 0"); self.header_apply_btn.setObjectName("PrimaryButton"); self.header_apply_btn.setEnabled(False); self.header_apply_btn.clicked.connect(self.apply_pending_changes); self.header_apply_btn.setToolTip("Применить подготовленные изменения на MikroTik после просмотра и подтверждения."); header.addWidget(self.header_apply_btn)
         self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
         self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(8)); header.addWidget(self.log_btn)
         cv.addLayout(header)
@@ -682,8 +683,7 @@ class App(QMainWindow):
         pending=self.panel("Подготовленные изменения","Действия сначала добавляются в очередь. На роутер они попадут только после отдельного нажатия «Применить изменения».")
         self.pending_label=QLabel("Очередь пуста · на роутере ничего не ожидает применения"); self.pending_label.setObjectName("Muted"); self.pending_label.setWordWrap(True)
         pending.layout().addWidget(self.pending_label)
-        self.pending_apply_btn=QPushButton("Применить изменения · 0"); self.pending_apply_btn.setObjectName("PrimaryButton"); self.pending_apply_btn.setEnabled(False); self.pending_apply_btn.clicked.connect(self.apply_pending_changes)
-        pending.layout().addWidget(self.pending_apply_btn); l.addWidget(pending)
+        l.addWidget(pending)
         return w
 
     def page_diagnostics(self):
@@ -2504,8 +2504,9 @@ class App(QMainWindow):
     def update_pending_ui(self):
         if hasattr(self,"pending_label"):
             self.pending_label.setText("Очередь пуста · на роутере ничего не ожидает применения" if not self.pending_actions else "\n".join(f"{i+1}. {x['title']}" for i,x in enumerate(self.pending_actions)))
-            self.pending_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}")
-            self.pending_apply_btn.setEnabled(bool(self.pending_actions))
+        if hasattr(self,"header_apply_btn"):
+            self.header_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}")
+            self.header_apply_btn.setEnabled(bool(self.pending_actions))
 
     def queue_change(self,kind,title,**data):
         self.pending_actions.append({"kind":kind,"title":title,**data})

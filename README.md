@@ -15,6 +15,14 @@
 
 Certificate Transparency only contains hostnames observed in issued certificates; it is not a complete service inventory. Public DNS answers can vary by resolver, geography, and time. HAR is the best source in this workflow for confirming that a browser actually requested a hostname, but only covers the captured browser session. DNS-derived IPs may be shared CDN/hosting addresses and should not automatically be treated as exclusive to one service.
 
+## v1.6.0 — Dialog UI and routing diagnostics
+
+- All application-owned secondary windows use frameless dark styling with a custom draggable title bar and close control.
+- Message boxes use the application theme; file pickers use themed Qt dialogs.
+- Expanded IPv6 inspection and FastTrack analysis. These checks are read-only and report possible VPN bypass conditions without changing router configuration.
+- Domain route lookup inspects resolved addresses, DNS cache, managed address-list entries, and active routes in both main and VPN tables.
+- Client checks include conntrack, FastTrack/Mangle counters, and IPv6 neighbor evidence. A conntrack snapshot is point-in-time evidence, not proof that every packet followed the expected path.
+
 ## v1.5.0 — Destination-aware routing diagnostics
 
 - Full diagnostics now resolve the selected domain and inspect active IPv4 routes matching each returned address in both the main and configured VPN routing tables (up to five returned addresses).

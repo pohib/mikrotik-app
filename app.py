@@ -1153,8 +1153,10 @@ class App(QMainWindow):
         d.setWindowTitle("SSH · Secure connection")
         d.setModal(True)
         d.setMinimumWidth(540)
-        d.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        d.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # Используем обычное непрозрачное окно Qt: frameless + WA_TranslucentBackground
+        # на некоторых конфигурациях Windows приводили к невидимому диалогу авторизации.
+        d.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint)
+        d.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         d.setObjectName("SSHLoginDialog")
         d.setStyleSheet(self.styleSheet() + """
             QDialog#SSHLoginDialog { background: transparent; }

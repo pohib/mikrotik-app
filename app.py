@@ -415,7 +415,7 @@ class App(QMainWindow):
         logo = QLabel("◈  MIKROTIK") ; logo.setObjectName("Brand")
         sl.addWidget(logo); sub = QLabel("NETWORK  /  VPN CONTROL"); sub.setObjectName("BrandSub"); sl.addWidget(sub); sl.addSpacing(28)
         self.nav = QListWidget(); self.nav.setObjectName("Nav")
-        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки"]:
+        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки", "07     Терминал"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
@@ -431,7 +431,7 @@ class App(QMainWindow):
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
         self.pages=[]
-        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings())
+        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         self.status=QLabel("●  Готово  ·  Конфигурация меняется только после явного подтверждения")
         self.status.setObjectName("StatusBar"); cv.addWidget(self.status)
@@ -584,8 +584,66 @@ class App(QMainWindow):
         p.layout().addLayout(form)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); conn=QPushButton("Подключиться и проверить"); conn.clicked.connect(self.connect_router); disc=QPushButton("Отключиться"); disc.clicked.connect(self.disconnect_router); row.addWidget(save); row.addWidget(conn); row.addWidget(disc); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
 
+    def page_terminal(self):
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
+        panel=QFrame(); panel.setObjectName("Panel")
+        pl=QVBoxLayout(panel); pl.setContentsMargins(18,18,18,18); pl.setSpacing(12)
+        bar=QHBoxLayout()
+        heading=QVBoxLayout()
+        title=QLabel("RouterOS CLI"); title.setObjectName("SectionTitle")
+        subtitle=QLabel("Команды выполняются на MikroTik через текущее SSH-подключение.")
+        subtitle.setObjectName("Muted")
+        heading.addWidget(title); heading.addWidget(subtitle); bar.addLayout(heading,1)
+        copy_btn=QPushButton("Копировать вывод"); copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.terminal_output.toPlainText()))
+        clear_btn=QPushButton("Очистить"); clear_btn.clicked.connect(lambda: self.terminal_output.clear())
+        bar.addWidget(copy_btn); bar.addWidget(clear_btn); pl.addLayout(bar)
+        self.terminal_output=QPlainTextEdit()
+        self.terminal_output.setObjectName("TerminalOutput")
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.terminal_output.setPlaceholderText("Вывод команд RouterOS появится здесь…")
+        self.terminal_output.setMinimumHeight(420)
+        self.terminal_output.setStyleSheet("QPlainTextEdit#TerminalOutput { background:#03060b; color:#c9d7e8; border:1px solid #1b2b43; border-radius:12px; padding:14px; font-family:'Cascadia Mono','Consolas',monospace; font-size:10pt; selection-background-color:#244b82; }")
+        pl.addWidget(self.terminal_output,1)
+        command_row=QHBoxLayout(); command_row.setSpacing(10)
+        prompt=QLabel(">")
+        prompt.setStyleSheet("color:#4ade80;font-family:Consolas,monospace;font-size:15pt;font-weight:700")
+        self.terminal_input=QLineEdit()
+        self.terminal_input.setPlaceholderText("/system resource print")
+        self.terminal_input.setClearButtonEnabled(True)
+        self.terminal_input.returnPressed.connect(self.terminal_execute)
+        execute=QPushButton("Выполнить  ↵"); execute.setObjectName("PrimaryButton"); execute.clicked.connect(self.terminal_execute)
+        command_row.addWidget(prompt); command_row.addWidget(self.terminal_input,1); command_row.addWidget(execute)
+        pl.addLayout(command_row)
+        l.addWidget(panel,1)
+        note=QLabel("Внимание: это полноценный CLI RouterOS. Команды изменения конфигурации выполняются напрямую. Перед использованием проверяй команду; не вставляй неизвестные скрипты.")
+        note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+        return w
+
+    def terminal_execute(self):
+        if self.busy:
+            self.status.setText("●  Дождись завершения текущей операции.")
+            return
+        command=self.terminal_input.text().strip()
+        if not command: return
+        if "\\n" in command or "\\r" in command:
+            QMessageBox.warning(self,"Некорректная команда","Вводи одну команду RouterOS за раз.")
+            return
+        self.terminal_input.clear()
+        stamp=datetime.now().strftime("%H:%M:%S")
+        self.terminal_output.appendPlainText(f"\\n[{stamp}] $ {command}")
+        self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+        def job():
+            try:
+                r=self.router_conn()
+                result=r.exec(command,timeout=60)
+                self.q.put(("TERMOUT",result or "(пустой вывод)"))
+            except Exception as e:
+                self.q.put(("TERMOUT","ОШИБКА: "+str(e)))
+        self.run_job("RouterOS CLI: "+command,job)
+
     def pages_changed(self,index):
-        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH-подключение и параметры policy routing")]
+        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH-подключение и параметры policy routing"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):
@@ -630,7 +688,7 @@ class App(QMainWindow):
                         v=str(result.get(key.upper(),""))
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
-                elif kind=="TEXT": payload[0].setPlainText(payload[1])
+                elif kind=="TERMOUT":\n                    self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)\n                elif kind=="TEXT": payload[0].setPlainText(payload[1])
                 elif kind=="BACKUP": self.backup_info.setText(payload)
         except queue.Empty: pass
 

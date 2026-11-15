@@ -456,7 +456,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -675,7 +675,7 @@ class App(QMainWindow):
         p.layout().addLayout(form)
         wg=self.panel("Профиль WireGuard / смена VPN-провайдера","Импортируй конфигурацию провайдера .conf или заполни поля вручную. Правила маршрутизации сохраняются.")
         wgform=QFormLayout(); self.wg_inputs={}
-        for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive")]:
+        for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
             e=QLineEdit("" if key=="wg_private_key" else self.settings.get(key,""))
             if key=="wg_private_key": e.setEchoMode(QLineEdit.EchoMode.Password); e.setPlaceholderText("Не сохраняется на диск")
             self.wg_inputs[key]=e; wgform.addRow(label,e)
@@ -1180,6 +1180,7 @@ class App(QMainWindow):
                         k,v=line.split("=",1); vals[k.strip().lower()]=v.strip()
                 data[section]=vals
             interface=data.get("interface",{}); peers=data.get("peer",{})
+            if len(re.findall(r"(?im)^\\s*\\[Peer\\]\\s*$",raw)) != 1: raise ValueError("Поддерживается .conf с одним блоком [Peer].")
             if not interface.get("privatekey") or not peers.get("publickey") or not peers.get("endpoint"):
                 raise ValueError("В .conf должны быть Interface: PrivateKey и Peer: PublicKey, Endpoint.")
             endpoint=peers["endpoint"]
@@ -1189,7 +1190,7 @@ class App(QMainWindow):
             else: raise ValueError("Endpoint должен содержать порт, например vpn.example:51820")
             values={"wg_private_key":interface["privatekey"],"wg_public_key":peers["publickey"],"wg_endpoint":host,"wg_port":port,
                     "wg_allowed":peers.get("allowedips","0.0.0.0/0"),"wg_address":interface.get("address","").split(",")[0].strip(),
-                    "wg_keepalive":peers.get("persistentkeepalive","25")}
+                    "wg_keepalive":peers.get("persistentkeepalive","25"),"wg_mtu":interface.get("mtu",self.wg_inputs["wg_mtu"].text() or "1240")}
             for k,v in values.items():
                 if k in self.wg_inputs: self.wg_inputs[k].setText(v)
             self.log(f"Импортирован WireGuard-профиль: {Path(path).name}. Проверь параметры перед применением.")
@@ -1210,6 +1211,8 @@ class App(QMainWindow):
             if not allowed: raise ValueError("AllowedIPs не может быть пустым.")
             for net in allowed: ipaddress.ip_network(net,strict=False)
             if cfg["wg_address"]: ipaddress.ip_interface(cfg["wg_address"])
+            mtu=int(cfg["wg_mtu"])
+            if not 576<=mtu<=9000: raise ValueError("MTU должен быть в диапазоне 576–9000.")
             self.pending_wg_config=cfg
         except Exception as e: QMessageBox.warning(self,"Проверь WireGuard-профиль",str(e)); return
         if QMessageBox.question(self,"Сменить VPN-провайдера",

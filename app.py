@@ -186,7 +186,7 @@ class RouterConnection:
         out = b"".join(out_parts).decode("utf-8", "replace")
         err = b"".join(err_parts).decode("utf-8", "replace")
         combined = (out + ("\n" + err if err else "")).strip()
-        if any(x in combined.lower() for x in ("failure:", "syntax error", "expected end of command", "bad command name")):
+        if any(x in combined.lower() for x in ("failure:", "syntax error", "expected end of command", "bad command name", "bad parameter")):
             raise RuntimeError(f"RouterOS отклонил команду:\n{command}\n{combined}")
         if status not in (0, -1):
             raise RuntimeError(f"SSH exit status {status}: {combined}")
@@ -490,7 +490,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://cloudflare-dns.com/dns-query", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -764,10 +764,10 @@ class App(QMainWindow):
         imp=QPushButton("Импортировать .conf"); imp.clicked.connect(self.import_wireguard_conf)
         applywg=QPushButton("Применить новый VPN-профиль"); applywg.setObjectName("PrimaryButton"); applywg.clicked.connect(self.apply_wireguard_profile)
         wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
-        doh=self.panel("DNS-over-HTTPS · Cloudflare","Управление DoH на самом MikroTik. LAN-клиенты продолжают обращаться к роутеру по DNS, а upstream-запросы маршрутизатора могут идти через HTTPS.")
+        doh=self.panel("DNS-over-HTTPS · Google Public DNS","Управление DoH на самом MikroTik. LAN-клиенты продолжают обращаться к роутеру по DNS, а upstream-запросы маршрутизатора могут идти через HTTPS.")
         self.doh_enabled=QCheckBox("Использовать DoH")
         self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
-        self.doh_url=QLineEdit(self.settings.get("doh_url","https://cloudflare-dns.com/dns-query"))
+        self.doh_url=QLineEdit(self.settings.get("doh_url","https://dns.google/dns-query"))
         self.doh_verify_cert=QCheckBox("Проверять TLS-сертификат DoH-сервера")
         self.doh_verify_cert.setChecked(self.settings.get("doh_verify_cert","1")=="1")
         dohform=QFormLayout(); dohform.addRow("DoH endpoint URL",self.doh_url); dohform.addRow("",self.doh_enabled); dohform.addRow("",self.doh_verify_cert); doh.layout().addLayout(dohform)
@@ -2242,9 +2242,19 @@ class App(QMainWindow):
     def check_doh_config(self):
         def job():
             r=self.router_conn()
-            dns=r.exec("/ip dns print detail")
-            logs=r.exec('/log print where topics~"dns,error"')
-            self.q.put(("DIAGOUT",("Текущая конфигурация DoH","$ /ip dns print detail\n"+dns+"\n\n$ /log print where topics~dns,error\n"+logs,False,True)))
+            commands=[
+                ("DNS configuration","/ip dns print"),
+                ("Resolve chatgpt.com",':put [:resolve "chatgpt.com"]'),
+                ("Resolve google.com",':put [:resolve "google.com"]'),
+                ("DNS cache",'/ip dns cache print terse where name~"chatgpt|google"'),
+                ("DNS errors",'/log print without-paging where topics~"dns,error"'),
+            ]
+            parts=[]
+            for title,command in commands:
+                try: out=r.exec(command,timeout=18)
+                except Exception as exc: out="ERROR: "+str(exc)
+                parts.append("$ "+command+"\n"+title+"\n"+out)
+            self.q.put(("DIAGOUT",("Проверка DoH на MikroTik","\n\n".join(parts),False,True)))
         self.run_job("Проверка DoH на MikroTik…",job)
 
     def stage_fix_all(self):
@@ -2271,8 +2281,16 @@ class App(QMainWindow):
         lines=["До подтверждения ниже изменения на роутер не отправляются."]
         for i,a in enumerate(actions,1):
             lines.append(f"{i}. {a['title']}")
-            if a["kind"]=="fix_all": lines += [f"   DoH: {a.get('url') if a.get('enabled') else 'отключить'}",f"   TLS certificate verification: {a.get('verify')}", "   Bootstrap DNS: 1.1.1.1, 1.0.0.1","   Проверка/создание управляемых NAT и Mangle","   Включение VPN-MANAGER-DOMAIN-ROUTE","   Очистка DNS cache"]
-            elif a["kind"]=="doh_config": lines += [f"   DoH enabled: {a['enabled']}",f"   URL: {a['url']}",f"   Verify certificate: {a['verify']}"]
+            if a["kind"]=="fix_all":
+                from urllib.parse import urlparse
+                host=urlparse(a.get("url","")).hostname or ""
+                bootstrap={"dns.google":"8.8.8.8, 8.8.4.4","cloudflare-dns.com":"1.1.1.1, 1.0.0.1","dns.quad9.net":"9.9.9.9, 149.112.112.112"}.get(host.lower(),"текущие DNS")
+                lines += [f"   DoH: {a.get('url') if a.get('enabled') else 'отключить'}",f"   TLS certificate verification: {a.get('verify')}", f"   Bootstrap DNS: {bootstrap}","   Проверка/создание управляемых NAT и Mangle","   Включение VPN-MANAGER-DOMAIN-ROUTE","   Очистка DNS cache"]
+            elif a["kind"]=="doh_config":
+                from urllib.parse import urlparse
+                host=urlparse(a.get("url","")).hostname or ""
+                bootstrap={"dns.google":"8.8.8.8, 8.8.4.4","cloudflare-dns.com":"1.1.1.1, 1.0.0.1","dns.quad9.net":"9.9.9.9, 149.112.112.112"}.get(host.lower(),"текущие DNS")
+                lines += [f"   DoH enabled: {a['enabled']}",f"   URL: {a['url']}",f"   Verify certificate: {a['verify']}",f"   Bootstrap DNS: {bootstrap}"]
             elif a["kind"]=="clear_all": lines += ['   Удаление /ip dns static с comment~"VPN-MANAGER:"','   Удаление CIDR/IP с comment~"VPN-MANAGER-CIDR:" из address-list','   Очистка DNS cache']
             elif a["kind"]=="apply_targets": lines.append("   Проверки, затем добавление выбранных целей и недостающих управляемых правил.")
             elif a["kind"]=="remove_selected": lines.append("   Удаление только выбранных записей с метками VPN-MANAGER.")
@@ -2311,18 +2329,25 @@ class App(QMainWindow):
                         parsed=urlparse(a["url"])
                         if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a["verify"]:
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
-                        self.cmd(r,f"/ip dns set servers=1.1.1.1,1.0.0.1 use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
+                        host=parsed.hostname.lower()
+                        bootstrap={"dns.google":"8.8.8.8,8.8.4.4","cloudflare-dns.com":"1.1.1.1,1.0.0.1","dns.quad9.net":"9.9.9.9,149.112.112.112"}.get(host)
+                        if bootstrap:
+                            self.cmd(r,f"/ip dns set servers={bootstrap}")
+                        self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
                         self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
                     self.cmd(r,"/ip dns cache flush")
                 elif k=="fix_all":
                     self.prepare_router(r)
-                    self.cmd(r,"/ip dns set servers=1.1.1.1,1.0.0.1")
                     if a.get("enabled"):
                         from urllib.parse import urlparse
                         parsed=urlparse(a.get("url",""))
                         if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a.get("verify",True):
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
+                        host=parsed.hostname.lower()
+                        bootstrap={"dns.google":"8.8.8.8,8.8.4.4","cloudflare-dns.com":"1.1.1.1,1.0.0.1","dns.quad9.net":"9.9.9.9,149.112.112.112"}.get(host)
+                        if bootstrap:
+                            self.cmd(r,f"/ip dns set servers={bootstrap}")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
                         self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')

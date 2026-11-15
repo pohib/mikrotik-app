@@ -39,7 +39,7 @@ PRESETS = {
     "Telegram": ["telegram.org", "t.me", "telegram.me", "telegra.ph", "91.108.56.0/22", "91.108.4.0/22", "91.108.8.0/22", "91.108.16.0/22", "91.108.12.0/22", "149.154.160.0/20", "91.105.192.0/23", "91.108.20.0/22", "185.76.151.0/24"],
     "Netflix": ["netflix.com", "netflix.net", "nflxvideo.net", "nflximg.net", "nflximg.com", "nflxso.net", "nflxext.com"],
     "Cloudflare services": ["cloudflare.com", "cloudflare-dns.com", "one.one.one.one"],
-    "Instagram": ["instagram.com", "www.instagram.com", "i.instagram.com", "graph.instagram.com", "cdninstagram.com", "fbcdn.net", "facebook.com", "messenger.com", "threads.net"],
+    "Instagram": ["instagram.com", "i.instagram.com", "graph.instagram.com", "cdninstagram.com", "fbcdn.net", "instagram.fna.fbcdn.net"],
 }
 
 
@@ -870,10 +870,12 @@ class App(QMainWindow):
             pt,prx,ptx=self.tr_prev; dt=t-pt
             if dt>0.5: self.tr_rx.append(max(0,rx-prx)/dt); self.tr_tx.append(max(0,tx-ptx)/dt)
         self.tr_prev=(t,rx,tx)
-        if wan_rx is not None and wan_tx is not None and self.tr_rx and self.tr_tx:
+        if wan_rx is not None and wan_tx is not None:
             # monitor-traffic уже возвращает текущие bit/s; переводим в byte/s и вычитаем WG.
-            self.normal_rx.append(max(0,wan_rx/8-self.tr_rx[-1]))
-            self.normal_tx.append(max(0,wan_tx/8-self.tr_tx[-1]))
+            wg_rx_rate=self.tr_rx[-1] if self.tr_rx else 0
+            wg_tx_rate=self.tr_tx[-1] if self.tr_tx else 0
+            self.normal_rx.append(max(0,wan_rx/8-wg_rx_rate))
+            self.normal_tx.append(max(0,wan_tx/8-wg_tx_rate))
             self.normal_chart.msg="Сбор данных WAN…"; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
             self.normal_hint.setText(f"Обычный трафик (оценка) · RX {fmt_bits(self.normal_rx[-1]*8)} · TX {fmt_bits(self.normal_tx[-1]*8)}. WAN включает VPN-инкапсуляцию, поэтому из него вычитаются счётчики WG.")
         if self.tr_rx:

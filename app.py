@@ -1345,7 +1345,7 @@ class App(QMainWindow):
     def cmd(self,r,command,timeout=30):
         return r.exec(command,timeout)
 
-    def diagnostics(self,r,run_ping=False,silent=False):
+    def diagnostics(self,r,run_ping=False,silent=False,domain=None):
         """
         Read-only, layered diagnostics. Every command is executed once per run;
         raw evidence and the interpreted result are kept in the same report.
@@ -1383,6 +1383,13 @@ class App(QMainWindow):
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
             "WAN ping": "/tool ping address=1.1.1.1 count=3",
         }
+        if domain:
+            checks.update({
+                "Selected domain DNS resolve": f":put [:resolve {ros_q(domain)}]",
+                "Selected domain DNS cache": f"/ip dns cache print terse where name~{ros_q(domain)}",
+                "Selected domain managed FWD": f"/ip dns static print terse where comment={ros_q('VPN-MANAGER:'+domain)}",
+                "Selected domain dynamic IPs": f"/ip firewall address-list print terse where list={ros_q(f['address_list'])} and comment={ros_q('created for '+domain+'.')}",
+            })
         raw={}
         for title,command in checks.items():
             try:
@@ -1467,6 +1474,16 @@ class App(QMainWindow):
             add("info","DNS / домены","Команда проверки youtube.com не выполнилась",raw["DNS resolve YouTube"],"Проверь синтаксис/права и DNS static FWD.")
         elif not nonempty("DNS resolve YouTube"):
             add("warn","DNS / домены","RouterOS не вернул адрес youtube.com",raw["DNS resolve YouTube"],"Сравни результат с cloudflare.com. Проверь DNS static FWD для домена и доступность DoH.")
+        if domain:
+            selected=raw.get("Selected domain DNS resolve","")
+            if failed("Selected domain DNS resolve"):
+                add("info","Выбранный домен",f"Проверка {domain} не выполнилась",selected,"Проверь синтаксис команды и права SSH.")
+            elif not nonempty("Selected domain DNS resolve"):
+                add("warn","Выбранный домен",f"RouterOS не разрешил {domain}",selected,"Проверь DNS/DoH и управляемую FWD-запись для этого домена.")
+            if not failed("Selected domain managed FWD") and domain not in raw.get("Selected domain managed FWD",""):
+                add("warn","Выбранный домен",f"На роутере не найдена управляемая FWD-запись для {domain}",raw.get("Selected domain managed FWD",""),"Проверь, добавлен ли домен в список VPN-целей и применены ли изменения.")
+            if not failed("Selected domain dynamic IPs") and not raw.get("Selected domain dynamic IPs","").strip():
+                add("info","Выбранный домен",f"Для {domain} пока не найдено динамических IP в address-list",raw.get("Selected domain dynamic IPs",""),"Сделай DNS-запрос с LAN-клиента к этому домену и повтори диагностику. Это не обязательно ошибка, если клиент ещё не запрашивал домен.")
         if failed("DNS configuration"):
             add("info","DNS configuration","Не удалось прочитать DNS-конфигурацию",raw["DNS configuration"],"Проверь права SSH и повтори проверку после устранения ошибки команды.")
         else:
@@ -1554,6 +1571,7 @@ class App(QMainWindow):
         overall="КРИТИЧЕСКАЯ ПРОБЛЕМА" if critical else ("ЕСТЬ ПРЕДУПРЕЖДЕНИЯ" if warnings else "КРИТИЧЕСКИХ ОТКЛОНЕНИЙ НЕ НАЙДЕНО")
         result={
             "Маршрутизатор":raw["Router identity"].replace("name:","").strip() or "ответ получен",
+            "Проверяемый домен":domain or "не задан",
             "Итог диагностики":overall,
             "Проблемы":str(critical),
             "Предупреждения":str(warnings),
@@ -1593,7 +1611,19 @@ class App(QMainWindow):
         def job(): self.diagnostics(self.router_conn(),False,True)
         self.run_job("Обновление dashboard…",job)
 
-    def run_diagnostics(self): self.run_job("Полная диагностика…",lambda:self.diagnostics(self.router_conn(),False))
+    def run_diagnostics(self):
+        domain=""
+        if hasattr(self,"domain_diag_input"):
+            candidate=self.domain_diag_input.text().strip()
+            if candidate:
+                try:
+                    normalized,kind=normalize_target(candidate)
+                    if kind=="Домен": domain=normalized
+                    else: raise ValueError("Для диагностики домена введи доменное имя, не IP/CIDR.")
+                except Exception as exc:
+                    QMessageBox.warning(self,"Некорректный домен",str(exc))
+                    return
+        self.run_job("Полная диагностика…",lambda:self.diagnostics(self.router_conn(),False,False,domain or None))
 
     def page_logs(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)

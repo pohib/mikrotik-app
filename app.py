@@ -866,7 +866,9 @@ class AutoDiscoveryDialog(QDialog):
             for entry in entries:
                 request = entry.get("request", {})
                 response = entry.get("response", {})
-                candidates = [(request.get("url", ""), "HAR: запрос браузера")]
+                request_url = request.get("url", "")
+                request_domain = self._is_domain(urlparse(request_url).hostname or "")
+                candidates = [(request_url, "HAR: запрос браузера")]
                 # Referer/Origin связывают запрос с открытой страницей; Location фиксирует redirect host.
                 for header in request.get("headers", []) + response.get("headers", []):
                     header_name = str(header.get("name", "")).lower()
@@ -875,7 +877,6 @@ class AutoDiscoveryDialog(QDialog):
                 redirect_url = response.get("redirectURL", "")
                 if redirect_url:
                     candidates.append((redirect_url, "HAR: HTTP redirect"))
-                entry_domains = set()
                 for candidate_url, source in candidates:
                     host = urlparse(candidate_url).hostname or ""
                     domain = self._is_domain(host)
@@ -883,16 +884,15 @@ class AutoDiscoveryDialog(QDialog):
                         continue
                     before = len(self.discovered)
                     self._add_domain(domain, source)
-                    entry_domains.add(domain)
                     if len(self.discovered) > before:
                         count += 1
+                # serverIPAddress относится только к URL запроса, не к Referer/Origin.
                 server_ip = entry.get("serverIPAddress", "")
                 try:
-                    if server_ip and ipaddress.ip_address(server_ip).version == 4 and entry_domains:
-                        for domain in entry_domains:
-                            current_source, current_ips = self.discovered[domain]
-                            if server_ip not in current_ips:
-                                self.discovered[domain] = (current_source, sorted(set(current_ips + [server_ip])))
+                    if request_domain and server_ip and ipaddress.ip_address(server_ip).version == 4:
+                        current_source, current_ips = self.discovered[request_domain]
+                        if server_ip not in current_ips:
+                            self.discovered[request_domain] = (current_source, sorted(set(current_ips + [server_ip])))
                 except ValueError:
                     pass
             self._render()

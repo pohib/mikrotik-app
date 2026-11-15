@@ -372,6 +372,7 @@ def fit_controls(root, height=42):
     """Задаёт минимальную высоту полям и кнопкам, чтобы текст никогда не обрезался."""
     for w in root.findChildren(QPushButton):
         h = 46 if w.objectName() == "ActionButton" else height
+        if w.objectName() in ("ChromeButton","ChromeClose"): continue
         w.setMinimumHeight(h); w.setCursor(Qt.CursorShape.PointingHandCursor)
     for cls in (QLineEdit, QComboBox, QSpinBox):
         for w in root.findChildren(cls):
@@ -415,6 +416,7 @@ class WindowTitleBar(QFrame):
         self.setObjectName("WindowTitleBar"); self.setFixedHeight(42)
         row=QHBoxLayout(self); row.setContentsMargins(16,0,8,0); row.setSpacing(8)
         brand=QLabel("◈  MIKROTIK VPN MANAGER"); brand.setObjectName("ChromeBrand")
+        brand.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         row.addWidget(brand); row.addStretch()
         for label,obj,fn in (("—","ChromeButton",window.showMinimized),("□","ChromeButton",self.toggle_maximize),("×","ChromeClose",window.close)):
             b=QPushButton(label); b.setObjectName(obj); b.setFixedSize(38,30); b.clicked.connect(fn); row.addWidget(b)
@@ -429,6 +431,8 @@ class WindowTitleBar(QFrame):
         if self.drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.window.move(event.globalPosition().toPoint()-self.drag_pos); event.accept()
     def mouseReleaseEvent(self,event): self.drag_pos=None
+    def mouseDoubleClickEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton: self.toggle_maximize()
 
 
 class App(QMainWindow):
@@ -869,7 +873,11 @@ class App(QMainWindow):
             if c.startswith("VPN-MANAGER-CIDR:"):
                 target=c.split(":",1)[1]
                 kind="IPv4-адрес" if target.endswith("/32") else "IPv4-сеть"
-                present=any(a==target for a in static_ips)
+                try:
+                    wanted=ipaddress.ip_network(target,strict=False)
+                    present=any(ipaddress.ip_network(a,strict=False)==wanted for a in static_ips)
+                except ValueError:
+                    present=False
                 detail="IP присутствует в address-list" if present else "Запись есть, но адрес не найден в address-list"
                 found[target]=(kind,"X" in it["flags"],"I" in it["flags"],detail,present)
         self.q.put(("TARGETS",{"found":found,"dyn":dyn,"total":total,"dns_count":len(dns),"dynamic_ips":dynamic_ips,"static_ips":static_ips}))

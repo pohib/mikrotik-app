@@ -30,6 +30,16 @@ NAT_COMMENT = "VPN-MANAGER-NAT"
 TEMP_TEST_COMMENT = "VPN-MANAGER-TEMP-TEST"
 ADDRESS_LIST_DEFAULT = "vpn_domains"
 
+# DoH endpoints explicitly listed as compatible with RouterOS by MikroTik.
+# Bootstrap DNS is used only to resolve the DoH hostname before HTTPS connects.
+DOH_PRESETS = {
+    "Google Public DNS": ("https://dns.google/dns-query", "8.8.8.8, 8.8.4.4"),
+    "Cloudflare · стандартный": ("https://cloudflare-dns.com/dns-query", "1.1.1.1, 1.0.0.1"),
+    "Cloudflare · блокировка вредоносных сайтов": ("https://security.cloudflare-dns.com/dns-query", "1.1.1.2, 1.0.0.2"),
+    "Cloudflare · семейный фильтр": ("https://family.cloudflare-dns.com/dns-query", "1.1.1.3, 1.0.0.3"),
+    "OpenDNS": ("https://doh.opendns.com/dns-query", "208.67.222.222, 208.67.220.220"),
+}
+
 PRESETS = {
     "YouTube": ["youtube.com", "youtube-nocookie.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube.googleapis.com", "yt3.ggpht.com"],
     "Discord": ["discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media", "discordcdn.com"],
@@ -490,7 +500,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -503,6 +513,7 @@ class App(QMainWindow):
         if hasattr(self, "doh_enabled"):
             self.settings["doh_enabled"] = "1" if self.doh_enabled.isChecked() else "0"
             self.settings["doh_url"] = self.doh_url.text().strip()
+            self.settings["doh_bootstrap"] = self.doh_bootstrap.text().strip()
             self.settings["doh_verify_cert"] = "1" if self.doh_verify_cert.isChecked() else "0"
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1053,18 +1064,25 @@ class App(QMainWindow):
         imp=QPushButton("Импортировать .conf"); imp.clicked.connect(self.import_wireguard_conf)
         applywg=QPushButton("Применить новый VPN-профиль"); applywg.setObjectName("PrimaryButton"); applywg.clicked.connect(self.apply_wireguard_profile)
         wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
-        doh=self.panel("DNS-over-HTTPS · Google Public DNS","Управление DoH на самом MikroTik. LAN-клиенты продолжают обращаться к роутеру по DNS, а upstream-запросы маршрутизатора могут идти через HTTPS.")
+        doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP; оба значения можно проверить и изменить вручную.")
         self.doh_enabled=QCheckBox("Использовать DoH")
         self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
+        self.doh_preset=QComboBox()
+        self.doh_preset.addItems(list(DOH_PRESETS.keys()) + ["Свой endpoint · вручную"])
         self.doh_url=QLineEdit(self.settings.get("doh_url","https://dns.google/dns-query"))
+        self.doh_bootstrap=QLineEdit(self.settings.get("doh_bootstrap","8.8.8.8, 8.8.4.4"))
+        self.doh_bootstrap.setPlaceholderText("Например: 8.8.8.8, 8.8.4.4")
+        selected_preset=next((name for name,(url,_) in DOH_PRESETS.items() if url==self.doh_url.text().strip()),"Свой endpoint · вручную")
+        self.doh_preset.setCurrentText(selected_preset)
+        self.doh_preset.currentTextChanged.connect(self.select_doh_preset)
         self.doh_verify_cert=QCheckBox("Проверять TLS-сертификат DoH-сервера")
         self.doh_verify_cert.setChecked(self.settings.get("doh_verify_cert","1")=="1")
-        dohform=QFormLayout(); dohform.addRow("DoH endpoint URL",self.doh_url); dohform.addRow("",self.doh_enabled); dohform.addRow("",self.doh_verify_cert); doh.layout().addLayout(dohform)
+        dohform=QFormLayout(); dohform.addRow("Готовый пресет",self.doh_preset); dohform.addRow("DoH endpoint URL",self.doh_url); dohform.addRow("Bootstrap DNS · IPv4",self.doh_bootstrap); dohform.addRow("",self.doh_enabled); dohform.addRow("",self.doh_verify_cert); doh.layout().addLayout(dohform)
         dohrow=QHBoxLayout()
         apply_doh=QPushButton("Подготовить применение DoH"); apply_doh.setObjectName("PrimaryButton"); apply_doh.clicked.connect(self.stage_doh_config)
         check_doh=QPushButton("Проверить DoH на роутере"); check_doh.clicked.connect(self.check_doh_config)
         dohrow.addWidget(apply_doh); dohrow.addWidget(check_doh); doh.layout().addLayout(dohrow)
-        doh_note=QLabel("Bootstrap: обычные DNS-серверы нужны RouterOS для разрешения имени DoH endpoint. При активном DoH RouterOS не переключается автоматически на обычные DNS при отказе DoH. Статические FWD-записи требуют отдельной проверки: они могут использовать собственные upstream. Проверку TLS-сертификата оставляй включённой.")
+        doh_note=QLabel("Bootstrap DNS используется только для первоначального разрешения доменного имени DoH endpoint. После включения DoH RouterOS отправляет обычные DNS-запросы через выбранный HTTPS-сервис; автоматического отката на bootstrap DNS при отказе DoH нет. Для своего endpoint укажи доступные IPv4 DNS-серверы через запятую. Проверку TLS-сертификата оставляй включённой.")
         doh_note.setObjectName("InfoNote"); doh_note.setWordWrap(True); doh.layout().addWidget(doh_note); l.addWidget(doh)
         warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address. DNS из .conf не применяется: DNS-политика MikroTik остаётся прежней.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
@@ -2524,22 +2542,36 @@ class App(QMainWindow):
             QMessageBox.information(self,"Не выбрано","Выбери строки в таблице."); return
         self.queue_change("remove_selected",f"Удалить выбранные записи ({len(selected)})",targets=selected)
 
+    def select_doh_preset(self,name):
+        preset=DOH_PRESETS.get(name)
+        if preset:
+            self.doh_url.setText(preset[0])
+            self.doh_bootstrap.setText(preset[1])
+
     def stage_doh_config(self):
         enabled=self.doh_enabled.isChecked()
         url=self.doh_url.text().strip()
         verify=self.doh_verify_cert.isChecked()
+        bootstrap=self.doh_bootstrap.text().strip()
         if enabled:
             from urllib.parse import urlparse
             parsed=urlparse(url)
             if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password:
-                QMessageBox.warning(self,"Некорректный DoH URL","Укажи полный HTTPS URL, например https://cloudflare-dns.com/dns-query")
+                QMessageBox.warning(self,"Некорректный DoH URL","Укажи полный HTTPS URL, например https://dns.google/dns-query")
                 return
             if not verify:
                 QMessageBox.warning(self,"Небезопасная настройка","Для DoH оставь включённой проверку TLS-сертификата.")
                 return
-        self.settings.update({"doh_enabled":"1" if enabled else "0","doh_url":url,"doh_verify_cert":"1" if verify else "0"})
+            try:
+                ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
+                if not ips or any(ip.version!=4 for ip in ips): raise ValueError()
+            except ValueError:
+                QMessageBox.warning(self,"Некорректный Bootstrap DNS","Укажи один или несколько корректных IPv4-адресов через запятую.")
+                return
+            bootstrap=", ".join(str(ip) for ip in ips)
+        self.settings.update({"doh_enabled":"1" if enabled else "0","doh_url":url,"doh_bootstrap":bootstrap,"doh_verify_cert":"1" if verify else "0"})
         self.save_settings()
-        self.queue_change("doh_config","Настроить DoH: "+(url if enabled else "отключить"),enabled=enabled,url=url,verify=verify)
+        self.queue_change("doh_config","Настроить DoH: "+(url if enabled else "отключить"),enabled=enabled,url=url,bootstrap=bootstrap,verify=verify)
 
     def check_doh_config(self):
         def job():
@@ -2563,15 +2595,23 @@ class App(QMainWindow):
         enabled=self.doh_enabled.isChecked()
         url=self.doh_url.text().strip()
         verify=self.doh_verify_cert.isChecked()
+        bootstrap=self.doh_bootstrap.text().strip()
         if enabled:
             from urllib.parse import urlparse
             parsed=urlparse(url)
             if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not verify:
                 QMessageBox.warning(self,"Проверь DoH","Нужен корректный HTTPS URL и включённая проверка TLS-сертификата.")
                 return
-        self.settings.update({"doh_enabled":"1" if enabled else "0","doh_url":url,"doh_verify_cert":"1" if verify else "0"})
+            try:
+                ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
+                if not ips or any(ip.version!=4 for ip in ips): raise ValueError()
+            except ValueError:
+                QMessageBox.warning(self,"Некорректный Bootstrap DNS","Укажи один или несколько корректных IPv4-адресов через запятую.")
+                return
+            bootstrap=", ".join(str(ip) for ip in ips)
+        self.settings.update({"doh_enabled":"1" if enabled else "0","doh_url":url,"doh_bootstrap":bootstrap,"doh_verify_cert":"1" if verify else "0"})
         self.save_settings()
-        self.queue_change("fix_all","Исправить VPN/DNS и применить выбранную политику DoH",enabled=enabled,url=url,verify=verify)
+        self.queue_change("fix_all","Исправить VPN/DNS и применить выбранную политику DoH",enabled=enabled,url=url,bootstrap=bootstrap,verify=verify)
 
     def stage_clear_all(self):
         if QMessageBox.question(self,"Очистка VPN-целей","Удалить все DNS FWD и CIDR/IP-записи, созданные этим приложением? Локальный список целей сохранится для повторного применения.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
@@ -2584,14 +2624,10 @@ class App(QMainWindow):
         for i,a in enumerate(actions,1):
             lines.append(f"{i}. {a['title']}")
             if a["kind"]=="fix_all":
-                from urllib.parse import urlparse
-                host=urlparse(a.get("url","")).hostname or ""
-                bootstrap={"dns.google":"8.8.8.8, 8.8.4.4","cloudflare-dns.com":"1.1.1.1, 1.0.0.1","dns.quad9.net":"9.9.9.9, 149.112.112.112"}.get(host.lower(),"текущие DNS")
+                bootstrap=a.get("bootstrap") or "не изменять текущие DNS"
                 lines += [f"   DoH: {a.get('url') if a.get('enabled') else 'отключить'}",f"   TLS certificate verification: {a.get('verify')}", f"   Bootstrap DNS: {bootstrap}","   Проверка/создание управляемых NAT и Mangle","   Включение VPN-MANAGER-DOMAIN-ROUTE","   Очистка DNS cache"]
             elif a["kind"]=="doh_config":
-                from urllib.parse import urlparse
-                host=urlparse(a.get("url","")).hostname or ""
-                bootstrap={"dns.google":"8.8.8.8, 8.8.4.4","cloudflare-dns.com":"1.1.1.1, 1.0.0.1","dns.quad9.net":"9.9.9.9, 149.112.112.112"}.get(host.lower(),"текущие DNS")
+                bootstrap=a.get("bootstrap") or "не изменять текущие DNS"
                 lines += [f"   DoH enabled: {a['enabled']}",f"   URL: {a['url']}",f"   Verify certificate: {a['verify']}",f"   Bootstrap DNS: {bootstrap}"]
             elif a["kind"]=="clear_all": lines += ['   Удаление /ip dns static с comment~"VPN-MANAGER:"','   Удаление CIDR/IP с comment~"VPN-MANAGER-CIDR:" из address-list','   Очистка DNS cache']
             elif a["kind"]=="apply_targets": lines.append("   Проверки, затем добавление выбранных целей и недостающих управляемых правил.")
@@ -2631,10 +2667,11 @@ class App(QMainWindow):
                         parsed=urlparse(a["url"])
                         if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a["verify"]:
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
-                        host=parsed.hostname.lower()
-                        bootstrap={"dns.google":"8.8.8.8,8.8.4.4","cloudflare-dns.com":"1.1.1.1,1.0.0.1","dns.quad9.net":"9.9.9.9,149.112.112.112"}.get(host)
+                        bootstrap=a.get("bootstrap","").strip()
                         if bootstrap:
-                            self.cmd(r,f"/ip dns set servers={bootstrap}")
+                            ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
+                            if not ips or any(ip.version!=4 for ip in ips): raise ValueError("Bootstrap DNS должен содержать корректные IPv4-адреса.")
+                            self.cmd(r,f"/ip dns set servers={','.join(str(ip) for ip in ips)}")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
                         self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
@@ -2646,10 +2683,11 @@ class App(QMainWindow):
                         parsed=urlparse(a.get("url",""))
                         if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a.get("verify",True):
                             raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
-                        host=parsed.hostname.lower()
-                        bootstrap={"dns.google":"8.8.8.8,8.8.4.4","cloudflare-dns.com":"1.1.1.1,1.0.0.1","dns.quad9.net":"9.9.9.9,149.112.112.112"}.get(host)
+                        bootstrap=a.get("bootstrap","").strip()
                         if bootstrap:
-                            self.cmd(r,f"/ip dns set servers={bootstrap}")
+                            ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
+                            if not ips or any(ip.version!=4 for ip in ips): raise ValueError("Bootstrap DNS должен содержать корректные IPv4-адреса.")
+                            self.cmd(r,f"/ip dns set servers={','.join(str(ip) for ip in ips)}")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
                     else:
                         self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')

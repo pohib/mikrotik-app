@@ -915,7 +915,11 @@ class App(QMainWindow):
         rem=result.get("Remote requests","")=="включён"
         self.set_ind("remote","ok" if rem else "bad","включён" if rem else "выключен")
         v6=result.get("IPv6 default route","не обнаружен").startswith("не")
-        self.set_ind("v6","ok" if v6 else "warn","нет" if v6 else "есть · обход IPv4")
+        self.set_ind("v6","ok" if v6 else "warn","нет" if v6 else "есть · возможен обход IPv4")
+        fwd_count=result.get("DNS FWD count","0")
+        self.set_ind("fwd","ok" if int(fwd_count or 0)>0 else "warn",f"{fwd_count} записей" if int(fwd_count or 0)>0 else "нет записей")
+        ip_count=result.get("VPN address-list count","0")
+        self.set_ind("ips","ok" if int(ip_count or 0)>0 else "warn",f"{ip_count} IP" if int(ip_count or 0)>0 else "пока пуст")
         good=[doh,red=="UDP + TCP",dot=="TCP/853 + UDP/853",rem]
         n=sum(1 for x in good if x)
         self.set_ind("overall","ok" if n==4 else ("bad" if n==0 else "warn"),"Защищён" if n==4 else ("Не защищён" if n==0 else f"Частично · {n}/4"))

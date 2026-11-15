@@ -1400,7 +1400,7 @@ class App(QMainWindow):
         # Redact credentials from the report as well as the operation log.
         # WireGuard private/preshared keys must never be exported with diagnostics.
         for key,value in raw.items():
-            value=re.sub(r'(?im)((?:private|preshared)-key\\s*[:=]\\s*)("[^"]*"|\\S+)',r'\\1[СКРЫТО]',value)
+            value=re.sub(r'(?im)((?:private|preshared)-key\s*[:=]\s*)("[^"]*"|\S+)',r'\1[СКРЫТО]',value)
             raw[key]=value
 
         # Client-side checks run on the Windows PC where this app is running.

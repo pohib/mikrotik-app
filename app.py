@@ -2114,7 +2114,7 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); QTimer.singleShot(1000, self.refresh_router_status); self.auth_btn.setText("SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.progress.hide(); self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="PENDING_CLEARED": self.pending_actions=[]; self.update_pending_ui()
                 elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
@@ -2250,7 +2250,7 @@ class App(QMainWindow):
         version=field(resource,"version")
         uptime=field(resource,"uptime")
         cpu=field(resource,"cpu-load")
-        temp=field(resource,"temperature")
+        temp=field(resource,"cpu-temperature") or field(resource,"board-temperature") or field(resource,"temperature")
         total_raw=field(resource,"total-memory"); free_raw=field(resource,"free-memory")
         total=int(total_raw) if total_raw.isdigit() else 0
         free=int(free_raw) if free_raw.isdigit() else 0
@@ -2273,9 +2273,9 @@ class App(QMainWindow):
         self.router_health_values["lan"].setText(interface_summary(self.settings.get("lan_interface","")))
 
         peer_text=data.get("peers","")
-        handshake=re.search(r"(?im)^\s*last-handshake:\s*(.+)$",peer_text)
-        rx=re.search(r"(?im)^\s*rx:\s*(\d+)",peer_text)
-        tx=re.search(r"(?im)^\s*tx:\s*(\d+)",peer_text)
+        handshake=re.search(r"(?im)^\s*last-handshake\s*[:=]\s*(.+)$",peer_text)
+        rx=re.search(r"(?im)^\s*rx\s*[:=]\s*(\d+)",peer_text)
+        tx=re.search(r"(?im)^\s*tx\s*[:=]\s*(\d+)",peer_text)
         hs=handshake.group(1).strip() if handshake else "нет данных"
         self.router_health_values["wireguard"].setText(f"{hs} · RX {human_bytes(int(rx.group(1)))} / TX {human_bytes(int(tx.group(1)))}" if rx and tx else hs)
 

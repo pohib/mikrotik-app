@@ -548,7 +548,8 @@ class App(QMainWindow):
         header = QHBoxLayout(); titlebox = QVBoxLayout(); self.page_title=QLabel("Обзор сети"); self.page_title.setObjectName("PageTitle")
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
-        self.header_apply_btn=QPushButton("Применить изменения · 0"); self.header_apply_btn.setObjectName("PrimaryButton"); self.header_apply_btn.setEnabled(False); self.header_apply_btn.clicked.connect(self.apply_pending_changes); self.header_apply_btn.setToolTip("Применить подготовленные изменения на MikroTik после просмотра и подтверждения."); header.addWidget(self.header_apply_btn)
+        self.header_apply_btn=QPushButton("Применить изменения · 0"); self.header_apply_btn.setObjectName("PrimaryButton"); self.header_apply_btn.setEnabled(False); self.header_apply_btn.clicked.connect(self.apply_pending_changes); self.header_apply_btn.setToolTip("Просмотреть команды и применить выбранные подготовленные изменения на MikroTik."); header.addWidget(self.header_apply_btn)
+        self.header_cancel_pending_btn=QPushButton("Отменить все"); self.header_cancel_pending_btn.setObjectName("DangerButton"); self.header_cancel_pending_btn.setEnabled(False); self.header_cancel_pending_btn.clicked.connect(self.cancel_all_pending); self.header_cancel_pending_btn.setToolTip("Очистить очередь ещё не применённых изменений."); header.addWidget(self.header_cancel_pending_btn)
         self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
         self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(8)); header.addWidget(self.log_btn)
         cv.addLayout(header)
@@ -693,8 +694,14 @@ class App(QMainWindow):
         control_note.setObjectName("Muted"); control_note.setWordWrap(True); control.layout().addWidget(control_note)
         l.addWidget(control)
         pending=self.panel("Подготовленные изменения","Действия сначала добавляются в очередь. На роутер они попадут только после отдельного нажатия «Применить изменения».")
+        pending_actions_bar=QHBoxLayout()
         self.pending_label=QLabel("Очередь пуста · на роутере ничего не ожидает применения"); self.pending_label.setObjectName("Muted"); self.pending_label.setWordWrap(True)
-        pending.layout().addWidget(self.pending_label)
+        pending_actions_bar.addWidget(self.pending_label,1)
+        self.cancel_all_pending_btn=QPushButton("Отменить все изменения"); self.cancel_all_pending_btn.setObjectName("DangerButton"); self.cancel_all_pending_btn.clicked.connect(self.cancel_all_pending)
+        pending_actions_bar.addWidget(self.cancel_all_pending_btn)
+        pending.layout().addLayout(pending_actions_bar)
+        self.pending_cards_layout=QVBoxLayout(); self.pending_cards_layout.setSpacing(10)
+        pending.layout().addLayout(self.pending_cards_layout)
         l.addWidget(pending)
         return w
 
@@ -2520,16 +2527,97 @@ class App(QMainWindow):
             if count.isdigit() and int(count)>0: return
             self.cmd(r,target_cmd(self.settings,t,k))
 
+    def pending_action_details(self,a):
+        """Пояснение, команды RouterOS и проверки для одной операции."""
+        k=a["kind"]; f=self.settings; commands=[]; checks=[]
+        if k=="apply_targets":
+            commands += ["/ip dns print", "/ip dhcp-server network print detail", f'/ip route print detail where routing-table={ros_q(f["route_table"])}', "/ip firewall filter print detail", "/ip firewall mangle print detail", "/ip firewall nat print detail", "# Условно добавляются, если управляемые правила отсутствуют", mangle_cmd(f), nat_cmd(f)]
+            commands += [target_cmd(f,t,kind) for t,kind in a.get("targets",[])] + ["/ip dns cache flush"]
+            description=f"Проверить prerequisites и добавить {len(a.get('targets',[]))} VPN-целей. Недостающие управляемые Mangle/NAT создаются; сторонние правила не перезаписываются."
+            checks=["allow-remote-requests включён",f"DHCP выдаёт LAN DNS {f['lan_dns']}",f"В таблице {f['route_table']} активен default route через {f['wg_interface']}","Нет FastTrack и конфликтующих сторонних mark-routing правил","Проверить DNS FWD/address-list; для доменов дождаться DNS-запроса клиента"]
+        elif k=="remove_selected":
+            for t,kind in a.get("targets",[]):
+                comment=f"VPN-MANAGER:{t}" if kind=="Домен" else f"VPN-MANAGER-CIDR:{t}"
+                path="/ip dns static" if kind=="Домен" else "/ip firewall address-list"
+                commands.append(f'{path} remove [find where comment={ros_q(comment)}]')
+            commands.append("/ip dns cache flush")
+            description=f"Удалить {len(a.get('targets',[]))} выбранных управляемых записей. Другие записи не затрагиваются."
+            checks=["Проверить, что выбранные записи исчезли","Убедиться, что нужные цели не удалены по ошибке"]
+        elif k in ("mangle_enable","mangle_disable"):
+            verb="enable" if k=="mangle_enable" else "disable"
+            commands=[f'/ip firewall mangle print detail where comment={ros_q(MANGLE_COMMENT)}',f'/ip firewall mangle {verb} [find where comment={ros_q(MANGLE_COMMENT)}]']
+            description="Включить выборочную маршрутизацию через WireGuard." if verb=="enable" else "Отключить выборочную маршрутизацию; трафик вернётся к обычному выбору маршрута."
+            checks=["Найдено ровно одно управляемое Mangle-правило","Проверить статус правила и доступность нужных сайтов"]
+        elif k=="doh_config":
+            if a.get("enabled"):
+                bootstrap=a.get("bootstrap","").strip()
+                if bootstrap:
+                    ips=[str(ipaddress.ip_address(x.strip())) for x in bootstrap.split(",") if x.strip()]
+                    commands.append(f'/ip dns set servers={",".join(ips)}')
+                commands += [f'/ip dns set use-doh-server={ros_q(a["url"])} verify-doh-cert=yes',"/ip dns cache flush"]
+                description=f"Включить DoH {a['url']}, проверку TLS-сертификата и указанные bootstrap DNS."
+            else:
+                commands=['/ip dns set use-doh-server="" verify-doh-cert=no',"/ip dns cache flush"]
+                description="Отключить DoH; RouterOS будет использовать обычные DNS-серверы из параметра servers."
+            checks=["Проверить /ip dns print: endpoint, servers, verify-doh-cert","Проверить разрешение нескольких доменов","Убедиться, что LAN-клиенты получают DNS-ответы"]
+        elif k=="fix_all":
+            commands += ["/ip dns print", "/ip dhcp-server network print detail", f'/ip route print detail where routing-table={ros_q(f["route_table"])}', "/ip firewall filter print detail", "/ip firewall mangle print detail", "/ip firewall nat print detail", "# Условно создаются отсутствующие правила", mangle_cmd(f), nat_cmd(f)]
+            if a.get("enabled"):
+                bootstrap=a.get("bootstrap","").strip()
+                if bootstrap:
+                    ips=[str(ipaddress.ip_address(x.strip())) for x in bootstrap.split(",") if x.strip()]
+                    commands.append(f'/ip dns set servers={",".join(ips)}')
+                commands.append(f'/ip dns set use-doh-server={ros_q(a["url"])} verify-doh-cert=yes')
+            else: commands.append('/ip dns set use-doh-server="" verify-doh-cert=no')
+            commands += [f'/ip firewall mangle enable [find where comment={ros_q(MANGLE_COMMENT)}]',"/ip dns cache flush"]
+            description="Проверить prerequisites, создать недостающие NAT/Mangle, применить выбранную политику DoH и включить VPN-маршрутизацию."
+            checks=["Все проверки prepare_router пройдены","Проверить /ip dns print и DNS-разрешение","Проверить Mangle enabled и NAT masquerade через WireGuard","Проверить VPN-маршрут и доступность LAN-клиентов"]
+        elif k=="clear_all":
+            commands=['/ip dns static remove [find where comment~"VPN-MANAGER:"]',f'/ip firewall address-list remove [find where list={ros_q(f["address_list"])} and comment~"VPN-MANAGER-CIDR:"]',"/ip dns cache flush"]
+            description="Удалить управляемые DNS FWD и CIDR/IP-записи. Локальный список целей, Mangle и NAT останутся."
+            checks=["Проверить DNS static и address-list","Убедиться, что сторонние записи сохранены"]
+        else:
+            description=a["title"]; checks=["Проверить результат операции в журнале и соответствующем разделе"]
+        return description,commands,checks
+
+    def cancel_pending_action(self,index):
+        if 0 <= index < len(self.pending_actions):
+            removed=self.pending_actions.pop(index); self.update_pending_ui()
+            self.log(f"Отменено из очереди: {removed['title']}. На роутер ничего не отправлялось.")
+
+    def cancel_all_pending(self):
+        if not self.pending_actions:return
+        answer=QMessageBox.question(self,"Отменить все изменения",f"Удалить из очереди все {len(self.pending_actions)} неподтверждённых операций? Конфигурация роутера не изменится.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
+        if answer!=QMessageBox.StandardButton.Yes:return
+        count=len(self.pending_actions); self.pending_actions.clear(); self.update_pending_ui()
+        self.log(f"Очередь очищена: отменено операций — {count}. На роутер ничего не отправлялось.")
+
     def update_pending_ui(self):
         if hasattr(self,"pending_label"):
-            self.pending_label.setText("Очередь пуста · на роутере ничего не ожидает применения" if not self.pending_actions else "\n".join(f"{i+1}. {x['title']}" for i,x in enumerate(self.pending_actions)))
+            self.pending_label.setText("Очередь пуста · на роутере ничего не ожидает применения" if not self.pending_actions else f"Подготовлено операций: {len(self.pending_actions)} · ещё не отправлены на роутер")
+        if hasattr(self,"pending_cards_layout"):
+            while self.pending_cards_layout.count():
+                item=self.pending_cards_layout.takeAt(0); widget=item.widget()
+                if widget: widget.deleteLater()
+            for index,a in enumerate(self.pending_actions):
+                description,commands,checks=self.pending_action_details(a)
+                card=QFrame(); card.setObjectName("Panel"); cl=QVBoxLayout(card); cl.setContentsMargins(14,12,14,12); cl.setSpacing(7)
+                top=QHBoxLayout(); heading=QLabel(f"{index+1}. {a['title']}"); heading.setObjectName("SectionTitle")
+                remove=QPushButton("Отменить это изменение"); remove.setObjectName("DangerButton"); remove.clicked.connect(lambda checked=False,i=index:self.cancel_pending_action(i))
+                top.addWidget(heading,1); top.addWidget(remove); cl.addLayout(top)
+                info=QLabel(description); info.setObjectName("Muted"); info.setWordWrap(True); cl.addWidget(info)
+                cl.addWidget(QLabel("КОМАНДЫ ROUTEROS"))
+                view=QPlainTextEdit(); view.setReadOnly(True); view.setMaximumHeight(min(180,max(76,22*min(len(commands),8)))); view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+                view.setPlainText("\n".join(commands) if commands else "# Команды не сформированы"); cl.addWidget(view)
+                check=QLabel("Проверить после применения:\n• "+"\n• ".join(checks)); check.setObjectName("Muted"); check.setWordWrap(True); cl.addWidget(check)
+                self.pending_cards_layout.addWidget(card)
         if hasattr(self,"header_apply_btn"):
-            self.header_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}")
-            self.header_apply_btn.setEnabled(bool(self.pending_actions))
+            self.header_apply_btn.setText(f"Применить изменения · {len(self.pending_actions)}"); self.header_apply_btn.setEnabled(bool(self.pending_actions))
+        if hasattr(self,"header_cancel_pending_btn"): self.header_cancel_pending_btn.setEnabled(bool(self.pending_actions))
+        if hasattr(self,"cancel_all_pending_btn"): self.cancel_all_pending_btn.setEnabled(bool(self.pending_actions))
 
     def queue_change(self,kind,title,**data):
-        self.pending_actions.append({"kind":kind,"title":title,**data})
-        self.update_pending_ui()
+        self.pending_actions.append({"kind":kind,"title":title,**data}); self.update_pending_ui()
         self.log(f"Подготовлено: {title}. На роутер пока ничего не отправлено.")
 
     def stage_apply_targets(self):
@@ -2621,27 +2709,37 @@ class App(QMainWindow):
     def apply_pending_changes(self):
         if not self.pending_actions:return
         actions=list(self.pending_actions)
-        lines=["До подтверждения ниже изменения на роутер не отправляются."]
-        for i,a in enumerate(actions,1):
-            lines.append(f"{i}. {a['title']}")
-            if a["kind"]=="fix_all":
-                bootstrap=a.get("bootstrap") or "не изменять текущие DNS"
-                lines += [f"   DoH: {a.get('url') if a.get('enabled') else 'отключить'}",f"   TLS certificate verification: {a.get('verify')}", f"   Bootstrap DNS: {bootstrap}","   Проверка/создание управляемых NAT и Mangle","   Включение VPN-MANAGER-DOMAIN-ROUTE","   Очистка DNS cache"]
-            elif a["kind"]=="doh_config":
-                bootstrap=a.get("bootstrap") or "не изменять текущие DNS"
-                lines += [f"   DoH enabled: {a['enabled']}",f"   URL: {a['url']}",f"   Verify certificate: {a['verify']}",f"   Bootstrap DNS: {bootstrap}"]
-            elif a["kind"]=="clear_all": lines += ['   Удаление /ip dns static с comment~"VPN-MANAGER:"','   Удаление CIDR/IP с comment~"VPN-MANAGER-CIDR:" из address-list','   Очистка DNS cache']
-            elif a["kind"]=="apply_targets": lines.append("   Проверки, затем добавление выбранных целей и недостающих управляемых правил.")
-            elif a["kind"]=="remove_selected": lines.append("   Удаление только выбранных записей с метками VPN-MANAGER.")
-        dlg=QDialog(self); dlg.setWindowTitle("Применить подготовленные изменения"); dlg.resize(850,560)
-        lay=QVBoxLayout(dlg); title=QLabel("Проверь список операций"); title.setObjectName("SectionTitle")
-        note=QLabel("Основной default route через ZTE не удаляется. Применение начнётся только после подтверждения.")
-        note.setObjectName("Muted"); note.setWordWrap(True)
-        view=QPlainTextEdit(); view.setReadOnly(True); view.setPlainText("\n".join(lines))
-        row=QHBoxLayout(); cancel=QPushButton("Отмена"); ok=QPushButton("Применить на роутер"); ok.setObjectName("PrimaryButton")
-        cancel.clicked.connect(dlg.reject); ok.clicked.connect(dlg.accept); row.addStretch(); row.addWidget(cancel); row.addWidget(ok)
-        lay.addWidget(title); lay.addWidget(note); lay.addWidget(view,1); lay.addLayout(row)
+        dlg=QDialog(self); dlg.setWindowTitle("Проверка и применение изменений"); dlg.resize(980,760)
+        lay=QVBoxLayout(dlg); lay.setContentsMargins(22,20,22,18); lay.setSpacing(12)
+        title=QLabel(f"Проверь операции · {len(actions)}"); title.setObjectName("SectionTitle")
+        note=QLabel("Каждое изменение показано отдельным блоком: пояснение, команды RouterOS и что проверить после применения. До подтверждения команды не отправляются.")
+        note.setObjectName("Muted"); note.setWordWrap(True); lay.addWidget(title); lay.addWidget(note)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body=QWidget(); body_layout=QVBoxLayout(body); body_layout.setContentsMargins(2,2,8,2); body_layout.setSpacing(12)
+        for index,a in enumerate(actions):
+            description,commands,checks=self.pending_action_details(a)
+            card=QFrame(); card.setObjectName("Panel"); cl=QVBoxLayout(card); cl.setContentsMargins(14,12,14,12); cl.setSpacing(8)
+            top=QHBoxLayout(); heading=QLabel(f"{index+1}. {a['title']}"); heading.setObjectName("SectionTitle")
+            remove=QPushButton("Отменить этот блок"); remove.setObjectName("DangerButton")
+            remove.clicked.connect(lambda checked=False,i=index:(self.cancel_pending_action(i),dlg.reject()))
+            top.addWidget(heading,1); top.addWidget(remove); cl.addLayout(top)
+            info=QLabel(description); info.setObjectName("Muted"); info.setWordWrap(True); cl.addWidget(info)
+            label=QLabel("КОМАНДЫ ROUTEROS"); label.setObjectName("CardTitle"); cl.addWidget(label)
+            view=QPlainTextEdit(); view.setReadOnly(True); view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap); view.setPlainText("\n".join(commands) if commands else "# Команды не сформированы")
+            view.setMinimumHeight(90); view.setMaximumHeight(min(230,max(100,22*min(len(commands),9)))); view._highlighter=RouterOSHighlighter(view.document()); cl.addWidget(view)
+            check=QLabel("Что проверить после применения:\n• "+"\n• ".join(checks)); check.setObjectName("Muted"); check.setWordWrap(True); cl.addWidget(check)
+            body_layout.addWidget(card)
+        body_layout.addStretch(); scroll.setWidget(body); lay.addWidget(scroll,1)
+        footer=QHBoxLayout()
+        cancel_all=QPushButton("Отменить все изменения"); cancel_all.setObjectName("DangerButton"); cancel_all.clicked.connect(lambda:(dlg.reject(),self.cancel_all_pending()))
+        close=QPushButton("Закрыть"); apply=QPushButton("Применить оставшиеся · "+str(len(actions))); apply.setObjectName("PrimaryButton")
+        close.clicked.connect(dlg.reject); apply.clicked.connect(dlg.accept)
+        footer.addWidget(cancel_all); footer.addStretch(); footer.addWidget(close); footer.addWidget(apply); lay.addLayout(footer)
+        fit_controls(dlg,40)
         if dlg.exec()!=QDialog.DialogCode.Accepted:return
+        if len(self.pending_actions)!=len(actions) or any(x is not y for x,y in zip(self.pending_actions,actions)):
+            QMessageBox.information(self,"Очередь обновлена","Состав очереди изменился. Открой предпросмотр ещё раз.")
+            return
         def job():
             r=self.router_conn()
             for a in actions:
@@ -2666,32 +2764,28 @@ class App(QMainWindow):
                     if a["enabled"]:
                         from urllib.parse import urlparse
                         parsed=urlparse(a["url"])
-                        if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a["verify"]:
-                            raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
+                        if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a["verify"]: raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
                         bootstrap=a.get("bootstrap","").strip()
                         if bootstrap:
                             ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
                             if not ips or any(ip.version!=4 for ip in ips): raise ValueError("Bootstrap DNS должен содержать корректные IPv4-адреса.")
                             self.cmd(r,f"/ip dns set servers={','.join(str(ip) for ip in ips)}")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
-                    else:
-                        self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
+                    else:self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
                     self.cmd(r,"/ip dns cache flush")
                 elif k=="fix_all":
                     self.prepare_router(r)
                     if a.get("enabled"):
                         from urllib.parse import urlparse
                         parsed=urlparse(a.get("url",""))
-                        if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a.get("verify",True):
-                            raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
+                        if parsed.scheme!="https" or not parsed.netloc or parsed.username or parsed.password or not a.get("verify",True): raise ValueError("DoH требует корректный HTTPS URL и включённую проверку сертификата.")
                         bootstrap=a.get("bootstrap","").strip()
                         if bootstrap:
                             ips=[ipaddress.ip_address(x.strip()) for x in bootstrap.split(",") if x.strip()]
                             if not ips or any(ip.version!=4 for ip in ips): raise ValueError("Bootstrap DNS должен содержать корректные IPv4-адреса.")
                             self.cmd(r,f"/ip dns set servers={','.join(str(ip) for ip in ips)}")
                         self.cmd(r,f"/ip dns set use-doh-server={ros_q(a['url'])} verify-doh-cert=yes")
-                    else:
-                        self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
+                    else:self.cmd(r,'/ip dns set use-doh-server="" verify-doh-cert=no')
                     count=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
                     if count!="1": raise RuntimeError(f"Ожидалось ровно одно управляемое Mangle-правило, найдено: {count or '0'}.")
                     self.cmd(r,f'/ip firewall mangle enable [find where comment={ros_q(MANGLE_COMMENT)}]')
@@ -2700,10 +2794,8 @@ class App(QMainWindow):
                     self.cmd(r,'/ip dns static remove [find where comment~"VPN-MANAGER:"]')
                     self.cmd(r,f'/ip firewall address-list remove [find where list={ros_q(self.settings["address_list"])} and comment~"VPN-MANAGER-CIDR:"]')
                     self.cmd(r,"/ip dns cache flush")
-            self.pending_actions=[]
-            self.q.put(("PENDING_CLEARED",None))
-            self.fetch_targets(r); self.fetch_mangle_status(r)
-            self.q.put(("LOG","Подготовленные изменения применены."))
+            self.pending_actions=[]; self.q.put(("PENDING_CLEARED",None))
+            self.fetch_targets(r); self.fetch_mangle_status(r); self.q.put(("LOG","Подготовленные изменения применены."))
         self.run_job("Применение очереди изменений…",job)
 
     def apply_all(self):

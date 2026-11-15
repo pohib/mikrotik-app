@@ -1152,13 +1152,13 @@ class App(QMainWindow):
     def filter_log_page(self):
         if not hasattr(self,"log_view"): return
         q=self.log_search.text().lower() if hasattr(self,"log_search") else ""
-        self.log_view.setPlainText("\\n".join(x for x in self.log_lines if q in x.lower()))
+        self.log_view.setPlainText("\n".join(x for x in self.log_lines if q in x.lower()))
         self.log_view.moveCursor(QTextCursor.MoveOperation.End)
 
     def export_log_page(self):
         path,_=QFileDialog.getSaveFileName(self,"Экспорт журнала",str(Path.home()/"mikrotik-vpn-manager.log"),"Log files (*.log *.txt)")
         if path:
-            Path(path).write_text("\\n".join(self.log_lines),encoding="utf-8")
+            Path(path).write_text("\n".join(self.log_lines),encoding="utf-8")
             self.log(f"Журнал экспортирован: {path}")
 
     def clear_log_page(self):
@@ -1170,7 +1170,7 @@ class App(QMainWindow):
         if not path: return
         try:
             raw=Path(path).read_text(encoding="utf-8-sig")
-            sections=re.split(r"(?im)^\\s*\\[([^]]+)\\]\\s*$",raw)
+            sections=re.split(r"(?im)^\s*\[([^]]+)\]\s*$",raw)
             data={}
             for i in range(1,len(sections),2):
                 section=sections[i].strip().lower(); block=sections[i+1]; vals={}
@@ -1180,7 +1180,7 @@ class App(QMainWindow):
                         k,v=line.split("=",1); vals[k.strip().lower()]=v.strip()
                 data[section]=vals
             interface=data.get("interface",{}); peers=data.get("peer",{})
-            if len(re.findall(r"(?im)^\\s*\\[Peer\\]\\s*$",raw)) != 1: raise ValueError("Поддерживается .conf с одним блоком [Peer].")
+            if len(re.findall(r"(?im)^\s*\[Peer\]\s*$",raw)) != 1: raise ValueError("Поддерживается .conf с одним блоком [Peer].")
             if not interface.get("privatekey") or not peers.get("publickey") or not peers.get("endpoint"):
                 raise ValueError("В .conf должны быть Interface: PrivateKey и Peer: PublicKey, Endpoint.")
             endpoint=peers["endpoint"]

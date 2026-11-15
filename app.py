@@ -132,7 +132,7 @@ class RouterConnection:
             finally:
                 client.close()
 
-    def exec(self, command, timeout=30):
+    def _exec_raw(self, command, timeout=30):
         with self.lock:
             client = self.client
             tr = client.get_transport() if client else None
@@ -172,6 +172,19 @@ class RouterConnection:
         if status not in (0, -1):
             raise RuntimeError(f"SSH exit status {status}: {combined}")
         return combined
+
+    def exec(self, command, timeout=30):
+        # Централизованный журнал: фиксируем все SSH-команды, включая фоновые опросы.
+        safe_command = re.sub(r'(?i)(private-key\\s*=\\s*)("[^"]*"|\\S+)', r'\\1[СКРЫТО]', command)
+        self.ui_queue.put(("LOG", f"SSH → $ {safe_command}"))
+        try:
+            output = self._exec_raw(command, timeout)
+        except Exception as exc:
+            self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\\nОШИБКА: {exc}"))
+            raise
+        safe_output = re.sub(r'(?im)(private-key\\s*[:=]\\s*)(\\S+)', r'\\1[СКРЫТО]', output)
+        self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\\n{safe_output or '(пустой вывод)'}"))
+        return output
 
 
 TONES = {"ok": "#4ade80", "warn": "#fbbf24", "bad": "#fb7185", "info": "#7db0ff", "muted": "#7f93b2", "off": "#5b6b85"}
@@ -559,7 +572,7 @@ class App(QMainWindow):
         traffic_controls=QHBoxLayout()
         self.traffic_auto=QCheckBox("Автообновление трафика · 5 сек"); self.traffic_auto.setChecked(False)
         self.traffic_auto.toggled.connect(self.set_traffic_auto)
-        refresh_traffic=QPushButton("Обновить сейчас"); refresh_traffic.clicked.connect(self.poll_traffic)
+        refresh_traffic=QPushButton("Снять замеры скорости"); refresh_traffic.clicked.connect(self.refresh_traffic_once)
         traffic_controls.addWidget(self.traffic_auto); traffic_controls.addStretch(); traffic_controls.addWidget(refresh_traffic)
         tp.layout().addLayout(traffic_controls); mid.addWidget(tp,2)
         dp=self.panel("Состояние DNS","Защита от обхода и утечек"); self.dns_ind={}
@@ -773,7 +786,7 @@ class App(QMainWindow):
                     d=payload
                     ans=QMessageBox.question(self,"Проверка SSH host key",f"Первое подключение к {d['host']}:{d['port']}\nТип: {d['type']}\nFingerprint: {d['fp']}\n\nСверь fingerprint с MikroTik перед подтверждением. Доверять ключу?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
                     d["result"]["accept"]=ans==QMessageBox.StandardButton.Yes; d["event"].set()
-                elif kind=="CONNECTED": self.dashboard_login_btn.setText("SSH подключён · Отключиться"); self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
+                elif kind=="CONNECTED": QTimer.singleShot(700, self.refresh_traffic_once); self.dashboard_login_btn.setText("SSH подключён · Отключиться"); self.auth_btn.setText("●  SSH подключён · Выйти"); self.auth_btn.setObjectName("DangerButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn); self.conn_badge.setText("●  SSH ПОДКЛЮЧЁН"); self.foot.setText(f"ROUTEROS 7  ·  SSH KEY AUTH\n{self.settings['host']}:{self.settings['port']}"); self.reset_traffic(True); self.conn_badge.setObjectName("BadgeOn"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log(f"SSH fingerprint {payload['fp']} ({'known' if payload['known'] else 'new key saved'})")
                 elif kind=="ERROR": self.busy=False; self.log("ОШИБКА: "+str(payload)); self.diag_block("Ошибка",str(payload),True,True); QMessageBox.critical(self,"Ошибка",str(payload))
                 elif kind=="DONE": self.busy=False; self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
@@ -832,7 +845,7 @@ class App(QMainWindow):
     def reset_traffic(self,connected=False):
         self.tr_rx.clear(); self.tr_tx.clear(); self.tr_prev=None; self.normal_rx.clear(); self.normal_tx.clear(); self.wan_prev=None
         if hasattr(self,"normal_chart"): self.normal_chart.set_data([],[])
-        self.chart.msg="Сбор данных…" if connected else "Нет данных — подключись к роутеру"; self.chart.set_data([],[])
+        self.chart.msg="Нажми «Обновить сейчас» для двух замеров скорости" if connected else "Нет данных — подключись к роутеру"; self.chart.set_data([],[])
         for v in self.tr_labels.values(): v.setText("—")
         self.tr_panel.sub_label.setText("Ожидание данных от peer…" if connected else "Ожидание подключения к роутеру…")
 
@@ -842,6 +855,17 @@ class App(QMainWindow):
             self.log("Автообновление счётчиков WireGuard включено: интервал 5 секунд.")
         else:
             self.traffic_timer.stop(); self.log("Автообновление счётчиков WireGuard отключено.")
+
+    def refresh_traffic_once(self):
+        if not self.router:
+            self.chart.msg = "Сначала подключись к MikroTik по SSH"
+            self.chart.update()
+            return
+        self.chart.msg = "Снимаю первый замер…"
+        self.chart.update()
+        self.poll_traffic()
+        # Второй замер нужен для вычисления скорости по разнице счётчиков.
+        QTimer.singleShot(1800, self.poll_traffic)
 
     def poll_traffic(self):
         r=self.router
@@ -878,14 +902,14 @@ class App(QMainWindow):
             wg_tx_rate=self.tr_tx[-1] if self.tr_tx else 0
             self.normal_rx.append(max(0,wan_rx/8-wg_rx_rate))
             self.normal_tx.append(max(0,wan_tx/8-wg_tx_rate))
-            self.normal_chart.msg="Сбор данных WAN…"; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
+            self.normal_chart.msg="Нужны повторные замеры WAN" if len(self.normal_rx)<2 else ""; self.normal_chart.set_data(self.normal_rx,self.normal_tx)
             self.normal_hint.setText(f"Обычный трафик (оценка) · RX {fmt_bits(self.normal_rx[-1]*8)} · TX {fmt_bits(self.normal_tx[-1]*8)}. WAN включает VPN-инкапсуляцию, поэтому из него вычитаются счётчики WG.")
         if self.tr_rx:
             self.tr_labels["rx"].setText(fmt_bits(self.tr_rx[-1]*8)); self.tr_labels["tx"].setText(fmt_bits(self.tr_tx[-1]*8))
             self.tr_labels["peak"].setText(fmt_bits(max(self.tr_rx+self.tr_tx)*8))
         self.tr_labels["total"].setText(f"{human_bytes(rx)} / {human_bytes(tx)}")
         self.tr_panel.sub_label.setText(f"Peers: {peers} · последний handshake: {hs or 'нет'} · обновление каждые 5 с")
-        self.chart.msg="Сбор данных…"; self.chart.set_data(self.tr_rx,self.tr_tx)
+        self.chart.msg="Нужен второй замер для расчёта скорости" if len(self.tr_rx)<2 else ""; self.chart.set_data(self.tr_rx,self.tr_tx)
 
     # ---------- статусы VPN-целей ----------
     def fetch_targets(self,r):
@@ -950,8 +974,8 @@ class App(QMainWindow):
         if getattr(self,"mangle_state","unknown")=="invalid": return ("Цель есть · ошибка правила маршрутизации","bad")
         if getattr(self,"mangle_state","unknown")=="unknown": return ("Цель есть · правило маршрутизации не подтверждено","warn")
         if f[0]=="Домен":
-            if len(f)<6 or not f[5]: return ("FWD настроена · DNS ещё не разрешён","info")
-            return ("DNS разрешён · IP в address-list","ok") if f[4] else ("DNS разрешён · IP не попал в список","warn")
+            if len(f)<6 or not f[5]: return ("FWD есть · нет DNS A-запроса от клиентов","info")
+            return ("DNS A получен · IP в address-list","ok") if f[4] else ("DNS A получен · IP не попал в список","warn")
         if len(f)>=5 and not f[4]: return ("Нет IP в address-list","warn")
         return ("Применена на роутере","ok") if is_local else ("Только на роутере","info")
 

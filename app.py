@@ -2158,7 +2158,11 @@ class App(QMainWindow):
             "Managed CIDR address-list": '/ip firewall address-list print terse where comment~"VPN-MANAGER-CIDR:"',
             "VPN address-list": f"/ip firewall address-list print terse where list={ros_q(f['address_list'])}",
             "IPv6 settings": "/ipv6 settings print",
+            "IPv6 addresses": "/ipv6 address print detail",
+            "IPv6 routes": "/ipv6 route print detail where active",
             "IPv6 default route": "/ipv6 route print detail where dst-address=::/0 and disabled=no",
+            "IPv6 firewall": "/ipv6 firewall filter print detail",
+            "IPv6 Neighbor Discovery / Router Advertisements": "/ipv6 nd print detail",
             "Managed Mangle counters": f'/ip firewall mangle print stats detail where comment={ros_q(MANGLE_COMMENT)}',
             "FastTrack counters": "/ip firewall filter print stats detail",
             "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
@@ -2379,8 +2383,18 @@ class App(QMainWindow):
         filt=raw["Firewall filter"]
         filter_entries=parse_terse(filt) if not failed("Firewall filter") else []
         active_fasttrack=any(x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"] for x in filter_entries)
+        fasttrack_entries=[x for x in filter_entries if x["f"].get("action")=="fasttrack-connection" and "X" not in x["flags"]]
         if active_fasttrack:
-            add("warn","Firewall / FastTrack","Обнаружено включённое FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
+            ft_summary=[]
+            for entry in fasttrack_entries:
+                fields=entry["f"]
+                ft_summary.append("comment="+fields.get("comment","(без комментария)")+
+                                  ", chain="+fields.get("chain","?")+
+                                  ", packets="+fields.get("packets","?")+
+                                  ", bytes="+fields.get("bytes","?"))
+            add("warn","Firewall / FastTrack",f"Активно FastTrack-правил: {len(fasttrack_entries)}; оно может обходить часть policy routing","\n".join(ft_summary) or filt,"Проверь, исключены ли соединения, которым нужен policy routing, до FastTrack. Сверь счётчики до/после теста. Наличие FastTrack само по себе не доказывает обход VPN.")
+        elif not failed("Firewall filter"):
+            add("ok","Firewall / FastTrack","Активных FastTrack-правил не обнаружено",filt,"Повторная проверка нужна после изменения Firewall.")
         if failed("Firewall filter"):
             add("info","DNS security","Не удалось прочитать filter-правила; состояние блокировок DoT/DoQ не подтверждено",filt,"Проверь права SSH и повтори /ip firewall filter print terse.")
         else:
@@ -2423,8 +2437,22 @@ class App(QMainWindow):
             add("ok","IPv6 settings","IPv6 глобально отключён в RouterOS",raw["IPv6 settings"],"Проверь также настройки IPv6 на клиентах и наличие других маршрутизаторов в LAN.")
         else:
             add("info","IPv6 settings","IPv6 не подтверждён как глобально отключённый",raw["IPv6 settings"],"Сопоставь настройки IPv6 с default route и IPv6 firewall; отсутствие default route не исключает другие IPv6-пути.")
-        if nonempty("IPv6 default route"):
-            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",raw["IPv6 default route"],"Проверь IPv6 DNS, IPv6 firewall и IPv6-маршрутизацию клиентов отдельно.")
+        ipv6_addresses=raw.get("IPv6 addresses","")
+        ipv6_global=bool(re.search(r"address=(?!fe80:|::1|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:)[0-9a-f:]+",ipv6_addresses,re.I))
+        ipv6_route=raw.get("IPv6 default route","")
+        ipv6_nd=raw.get("IPv6 Neighbor Discovery / Router Advertisements","")
+        if failed("IPv6 addresses") or failed("IPv6 firewall") or failed("IPv6 Neighbor Discovery / Router Advertisements"):
+            add("info","IPv6 security","Не все проверки IPv6-адресов, firewall и Router Advertisements удалось выполнить",
+                "\n".join(x for x in (ipv6_addresses,raw.get("IPv6 firewall",""),ipv6_nd) if x.startswith("ERROR:")),
+                "Проверь доступность /ipv6 address, /ipv6 firewall filter и /ipv6 nd. Не считай IPv6 безопасным только потому, что одна команда не выполнилась.")
+        elif ipv6_global and nonempty("IPv6 default route"):
+            add("warn","IPv6 / возможный обход VPN","Обнаружен глобальный IPv6-адрес и IPv6 default route; IPv4 policy routing не охватывает этот путь",
+                ipv6_addresses+"\n"+ipv6_route+"\nIPv6 firewall:\n"+raw.get("IPv6 firewall","")+"\nND/RA:\n"+ipv6_nd,
+                "Проверь, получают ли LAN-клиенты IPv6 через RA, и отдельно спроектируй IPv6 policy routing или контролируемую блокировку IPv6. Ничего автоматически не отключать.")
+        elif nonempty("IPv6 default route"):
+            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",ipv6_route,"Проверь IPv6 DNS, адреса клиентов, firewall и RA отдельно.")
+        else:
+            add("info","IPv6","IPv6 default route не обнаружен в выводе; это не исключает локальные IPv6-маршруты или другой маршрутизатор",ipv6_addresses+"\n"+ipv6_nd,"Сверь IPv6-настройки на клиенте и объявления Router Advertisement в LAN.")
         if not failed("Recent network errors") and raw["Recent network errors"].strip():
             add("info","Журнал RouterOS","В журнале есть сетевые ошибки/предупреждения",raw["Recent network errors"],"Сопоставь timestamp записи со временем отказа; старые записи сами по себе не доказывают текущую неисправность.")
 
@@ -2677,8 +2705,15 @@ class App(QMainWindow):
         try:
             domain,kind=normalize_target(raw)
             if kind!="Домен": raise ValueError("Введи доменное имя, а не IP/CIDR.")
+            client_ip=""
+            client_raw=self.client_input.text().strip()
+            if client_raw:
+                parsed_client=ipaddress.ip_address(client_raw)
+                if parsed_client.version!=4 or parsed_client not in ipaddress.ip_network(self.settings["lan_subnet"],strict=False):
+                    raise ValueError("IP клиента должен быть IPv4-адресом из LAN-подсети приложения.")
+                client_ip=str(parsed_client)
         except Exception as e:
-            QMessageBox.warning(self,"Некорректный домен",str(e)); return
+            QMessageBox.warning(self,"Некорректные параметры",str(e)); return
         def job():
             r=self.router_conn()
             commands=[
@@ -2712,6 +2747,16 @@ class App(QMainWindow):
                     try: out=self.cmd(r,command,timeout=20)
                     except Exception as e: out="ERROR: "+str(e)
                     self.q.put(("DIAGOUT",(f"Активный маршрут {probe_ip} · {table_name} · {command}",out,False,True)))
+                if client_ip:
+                    command=f'/ip firewall connection print detail where src-address~{ros_q(client_ip)} and dst-address~{ros_q(probe_ip)}'
+                    try: out=self.cmd(r,command,timeout=20)
+                    except Exception as e: out="ERROR: "+str(e)
+                    self.q.put(("DIAGOUT",(f"Conntrack клиента {client_ip} → {probe_ip} · {command}",out,False,True)))
+            if client_ip:
+                command=f'/ip firewall connection print count-only where src-address~{ros_q(client_ip)}'
+                try: out=self.cmd(r,command,timeout=20)
+                except Exception as e: out="ERROR: "+str(e)
+                self.q.put(("DIAGOUT",(f"Активные conntrack-записи клиента {client_ip} · {command}",out,False,True)))
             if not resolved_ips:
                 self.q.put(("DIAGOUT",("Проверка активного маршрута","IPv4 из DNS-ответа не получен; route lookup не выполнялся. Для IPv6 требуется отдельная проверка.",False,True)))
             self.q.put(("LOG",f"Собраны DNS/address-list/Mangle/WireGuard/route-table evidence для {domain}. Счётчики Mangle и peer глобальные, не per-domain."))

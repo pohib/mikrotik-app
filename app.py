@@ -3040,8 +3040,8 @@ class App(QMainWindow):
                 try: target,kind=normalize_target(value)
                 except Exception as exc: skipped+=1; errors.append(f"{value}: {exc}"); continue
                 if target in existing: skipped+=1; continue
-                self.targets.append((target,kind)); existing.add(target); added+=1
-            self.render_targets()
+                self.targets.append((target,kind)); self.target_groups[target]="Импорт"; existing.add(target); added+=1
+            self.save_settings(); self.render_targets()
             self.log(f"Импорт завершён: добавлено {added}, пропущено {skipped}.")
             if errors: QMessageBox.warning(self,"Импорт завершён",f"Добавлено: {added}\nПропущено: {skipped}\n\nПервые ошибки:\n"+"\n".join(errors[:12]))
             else: QMessageBox.information(self,"Импорт завершён",f"Добавлено: {added}\nПропущено (дубликаты): {skipped}")
@@ -3112,7 +3112,7 @@ class App(QMainWindow):
                 try: t,k=normalize_target(raw)
                 except Exception: continue
                 if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.target_groups[t]=next((name for name, values in PRESETS.items() if raw in values), "Профили"); n+=1
-        self.save_settings(); self.save_settings(); self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
+        self.save_settings(); self.render_targets(); self.log(f"Все профили ({len(PRESETS)}): добавлено {n} целей, дубликаты пропущены")
 
     def load_preset(self):
         name=self.preset.currentText(); n=0

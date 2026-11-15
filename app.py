@@ -1310,7 +1310,7 @@ class App(QMainWindow):
         p.layout().addLayout(tree_tools)
         self.target_table=QTreeWidget(); self.target_table.setObjectName("RoutingTree"); self.target_table.setColumnCount(7); self.target_table.setHeaderLabels(["Группа / домен / IP","Тип","Источник","В приложении","На роутере","Состояние","Детали"]); self.target_table.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); self.target_table.header().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(3,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(4,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(5,QHeaderView.ResizeMode.ResizeToContents); self.target_table.header().setSectionResizeMode(6,QHeaderView.ResizeMode.Stretch); self.target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); self.target_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.target_table.itemChanged.connect(self.on_target_item_changed); self.target_table.setAlternatingRowColors(True); self.target_table.setUniformRowHeights(False); self.target_table.setMinimumHeight(340); self.target_table.setIndentation(26); self.target_table.setAnimated(True); self.target_table.setRootIsDecorated(True); self.target_table.setItemsExpandable(True); p.layout().addWidget(self.target_table,1)
         self.targets_empty=QLabel("Пока нет целей. Добавь домен или IP, загрузи профиль либо запусти автоопределение."); self.targets_empty.setObjectName("EmptyState"); self.targets_empty.setWordWrap(True); self.targets_empty.setAlignment(Qt.AlignmentFlag.AlignCenter); p.layout().addWidget(self.targets_empty)
-        action_head=QHBoxLayout(); self.selection_hint=QLabel("Выбери группу, домен или IP в дереве"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
+        action_head=QHBoxLayout(); self.selection_hint=QLabel("Отметь галочками несколько групп, доменов или IP либо выдели строки мышью"); self.selection_hint.setObjectName("Muted"); action_head.addWidget(self.selection_hint); action_head.addStretch(); p.layout().addLayout(action_head)
         actions=QHBoxLayout()
         local_remove=QPushButton("Удалить из приложения"); local_remove.setObjectName("DangerButton"); local_remove.clicked.connect(self.remove_local); actions.addWidget(local_remove)
         stage_apply=QPushButton("Применить цели"); stage_apply.setObjectName("PrimaryButton"); stage_apply.clicked.connect(self.stage_apply_targets); actions.addWidget(stage_apply)
@@ -3373,7 +3373,7 @@ class App(QMainWindow):
         """Collect all checked and row-selected targets, expanding selected groups."""
         selected=[]
         if not hasattr(self,"target_table"): return selected
-        selected_items = set(self.target_table.selectedItems())
+        selected_items = self.target_table.selectedItems()
         def walk(item, inherited=False):
             marker = item.data(0, Qt.ItemDataRole.UserRole)
             is_group = isinstance(marker, tuple) and marker and marker[0] == "group"

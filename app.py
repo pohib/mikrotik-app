@@ -119,19 +119,52 @@ class RouterConnection:
         return known, fingerprint(key)
 
     def close(self):
-        with self.lock:
-            if self.client:
-                self.client.close(); self.client = None
+        # Не ждём lock: при зависшей команде закрытие transport прервёт recv()
+        # и позволит фоновому worker завершиться, не блокируя GUI.
+        client = self.client
+        self.client = None
+        if client:
+            try:
+                transport = client.get_transport()
+                if transport:
+                    transport.close()
+            finally:
+                client.close()
 
     def exec(self, command, timeout=30):
         with self.lock:
-            tr = self.client.get_transport() if self.client else None
+            client = self.client
+            tr = client.get_transport() if client else None
             if not tr or not tr.is_active():
                 raise RuntimeError("SSH-соединение отсутствует")
-            _stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
-            out = stdout.read().decode("utf-8", "replace")
-            err = stderr.read().decode("utf-8", "replace")
-            status = stdout.channel.recv_exit_status()
+            _stdin, stdout, stderr = client.exec_command(command, timeout=min(12, timeout))
+            channel = stdout.channel
+            channel.settimeout(0.2)
+            out_parts, err_parts = [], []
+            deadline = time.monotonic() + max(1, timeout)
+            while True:
+                try:
+                    while channel.recv_ready():
+                        out_parts.append(channel.recv(32768))
+                    while channel.recv_stderr_ready():
+                        err_parts.append(channel.recv_stderr(32768))
+                except Exception:
+                    if not tr.is_active():
+                        raise RuntimeError("SSH-соединение закрыто во время выполнения команды")
+                    raise
+                if channel.exit_status_ready():
+                    while channel.recv_ready():
+                        out_parts.append(channel.recv(32768))
+                    while channel.recv_stderr_ready():
+                        err_parts.append(channel.recv_stderr(32768))
+                    break
+                if time.monotonic() >= deadline:
+                    channel.close()
+                    raise TimeoutError(f"Команда RouterOS превысила таймаут {timeout} с: {command}")
+                time.sleep(0.04)
+            status = channel.recv_exit_status()
+        out = b"".join(out_parts).decode("utf-8", "replace")
+        err = b"".join(err_parts).decode("utf-8", "replace")
         combined = (out + ("\n" + err if err else "")).strip()
         if any(x in combined.lower() for x in ("failure:", "syntax error", "expected end of command", "bad command name")):
             raise RuntimeError(f"RouterOS отклонил команду:\n{command}\n{combined}")
@@ -197,8 +230,7 @@ class Dot(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
         col = QColor(TONES.get(self.state, TONES["off"]))
-        glow = QRadialGradient(8, 8, 8); g0 = QColor(col); g0.setAlpha(150 if self.state != "off" else 40); g1 = QColor(col); g1.setAlpha(0)
-        glow.setColorAt(0, g0); glow.setColorAt(1, g1)
+        glow = QRadialGradient(8, 8, 8); g0 = QColor(col); g0.setAlpha(150 if self.state != "off" else 40); g1 = QColor(col); g1.setAlpha(0)        glow.setColorAt(0, g0); glow.setColorAt(1, g1)
         p.setPen(Qt.PenStyle.NoPen); p.setBrush(QBrush(glow)); p.drawEllipse(QPointF(8, 8), 8, 8)
         p.setBrush(col); p.drawEllipse(QPointF(8, 8), 4.2, 4.2)
 
@@ -397,8 +429,7 @@ class App(QMainWindow):
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
-    def save_settings(self):
-        if hasattr(self, "inputs"):
+    def save_settings(self):        if hasattr(self, "inputs"):
             self.settings = self.fields()
         APP_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -526,6 +557,15 @@ class App(QMainWindow):
             b=QPushButton(text); b.setObjectName(obj); b.clicked.connect(fn); actions.addWidget(b)
         p.layout().addLayout(actions); l.addWidget(p,1)
         note=QLabel("Логика: DNS FWD / address-list → mangle prerouting → routing table vpn → WireGuard. Основной default route через ZTE не изменяется."); note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+        control=self.panel("Управление VPN-маршрутизацией","Временное переключение выборочного трафика между WireGuard и основным маршрутом через ZTE.")
+        safety_row=QHBoxLayout()
+        disable=QPushButton("Временно отключить VPN-маршрутизацию"); disable.setObjectName("DangerButton"); disable.clicked.connect(lambda:self.set_managed_mangle(False))
+        enable=QPushButton("Включить VPN-маршрутизацию"); enable.setObjectName("PrimaryButton"); enable.clicked.connect(lambda:self.set_managed_mangle(True))
+        safety_row.addWidget(disable); safety_row.addWidget(enable); safety_row.addStretch()
+        control.layout().addLayout(safety_row)
+        control_note=QLabel("Переключается только правило VPN-MANAGER-DOMAIN-ROUTE. NAT, DNS, WireGuard и основной маршрут через ZTE не изменяются.")
+        control_note.setObjectName("Muted"); control_note.setWordWrap(True); control.layout().addWidget(control_note)
+        l.addWidget(control)
         return w
 
     def page_diagnostics(self):
@@ -544,13 +584,6 @@ class App(QMainWindow):
         for label,fn in [("DHCP-клиенты",self.show_dhcp_clients),("Проверить IP клиента",self.diagnose_client),("Счётчики Mangle/DNS",self.show_policy_counters)]:
             b=QPushButton(label); b.clicked.connect(fn); client_box.addWidget(b)
         p.layout().addLayout(client_box)
-        safety_row=QHBoxLayout()
-        disable=QPushButton("Временно отключить VPN-маршрутизацию"); disable.setObjectName("DangerButton"); disable.clicked.connect(lambda:self.set_managed_mangle(False))
-        enable=QPushButton("Включить VPN-маршрутизацию обратно"); enable.setObjectName("PrimaryButton"); enable.clicked.connect(lambda:self.set_managed_mangle(True))
-        safety_row.addWidget(disable); safety_row.addWidget(enable); safety_row.addStretch()
-        p.layout().addLayout(safety_row)
-        note=QLabel("Тестовый переключатель затрагивает только правило VPN-MANAGER-DOMAIN-ROUTE. Остальные правила, NAT, DNS, WireGuard и основной маршрут через ZTE не меняются.")
-        note.setObjectName("Muted"); note.setWordWrap(True); p.layout().addWidget(note)
         self.diag_text=QTextEdit(); self.diag_text.setObjectName("DiagView"); self.diag_text.setReadOnly(True); self.diag_text.setAcceptRichText(False); self.diag_text.setPlaceholderText("Результаты диагностики появятся здесь…"); self.diag_text.setMinimumHeight(300); p.layout().addWidget(self.diag_text,1)
         l.addWidget(p,1); return w
 
@@ -597,8 +630,7 @@ class App(QMainWindow):
         copy_btn=QPushButton("Копировать вывод"); copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(self.terminal_output.toPlainText()))
         clear_btn=QPushButton("Очистить"); clear_btn.clicked.connect(lambda: self.terminal_output.clear())
         bar.addWidget(copy_btn); bar.addWidget(clear_btn); pl.addLayout(bar)
-        self.terminal_output=QPlainTextEdit()
-        self.terminal_output.setObjectName("TerminalOutput")
+        self.terminal_output=QPlainTextEdit()        self.terminal_output.setObjectName("TerminalOutput")
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.terminal_output.setPlaceholderText("Вывод команд RouterOS появится здесь…")
@@ -690,6 +722,11 @@ class App(QMainWindow):
                     if not silent: self.diag_summary(result)
                 elif kind=="TERMOUT":
                     self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+                elif kind=="DISCONNECTED":
+                    self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge)
+                    self.router_state=None; self.render_targets(); self.reset_traffic(); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
+                    for k in self.dns_ind: self.set_ind(k,"off","—")
+                    self.log("SSH отключён")
                 elif kind=="TEXT": payload[0].setPlainText(payload[1])
                 elif kind=="BACKUP": self.backup_info.setText(payload)
         except queue.Empty: pass
@@ -797,8 +834,7 @@ class App(QMainWindow):
         for tg,f in sorted(found.items()):
             label,tone=self.status_for(tg,tg in local); i=tb.rowCount(); tb.insertRow(i)
             for j,val in enumerate((tg,f[0],"●  "+label)):
-                item=QTableWidgetItem(val)
-                if j==2:
+                item=QTableWidgetItem(val)                if j==2:
                     item.setForeground(QBrush(QColor(TONES[tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
                 tb.setItem(i,j,item)
 
@@ -854,9 +890,14 @@ class App(QMainWindow):
         self.run_job("Подключение и первичная проверка…",lambda:self.diagnostics(self.router_conn(),False))
 
     def disconnect_router(self):
-        if self.router: self.router.close(); self.router=None
-        self.conn_badge.setText("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); self.conn_badge.style().unpolish(self.conn_badge); self.conn_badge.style().polish(self.conn_badge); self.log("SSH отключён"); self.router_state=None; self.render_targets(); self.reset_traffic(); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")
-        for k in self.dns_ind: self.set_ind(k,"off","—")
+        r=self.router
+        self.router=None
+        if not r:
+            self.q.put(("DISCONNECTED",None))
+            return
+        self.log("Отключение SSH…")
+        # Закрытие сокета выполняется в worker; UI-поток не ждёт завершения SSH-команды.
+        threading.Thread(target=lambda:(r.close(),self.q.put(("DISCONNECTED",None))),daemon=True).start()
 
     def cmd(self,r,command,timeout=30):
         out=r.exec(command,timeout); self.q.put(("LOG",f"$ {command}\n{out or '(пустой вывод)'}")); return out
@@ -935,7 +976,9 @@ class App(QMainWindow):
     def run_diagnostics(self): self.run_job("Полная диагностика…",lambda:self.diagnostics(self.router_conn(),False))
     def test_vpn(self): self.nav.setCurrentRow(2); self.run_job("Тест ping через WireGuard…",lambda:self.diagnostics(self.router_conn(),True))
     def ping_wan(self): self.run_job("Ping 1.1.1.1 из main…",lambda:self.diag_run("Ping WAN (main)","/tool ping address=1.1.1.1 count=4"))
-    def traceroute(self): self.run_job("Traceroute 1.1.1.1…",lambda:self.diag_run("Traceroute","/tool traceroute address=1.1.1.1",90))
+    def traceroute(self):
+        command="/tool traceroute address=1.1.1.1 max-hops=12 count=1 timeout=1s use-dns=no"
+        self.run_job("Traceroute 1.1.1.1…",lambda:self.diag_run("Traceroute · до 12 узлов, 1 проба",command,25))
 
     def show_dhcp_clients(self):
         def job():
@@ -997,8 +1040,7 @@ class App(QMainWindow):
                  "Отключить только правило VPN-MANAGER-DOMAIN-ROUTE? Цели из списка перестанут идти через WireGuard и пойдут по основному маршруту через ZTE. Остальные правила не затрагиваются.")
         if QMessageBox.question(self,"Подтверждение",warning,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
         def job():
-            r=self.router_conn()
-            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
+            r=self.router_conn()            count=r.exec(f'/ip firewall mangle print count-only where comment="{MANGLE_COMMENT}"').strip()
             if count!="1":
                 found=count or "неизвестно"
                 raise RuntimeError(f"Ожидалось ровно одно управляемое правило Mangle, найдено: {found}. Ничего не меняю.")
@@ -1197,8 +1239,7 @@ QScrollArea#PageScroll{background:transparent;border:0}
 
 /* ---------- sidebar (glass) ---------- */
 QFrame#Sidebar{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(9,14,25,225),stop:1 rgba(5,8,14,242));border-right:1px solid rgba(255,255,255,22)}
-QLabel#Brand{font-size:18pt;font-weight:800;color:#ffffff}
-QLabel#BrandSub{color:#6a80a6;font-size:8pt;font-weight:700}
+QLabel#Brand{font-size:18pt;font-weight:800;color:#ffffff}QLabel#BrandSub{color:#6a80a6;font-size:8pt;font-weight:700}
 QLabel#SidebarFoot{color:#62779a;font-size:8pt;padding:14px 2px 2px 2px;border-top:1px solid rgba(255,255,255,20)}
 QListWidget#Nav{background:transparent;border:0;outline:0;color:#8aa0c0;padding-top:2px}
 QListWidget#Nav::item{padding:13px 14px;border-radius:11px;margin:3px 0;font-size:10pt;font-weight:600;border:1px solid transparent}

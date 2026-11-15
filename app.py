@@ -39,6 +39,7 @@ PRESETS = {
     "Telegram": ["telegram.org", "t.me", "telegram.me", "telegra.ph", "91.108.56.0/22", "91.108.4.0/22", "91.108.8.0/22", "91.108.16.0/22", "91.108.12.0/22", "149.154.160.0/20", "91.105.192.0/23", "91.108.20.0/22", "185.76.151.0/24"],
     "Netflix": ["netflix.com", "netflix.net", "nflxvideo.net", "nflximg.net", "nflximg.com", "nflxso.net", "nflxext.com"],
     "Cloudflare services": ["cloudflare.com", "cloudflare-dns.com", "one.one.one.one"],
+    "Instagram": ["instagram.com", "www.instagram.com", "i.instagram.com", "graph.instagram.com", "cdninstagram.com", "fbcdn.net", "facebook.com", "messenger.com", "threads.net"],
 }
 
 
@@ -445,6 +446,7 @@ class App(QMainWindow):
         self.busy = False; self.targets = []; self.log_window = None; self.log_lines = []; self.last_diag = {}
         self.settings = self.load_settings()
         self.router_state = None; self.tr_rx = deque(maxlen=TrafficChart.N); self.tr_tx = deque(maxlen=TrafficChart.N); self.tr_prev = None; self.tr_busy = False
+        self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
         self.build_ui(); self.load_targets()
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(120)
         # Автоматические проверки выключены; пользователь может отдельно включить опрос трафика.
@@ -454,7 +456,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "address_list":"vpn_domains"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -479,7 +481,7 @@ class App(QMainWindow):
         logo = QLabel("◈  MIKROTIK") ; logo.setObjectName("Brand")
         sl.addWidget(logo); sub = QLabel("NETWORK  /  VPN CONTROL"); sub.setObjectName("BrandSub"); sl.addWidget(sub); sl.addSpacing(28)
         self.nav = QListWidget(); self.nav.setObjectName("Nav")
-        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки", "07     Терминал"]:
+        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     Резервные копии", "06     Настройки", "07     Терминал", "08     Журнал"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
@@ -490,12 +492,12 @@ class App(QMainWindow):
         self.page_sub=QLabel("Состояние маршрутизатора и VPN-туннеля"); self.page_sub.setObjectName("Muted")
         titlebox.addWidget(self.page_title); titlebox.addWidget(self.page_sub); header.addLayout(titlebox); header.addStretch()
         self.conn_badge=QLabel("●  НЕ ПОДКЛЮЧЕНО"); self.conn_badge.setObjectName("BadgeOff"); header.addWidget(self.conn_badge)
-        self.log_btn=QPushButton("☷  Журнал операций"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(self.open_log); header.addWidget(self.log_btn)
+        self.log_btn=QPushButton("☷  Журнал операций"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(7)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
         self.pages=[]
-        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal())
+        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         footer=QHBoxLayout()
         self.status=QLabel("●  Готово  ·  Конфигурация меняется только после явного подтверждения")
@@ -656,7 +658,7 @@ class App(QMainWindow):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Подключение и параметры","Параметры сохраняются локально. Passphrase приватного ключа не сохраняется.")
         form=QFormLayout(); self.inputs={}; form.setVerticalSpacing(12); form.setHorizontalSpacing(22); form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        fields=[("Адрес MikroTik","host"),("SSH-порт","port"),("Пользователь","username"),("Приватный ключ","key_file"),("LAN bridge","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("Address-list","address_list")]
+        fields=[("Адрес MikroTik","host"),("SSH-порт","port"),("Пользователь","username"),("Приватный ключ SSH","key_file"),("LAN bridge","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
         for label,key in fields:
             e=QLineEdit(self.settings[key]); self.inputs[key]=e
             if key=="key_file":
@@ -725,13 +727,14 @@ class App(QMainWindow):
         self.run_job("RouterOS CLI: "+command,job)
 
     def pages_changed(self,index):
-        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH-подключение и параметры policy routing"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH")]
+        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):
         line=f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
         self.log_lines.append(line)
         if self.log_window: self.log_window.append(line)
+        if hasattr(self,"log_view"): self.filter_log_page()
         self.status.setText(msg.replace("\n"," ")[:220])
 
     def open_log(self):
@@ -804,7 +807,8 @@ class App(QMainWindow):
 
     # ---------- трафик WireGuard ----------
     def reset_traffic(self,connected=False):
-        self.tr_rx.clear(); self.tr_tx.clear(); self.tr_prev=None
+        self.tr_rx.clear(); self.tr_tx.clear(); self.tr_prev=None; self.normal_rx.clear(); self.normal_tx.clear(); self.wan_prev=None
+        if hasattr(self,"normal_chart"): self.normal_chart.set_data([],[])
         self.chart.msg="Сбор данных…" if connected else "Нет данных — подключись к роутеру"; self.chart.set_data([],[])
         for v in self.tr_labels.values(): v.setText("—")
         self.tr_panel.sub_label.setText("Ожидание данных от peer…" if connected else "Ожидание подключения к роутеру…")

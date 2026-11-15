@@ -573,7 +573,7 @@ class App(QMainWindow):
         traffic_controls=QHBoxLayout()
         self.traffic_auto=QCheckBox("Автообновление трафика · 5 сек"); self.traffic_auto.setChecked(False)
         self.traffic_auto.toggled.connect(self.set_traffic_auto)
-        refresh_traffic=QPushButton("Снять замеры скорости"); refresh_traffic.clicked.connect(self.refresh_traffic_once)
+        refresh_traffic=QPushButton("Снять 3 замера"); refresh_traffic.clicked.connect(self.refresh_traffic_once)
         traffic_controls.addWidget(self.traffic_auto); traffic_controls.addStretch(); traffic_controls.addWidget(refresh_traffic)
         tp.layout().addLayout(traffic_controls); mid.addWidget(tp,2)
         dp=self.panel("Состояние DNS","Защита от обхода и утечек"); self.dns_ind={}
@@ -846,7 +846,7 @@ class App(QMainWindow):
     def reset_traffic(self,connected=False):
         self.tr_rx.clear(); self.tr_tx.clear(); self.tr_prev=None; self.normal_rx.clear(); self.normal_tx.clear(); self.wan_prev=None
         if hasattr(self,"normal_chart"): self.normal_chart.set_data([],[])
-        self.chart.msg="Нажми «Обновить сейчас» для двух замеров скорости" if connected else "Нет данных — подключись к роутеру"; self.chart.set_data([],[])
+        self.chart.msg="Нажми «Снять 3 замера» для построения графика" if connected else "Нет данных — подключись к роутеру"; self.chart.set_data([],[])
         for v in self.tr_labels.values(): v.setText("—")
         self.tr_panel.sub_label.setText("Ожидание данных от peer…" if connected else "Ожидание подключения к роутеру…")
 
@@ -865,8 +865,9 @@ class App(QMainWindow):
         self.chart.msg = "Снимаю первый замер…"
         self.chart.update()
         self.poll_traffic()
-        # Второй замер нужен для вычисления скорости по разнице счётчиков.
+        # Для графика нужны две точки скорости, то есть три замера счётчиков.
         QTimer.singleShot(1800, self.poll_traffic)
+        QTimer.singleShot(3600, self.poll_traffic)
 
     def poll_traffic(self):
         r=self.router

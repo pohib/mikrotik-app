@@ -1121,14 +1121,29 @@ class App(QMainWindow):
         rows=[(t,k,True) for t,k in self.targets]+[(t,f[0],False) for t,f in sorted(found.items()) if t not in local]
         self.target_table.setRowCount(0)
         for t,k,is_local in rows:
-            label,tone=self.status_for(t,is_local); i=self.target_table.rowCount(); self.target_table.insertRow(i)
-            for j,val in enumerate((t,k,"DNS FWD" if k=="Домен" else "address-list","●  "+label)):
+            f=found.get(t)
+            if self.router_state is None:
+                remote="Не проверено"; remote_tone="muted"; detail="Нет свежих данных от MikroTik"
+            elif f is None:
+                remote="Не найдено"; remote_tone="warn"; detail="Управляемая запись не обнаружена на роутере"
+            elif f[2]:
+                remote="Ошибка (invalid)"; remote_tone="bad"; detail=f[3]
+            elif f[1]:
+                remote="Отключено"; remote_tone="warn"; detail=f[3]
+            else:
+                remote="Включено"; remote_tone="ok"; detail=f[3]
+            local_label="В локальном списке" if is_local else "Только на роутере"
+            source="DNS FWD" if k=="Домен" else "address-list"
+            values=(t,k,source,local_label,remote,detail)
+            i=self.target_table.rowCount(); self.target_table.insertRow(i)
+            for j,val in enumerate(values):
                 item=QTableWidgetItem(val); item.setData(Qt.ItemDataRole.UserRole,t)
-                if j==3:
-                    item.setForeground(QBrush(QColor(TONES[tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
+                if j==4:
+                    item.setForeground(QBrush(QColor(TONES[remote_tone]))); ft=item.font(); ft.setBold(True); item.setFont(ft)
                 self.target_table.setItem(i,j,item)
         self.filter_targets(self.target_search.text() if hasattr(self,"target_search") else "")
         if hasattr(self,"active_table"): self.render_active()
+
     def filter_targets(self,text):
         if not hasattr(self,"target_table"): return
         for i in range(self.target_table.rowCount()): self.target_table.setRowHidden(i,text.lower() not in self.target_table.item(i,0).text().lower())

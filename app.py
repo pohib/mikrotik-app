@@ -1322,71 +1322,177 @@ class App(QMainWindow):
         return r.exec(command,timeout)
 
     def diagnostics(self,r,run_ping=False,silent=False):
-        f=self.settings;
-        if not silent: self.q.put(("DIAGBEGIN","Тест ping через WireGuard" if run_ping else "Полная диагностика"))
-        checks={
+        """
+        Read-only, layered diagnostics. Every command is executed once per run;
+        raw evidence and the interpreted result are kept in the same report.
+        """
+        f=self.settings
+        if not silent:
+            self.q.put(("DIAGBEGIN","Расширенная диагностика сети · только чтение"))
+
+        checks = {
             "Router identity": "/system identity print",
-            "RouterOS version": "/system resource print",
-            "DNS": "/ip dns print",
+            "System resources": "/system resource print",
+            "Clock": "/system clock print",
+            "Interfaces": "/interface print terse",
+            "WAN interface": f"/interface monitor-traffic interface={ros_q(f['wan_interface'])} once",
+            "Main default route": "/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main",
+            "VPN default route": f"/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f['route_table'])}",
+            "DNS configuration": "/ip dns print detail",
+            "DNS resolve Cloudflare": ':put [:resolve "cloudflare.com"]',
+            "DNS resolve YouTube": ':put [:resolve "youtube.com"]',
             "DHCP network": "/ip dhcp-server network print detail",
-            "WireGuard peer": f"/interface wireguard peers print detail where interface={ros_q(f['wg_interface'])}",
-            "WireGuard address": f"/ip address print detail where interface={ros_q(f['wg_interface'])}",
-            "VPN route": f"/ip route print detail where routing-table={ros_q(f['route_table'])}",
-            "Mangle": "/ip firewall mangle print detail",
-            "NAT": "/ip firewall nat print detail",
-            "DNS static": '/ip dns static print detail where comment~"VPN-MANAGER:"',
+            "DHCP leases": '/ip dhcp-server lease print where status=bound',
+            "WireGuard interface": f"/interface wireguard print detail where name={ros_q(f['wg_interface'])}",
+            "WireGuard addresses": f"/ip address print detail where interface={ros_q(f['wg_interface'])}",
+            "WireGuard peers": f"/interface wireguard peers print detail where interface={ros_q(f['wg_interface'])}",
+            "VPN interface ping": f"/tool ping address=1.1.1.1 interface={ros_q(f['wg_interface'])} count=3",
+            "Managed Mangle": f'/ip firewall mangle print stats detail where comment="{MANGLE_COMMENT}"',
+            "Managed NAT": f'/ip firewall nat print stats detail where comment="{NAT_COMMENT}"',
+            "DNS redirect NAT": '/ip firewall nat print stats detail where comment~"DNS-REDIRECT"',
+            "Firewall filter": "/ip firewall filter print detail",
+            "DNS static FWD": '/ip dns static print detail where comment~"VPN-MANAGER:"',
             "VPN address-list": f"/ip firewall address-list print detail where list={ros_q(f['address_list'])}",
-            "DNS NAT": '/ip firewall nat print detail where comment~"DNS-REDIRECT"',
-            "DNS Filter": '/ip firewall filter print detail where comment~"BLOCK-DOT|BLOCK-DOQ"',
-            "Filter": "/ip firewall filter print detail",
             "IPv6 default route": "/ipv6 route print detail where dst-address=::/0",
+            "Recent network errors": '/log print without-paging where topics~"error|warning|dns|wireguard"',
+            "WAN ping": "/tool ping address=1.1.1.1 count=3",
         }
         raw={}
-        for k,c in checks.items():
-            try: raw[k]=self.cmd(r,c)
-            except Exception as e: raw[k]="ERROR: "+str(e)
-        wg=raw["WireGuard peer"]; route=raw["VPN route"]; nat=raw["NAT"]; dns=raw["DNS"]; fil=raw["Filter"]
-        dnsnat=raw["DNS NAT"]; dnsfilter=raw["DNS Filter"]
-        dnsredir=("UDP" if "protocol=udp" in dnsnat and "dst-port=53" in dnsnat and "action=redirect" in dnsnat else "")
-        dnsredir += (" + TCP" if "protocol=tcp" in dnsnat and "dst-port=53" in dnsnat and "action=redirect" in dnsnat else "")
-        dotdoq=("TCP/853" if "protocol=tcp" in dnsfilter and "dst-port=853" in dnsfilter and "action=drop" in dnsfilter else "")
-        dotdoq += (" + UDP/853" if "protocol=udp" in dnsfilter and "dst-port=853" in dnsfilter and "action=drop" in dnsfilter else "")
+        for title,command in checks.items():
+            try:
+                raw[title]=self.cmd(r,command,timeout=18)
+            except Exception as exc:
+                raw[title]="ERROR: "+str(exc)
+
+        def failed(key):
+            value=raw.get(key,"")
+            return value.startswith("ERROR:")
+        def has(key, pattern):
+            return re.search(pattern,raw.get(key,""),re.I|re.S) is not None
+        def nonempty(key):
+            value=raw.get(key,"").strip()
+            return bool(value) and not value.startswith("ERROR:")
+        findings=[]
+        def add(level,area,cause,evidence,action):
+            findings.append({"level":level,"area":area,"cause":cause,"evidence":evidence,"action":action})
+
+        # SSH and basic router response are implicit preconditions: this function
+        # is only entered after an authenticated SSH session has been obtained.
+        if failed("System resources"):
+            add("bad","Ресурсы роутера","Не удалось получить состояние system resource",raw["System resources"],"Проверь доступность RouterOS и права SSH-пользователя.")
+        else:
+            cpu=re.search(r"cpu-load:\s*(\d+)%",raw["System resources"],re.I)
+            if cpu and int(cpu.group(1))>=90:
+                add("warn","Производительность",f"Высокая загрузка CPU: {cpu.group(1)}%",raw["System resources"],"Проверь процессы и нагрузку; повтори диагностику после снижения нагрузки.")
+        if not nonempty("Main default route"):
+            add("bad","WAN / основной маршрут","Не найден основной IPv4 default route в таблице main","/ip route print не вернул default route для main","Проверь WAN, DHCP/адрес шлюза и default route. VPN-таблицу пока не трогай.")
+        elif "inactive" in raw["Main default route"].lower():
+            add("bad","WAN / основной маршрут","Основной default route найден, но помечен inactive",raw["Main default route"],"Проверь доступность шлюза и состояние WAN-интерфейса.")
+        if not nonempty("WAN interface") or failed("WAN interface"):
+            add("warn","WAN-интерфейс","Не удалось получить monitor-traffic WAN",raw["WAN interface"],"Проверь имя WAN-интерфейса в настройках приложения и его наличие на роутере.")
+        if not nonempty("WAN ping") or "received=0" in raw["WAN ping"].lower() or "packet-loss=100%" in raw["WAN ping"].lower():
+            add("bad","Доступ в интернет через WAN","Роутер не получил ответы от 1.1.1.1 через обычную таблицу маршрутизации",raw["WAN ping"],"Проверь WAN, шлюз провайдера, NAT и доступность внешнего IP. Это проверка с самого роутера, не с ПК.")
+        elif not failed("WAN ping"):
+            add("ok","Доступ в интернет через WAN","Проверочный IP доступен с роутера",raw["WAN ping"],"Основной WAN-путь отвечает.")
+        if not nonempty("DNS resolve Cloudflare") or failed("DNS resolve Cloudflare"):
+            add("bad","DNS / DoH","RouterOS не смог разрешить cloudflare.com",raw["DNS resolve Cloudflare"],"Проверь use-doh-server, verify-doh-cert, bootstrap DNS и доступ роутера к HTTPS/443.")
+        if not nonempty("DNS resolve YouTube") or failed("DNS resolve YouTube"):
+            add("warn","DNS / домены","RouterOS не смог разрешить youtube.com",raw["DNS resolve YouTube"],"Сравни результат с cloudflare.com. Проверь DNS static FWD для домена и доступность DoH.")
+        if not has("DNS configuration",r"allow-remote-requests:\s*yes"):
+            add("warn","DNS для LAN","allow-remote-requests не включён или конфигурация DNS не прочитана",raw["DNS configuration"],"Проверь, должен ли MikroTik обслуживать DNS-запросы LAN-клиентов.")
+        if not has("DNS configuration",r"use-doh-server:\s*https://") or not has("DNS configuration",r"verify-doh-cert:\s*yes"):
+            add("warn","DNS-over-HTTPS","DoH endpoint или проверка TLS-сертификата не подтверждены",raw["DNS configuration"],"Проверь URL DoH и verify-doh-cert=yes. Не отключай проверку TLS ради обхода ошибки.")
+        if not has("DHCP network",re.escape(f["lan_subnet"])):
+            add("warn","DHCP / LAN","В DHCP network не найдена ожидаемая LAN-подсеть",raw["DHCP network"],"Сверь lan_subnet приложения с DHCP network на MikroTik.")
+        elif not has("DHCP network",r"dns-server=.*(?:192\.168\.|\b"+re.escape(f.get("lan_ip","192.168.0.2"))+r"\b)"):
+            add("info","DHCP / DNS","Не удалось подтвердить, что DHCP выдаёт адрес MikroTik как DNS",raw["DHCP network"],"Проверь dns-server в DHCP network и DNS-настройки клиента.")
+        wg=raw["WireGuard peers"]
+        handshake=re.search(r"last-handshake=(\S+)",wg,re.I)
+        if failed("WireGuard peers") or not handshake or handshake.group(1).lower() in ("never","0s"):
+            add("bad","WireGuard","Нет подтверждённого handshake peer",wg,"Проверь endpoint, UDP-порт, ключи, peer allowed-address и доступность сервера VPN.")
+        else:
+            add("ok","WireGuard",f"Handshake peer: {handshake.group(1)}",wg,"Туннель установил связь; дополнительно проверяем передачу трафика.")
+        if not nonempty("WireGuard interface") or failed("WireGuard interface"):
+            add("bad","WireGuard interface","Интерфейс WireGuard не найден или недоступен",raw["WireGuard interface"],"Сверь имя интерфейса в настройках приложения с RouterOS.")
+        if not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower():
+            add("bad","Policy routing","Нет активного default route в отдельной VPN-таблице",raw["VPN default route"],"Проверь routing table, gateway=WireGuard и флаг активности маршрута.")
+        if failed("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower() or "packet-loss=100%" in raw["VPN interface ping"].lower():
+            add("warn","Трафик через WireGuard","Проверочный ping через интерфейс WireGuard не подтвердился",raw["VPN interface ping"],"Если handshake есть, проверь удалённый AllowedIPs/маршрут, NAT на VPN-сервере и ICMP-фильтрацию. Ошибка самой команды означает, что этот тест не поддержан/не выполнен.")
+        else:
+            add("ok","Трафик через WireGuard","Проверочный ping через WireGuard получил ответ",raw["VPN interface ping"],"Туннель передаёт тестовый трафик.")
+        mangle=raw["Managed Mangle"]
+        if not nonempty("Managed Mangle") or MANGLE_COMMENT not in mangle:
+            add("bad","Mangle / policy routing","Управляемое правило маркировки не найдено",mangle,"Проверь наличие правила VPN-MANAGER-DOMAIN-ROUTE.")
+        elif re.search(r"\bX\s+.*"+re.escape(MANGLE_COMMENT),mangle):
+            add("bad","Mangle / policy routing","Управляемое правило Mangle отключено",mangle,"Включай правило только после проверки VPN default route и NAT.")
+        elif "action=mark-routing" not in mangle or f"new-routing-mark={f['route_table']}" not in mangle:
+            add("bad","Mangle / policy routing","Правило найдено, но параметры mark-routing не совпадают с профилем",mangle,"Проверь action, new-routing-mark, passthrough, chain и address-list.")
+        else:
+            add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
+        nat=raw["Managed NAT"]
+        if not nonempty("Managed NAT") or NAT_COMMENT not in nat or "action=masquerade" not in nat or f"out-interface={f['wg_interface']}" not in nat:
+            add("bad","NAT через WireGuard","Не найдено ожидаемое masquerade-правило на WG",nat,"Проверь srcnat, out-interface WireGuard и порядок NAT-правил.")
+        else:
+            add("ok","NAT через WireGuard","Управляемое masquerade-правило найдено",nat,"Проверь его счётчики при реальном трафике.")
+        filt=raw["Firewall filter"]
+        if re.search(r"action=fasttrack-connection",filt,re.I) and not re.search(r"\bX\s+\d+\s+.*action=fasttrack-connection",filt,re.I):
+            add("warn","Firewall / FastTrack","Обнаружено активное FastTrack-правило; оно может обходить часть policy routing",filt,"Проверь исключение VPN-трафика из FastTrack и порядок правил. Само наличие FastTrack не доказывает, что именно оно ломает маршрут.")
+        if not nonempty("DNS redirect NAT") or "action=redirect" not in raw["DNS redirect NAT"]:
+            add("warn","DNS redirect","Не найдено управляемое перенаправление DNS на роутер",raw["DNS redirect NAT"],"Если клиенты должны использовать DNS MikroTik, проверь redirect UDP/TCP 53 и исключения.")
+        if not nonempty("DNS static FWD"):
+            add("info","DNS FWD","Управляемые DNS static записи не найдены",raw["DNS static FWD"],"Это нормально, если список доменов пуст; иначе проверь импорт и применение целей.")
+        if nonempty("IPv6 default route"):
+            add("warn","IPv6","Обнаружен IPv6 default route; IPv4 policy routing не управляет им автоматически",raw["IPv6 default route"],"Проверь IPv6 DNS, IPv6 firewall и IPv6-маршрутизацию клиентов отдельно.")
+        if not failed("Recent network errors") and raw["Recent network errors"].strip():
+            add("info","Журнал RouterOS","В журнале есть сетевые ошибки/предупреждения",raw["Recent network errors"],"Сопоставь timestamp записи со временем отказа; старые записи сами по себе не доказывают текущую неисправность.")
+
+        # A command failure is reported as an unsupported/permission-limited check,
+        # not automatically treated as proof that the underlying subsystem is down.
+        for title,value in raw.items():
+            if value.startswith("ERROR:"):
+                add("info","Проверка не выполнена",title+": команда завершилась ошибкой",value,"Проверь совместимость команды с версией RouterOS и права пользователя. Это не равнозначно отказу сервиса.")
+
+        critical=sum(1 for x in findings if x["level"]=="bad")
+        warnings=sum(1 for x in findings if x["level"]=="warn")
+        passed=sum(1 for x in findings if x["level"]=="ok")
+        overall="КРИТИЧЕСКАЯ ПРОБЛЕМА" if critical else ("ЕСТЬ ПРЕДУПРЕЖДЕНИЯ" if warnings else "КРИТИЧЕСКИХ ОТКЛОНЕНИЙ НЕ НАЙДЕНО")
         result={
-            "Маршрутизатор": raw["Router identity"].replace("name:","").strip() or "ответ получен",
-            "RouterOS": re.search(r"version:\s*(\S+)",raw["RouterOS version"]).group(1) if re.search(r"version:\s*(\S+)",raw["RouterOS version"]) else "см. журнал",
-            "WireGuard handshake": "есть" if (re.search(r"last-handshake=(\S+)",wg,re.I) and re.search(r"last-handshake=(\S+)",wg,re.I).group(1).lower() != "never") else "не подтверждён",
-            "RX": (re.search(r"rx=([^\s]+)",wg,re.I).group(1) if re.search(r"rx=([^\s]+)",wg,re.I) else "—"),
-            "TX": (re.search(r"tx=([^\s]+)",wg,re.I).group(1) if re.search(r"tx=([^\s]+)",wg,re.I) else "—"),
-            "VPN default route": "найден" if f"gateway={f['wg_interface']}" in route and "dst-address=0.0.0.0/0" in route and "inactive" not in route.lower() else "не найден / проверить",
-            "NAT через WG": "найден" if f"out-interface={f['wg_interface']}" in nat and "action=masquerade" in nat else "не найден",
-            "DoH": "включён" if "use-doh-server: https://" in dns and "verify-doh-cert: yes" in dns else "не подтверждён",
-            "DNS redirect UDP/TCP": dnsredir or "не обнаружен",
-            "DoT/DoQ block": dotdoq or "не обнаружена",
-            "IPv6 default route": "обнаружен — возможен обход IPv4 policy routing" if "dst-address=::/0" in raw["IPv6 default route"] else "не обнаружен",
-            "Mangle managed": "есть" if MANGLE_COMMENT in raw["Mangle"] else "ещё не создан",
-            "Remote requests": "включён" if "allow-remote-requests: yes" in dns else "выключен",
+            "Маршрутизатор":raw["Router identity"].replace("name:","").strip() or "ответ получен",
+            "Итог диагностики":overall,
+            "Проблемы":str(critical),
+            "Предупреждения":str(warnings),
+            "Успешные проверки":str(passed),
+            "WireGuard handshake":handshake.group(1) if handshake else "не подтверждён",
+            "VPN default route":"найден" if nonempty("VPN default route") and "inactive" not in raw["VPN default route"].lower() else "не подтверждён",
+            "DoH":"включён и TLS verify=yes" if has("DNS configuration",r"use-doh-server:\s*https://") and has("DNS configuration",r"verify-doh-cert:\s*yes") else "не подтверждён",
+            "WAN ping":"успешен" if "received=0" not in raw["WAN ping"].lower() and not failed("WAN ping") else "не прошёл / нет данных",
+            "VPN ping":"успешен" if "received=0" not in raw["VPN interface ping"].lower() and not failed("VPN interface ping") else "не прошёл / нет данных",
+            "DNS security":"DoH + TLS проверяются отдельно; DNS redirect и DNS FWD см. подробности",
         }
-        result["DNS security"] = "DoH " + result["DoH"] + " · redirect " + (dnsredir or "нет") + " · DoT/DoQ " + (dotdoq or "нет")
         self.q.put(("DIAG",(result,silent)))
         if not silent:
-            for k,v in raw.items(): self.q.put(("DIAGOUT",(k,v,False,False)))
-        self.q.put(("LOG","Полный вывод диагностики собран. Основной маршрут main/ZTE не изменялся."))
-        try: self.fetch_targets(r)
-        except Exception as e: self.q.put(("LOG","Статусы VPN-целей: "+str(e)))
+            # One report contains verdicts first, followed by the exact evidence
+            # collected in this run. No need to re-run commands to inspect a finding.
+            summary=[f"ИТОГ: {overall}",f"Проблем: {critical} · предупреждений: {warnings} · успешных проверок: {passed}",""]
+            for item in findings:
+                marker={"bad":"[ОШИБКА]","warn":"[ВНИМАНИЕ]","ok":"[OK]","info":"[ИНФО]"}.get(item["level"],"[?]")
+                summary += [f"{marker} {item['area']}: {item['cause']}",f"  Действие: {item['action']}"]
+                if item["level"] in ("bad","warn"):
+                    summary.append(f"  Доказательство: {item['evidence'][:1200]}")
+                summary.append("")
+            self.q.put(("DIAGOUT",("Автоматический разбор · выводы и рекомендации","\n".join(summary),False,True)))
+            for title,value in raw.items():
+                self.q.put(("DIAGOUT",(title+" · собранное доказательство",value,False,False)))
+        self.q.put(("LOG",f"Расширенная диагностика завершена: {critical} проблем, {warnings} предупреждений, {passed} успешных проверок. Все проверки read-only; конфигурация роутера не изменялась."))
+        try:
+            self.fetch_targets(r)
+        except Exception as exc:
+            self.q.put(("LOG","Обновление статусов VPN-целей после диагностики: "+str(exc)))
         if run_ping:
-            if "найден" not in result["VPN default route"]: raise RuntimeError("Нет активного VPN default route в отдельной таблице")
-            wa=raw["WireGuard address"]; m=re.search(r"(\d{1,3}(?:\.\d{1,3}){3})/\d+",wa)
-            if not m: raise RuntimeError("Не удалось определить IPv4 интерфейса WireGuard")
-            src=m.group(1)
-            try:
-                self.cmd(r,f'/routing rule remove [find where comment="{TEMP_TEST_COMMENT}"]')
-                self.cmd(r,f'/routing rule add src-address={src}/32 action=lookup-only-in-table table={f["route_table"]} comment="{TEMP_TEST_COMMENT}"')
-                out=self.cmd(r,f"/tool ping address=1.1.1.1 src-address={src} count=4")
-                if not silent: self.q.put(("DIAGOUT",(f"Ping 1.1.1.1 через таблицу {f['route_table']} (src {src})",out,False,True)))
-                if "received=0" in out or "packet-loss=100%" in out: raise RuntimeError("Ping через таблицу VPN не прошёл")
-            finally:
-                self.cmd(r,f'/routing rule remove [find where comment="{TEMP_TEST_COMMENT}"]')
-
+            # Legacy entry point retained for compatibility. The main full
+            # diagnostic no longer creates temporary routing rules.
+            if failed("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower():
+                raise RuntimeError("Проверочный ping через WireGuard не прошёл; см. автоматический отчёт.")
     def refresh_dashboard(self):
         if self.busy or not self.router: return
         def job(): self.diagnostics(self.router_conn(),False,True)

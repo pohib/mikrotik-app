@@ -3,6 +3,7 @@ import sys, os, json, re, ipaddress, base64, hashlib, queue, threading, time, ma
 from collections import deque
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 from typing import Optional, Callable
 
 try:
@@ -480,6 +481,187 @@ class WindowTitleBar(QFrame):
         if event.button()==Qt.MouseButton.LeftButton: self.toggle_maximize()
 
 
+class AutoDiscoveryDialog(QDialog):
+    """Сбор доменных зависимостей из профилей, DNS и HAR браузера."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Автоопределение зависимостей сервиса")
+        self.resize(980, 650)
+        self.discovered = {}
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(10)
+
+        title = QLabel("Автоопределение доменов и IP")
+        title.setObjectName("SectionTitle")
+        root.addWidget(title)
+        note = QLabel(
+            "Укажи основной домен: приложение добавит его, известные зависимости из локальных профилей "
+            "и разрешит найденные домены в IPv4. Дополнительно можно импортировать HAR из браузера. "
+            "Полный список зависимостей автоматически гарантировать нельзя."
+        )
+        note.setObjectName("Muted")
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        input_row = QHBoxLayout()
+        self.domain_input = QLineEdit()
+        self.domain_input.setPlaceholderText("youtube.com или chatgpt.com")
+        scan = QPushButton("Найти профиль и проверить DNS")
+        scan.setObjectName("PrimaryButton")
+        scan.clicked.connect(self.analyze_domain)
+        input_row.addWidget(self.domain_input, 1)
+        input_row.addWidget(scan)
+        root.addLayout(input_row)
+
+        actions = QHBoxLayout()
+        har = QPushButton("Импортировать HAR браузера")
+        har.clicked.connect(self.import_har)
+        self.status = QLabel("Сначала укажи домен или импортируй HAR-файл.")
+        self.status.setObjectName("Muted")
+        self.status.setWordWrap(True)
+        actions.addWidget(har)
+        actions.addWidget(self.status, 1)
+        root.addLayout(actions)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Добавить", "Домен", "IPv4-адреса", "Источник"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().hide()
+        self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(330)
+        root.addWidget(self.table, 1)
+
+        self.add_ips = QCheckBox("Добавлять найденные IPv4 как отдельные /32")
+        self.add_ips.setChecked(False)
+        root.addWidget(self.add_ips)
+        warning = QLabel(
+            "Рекомендация: обычно добавляй домены, а IP оставляй для диагностики. "
+            "IP CDN могут меняться; доменные FWD-записи на MikroTik динамически наполняют address-list."
+        )
+        warning.setObjectName("InfoNote")
+        warning.setWordWrap(True)
+        root.addWidget(warning)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("Закрыть")
+        cancel.clicked.connect(self.reject)
+        add = QPushButton("Добавить выбранное")
+        add.setObjectName("PrimaryButton")
+        add.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(add)
+        root.addLayout(buttons)
+
+    @staticmethod
+    def _is_domain(value):
+        try:
+            target, kind = normalize_target(value)
+            return target if kind == "Домен" else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _resolve_ipv4(domain):
+        try:
+            return sorted({item[4][0] for item in socket.getaddrinfo(domain, None, socket.AF_INET, socket.SOCK_STREAM)})
+        except OSError:
+            return []
+
+    def _add_domain(self, domain, source):
+        domain = self._is_domain(domain)
+        if not domain:
+            return
+        if domain in self.discovered:
+            old_source, old_ips = self.discovered[domain]
+            sources = old_source.split("; ")
+            if source not in sources:
+                sources.append(source)
+            self.discovered[domain] = ("; ".join(sources), old_ips)
+        else:
+            self.discovered[domain] = (source, self._resolve_ipv4(domain))
+
+    def _render(self):
+        self.table.setRowCount(0)
+        for domain, (source, ips) in sorted(self.discovered.items()):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
+            check.setCheckState(Qt.CheckState.Checked)
+            self.table.setItem(row, 0, check)
+            self.table.setItem(row, 1, QTableWidgetItem(domain))
+            self.table.setItem(row, 2, QTableWidgetItem(", ".join(ips) if ips else "Не разрешён"))
+            self.table.setItem(row, 3, QTableWidgetItem(source))
+
+    def analyze_domain(self):
+        raw = self.domain_input.text().strip()
+        domain = self._is_domain(raw)
+        if not domain:
+            QMessageBox.warning(self, "Некорректный домен", "Введи доменное имя, например youtube.com. IP/CIDR здесь не подходит.")
+            return
+        self._add_domain(domain, "Введён пользователем")
+        matched = []
+        for profile, entries in PRESETS.items():
+            normalized = [self._is_domain(item) for item in entries]
+            if any(item and (domain == item or domain.endswith("." + item) or item.endswith("." + domain)) for item in normalized):
+                matched.append(profile)
+                for item in normalized:
+                    if item:
+                        self._add_domain(item, "Профиль: " + profile)
+        self._render()
+        self.status.setText(
+            (f"Найден профиль: {', '.join(matched)}. " if matched else "Готовый профиль не найден. ")
+            + f"Доменов в списке: {len(self.discovered)}. IP показаны только для справки."
+        )
+
+    def import_har(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт HAR", str(Path.home()), "HAR files (*.har *.json);;All files (*.*)")
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+            entries = data.get("log", {}).get("entries", [])
+            count = 0
+            for entry in entries:
+                url = entry.get("request", {}).get("url", "")
+                host = urlparse(url).hostname or ""
+                domain = self._is_domain(host)
+                if domain:
+                    before = len(self.discovered)
+                    self._add_domain(domain, "HAR: запрос браузера")
+                    if len(self.discovered) > before:
+                        count += 1
+            self._render()
+            self.status.setText(f"HAR обработан: обнаружено {count} новых доменов; всего в списке: {len(self.discovered)}.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Ошибка HAR", f"Не удалось прочитать HAR-файл:\\n{exc}")
+
+    def selected_targets(self):
+        result = []
+        include_ips = self.add_ips.isChecked()
+        for row in range(self.table.rowCount()):
+            check = self.table.item(row, 0)
+            if not check or check.checkState() != Qt.CheckState.Checked:
+                continue
+            domain = self.table.item(row, 1).text()
+            result.append((domain, "Домен"))
+            if include_ips:
+                for ip in filter(None, (self.table.item(row, 2).text().split(", "))):
+                    try:
+                        if ip != "Не разрешён" and ipaddress.ip_address(ip).version == 4:
+                            result.append((f"{ip}/32", "IPv4-сеть"))
+                    except ValueError:
+                        pass
+        return result
+
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -662,7 +844,8 @@ class App(QMainWindow):
         p=self.panel("Цели выборочной маршрутизации","Добавляй домены, отдельные IPv4 (/32) и сети CIDR. IPv6 пока не поддерживается.")
         row=QHBoxLayout(); self.target_input=QLineEdit(); self.target_input.setPlaceholderText("example.com  ·  203.0.113.10  ·  203.0.113.0/24")
         add=QPushButton("＋ Добавить цель"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.add_target); self.target_input.returnPressed.connect(self.add_target)
-        row.addWidget(self.target_input,1); row.addWidget(add); p.layout().addLayout(row)
+        auto=QPushButton("Автоопределение…"); auto.clicked.connect(self.auto_discover_targets)
+        row.addWidget(self.target_input,1); row.addWidget(add); row.addWidget(auto); p.layout().addLayout(row)
         row2=QHBoxLayout(); self.preset=QComboBox(); self.preset.addItems(PRESETS.keys()); load=QPushButton("Загрузить профиль"); load.clicked.connect(self.load_preset); load_all=QPushButton("Добавить все профили"); load_all.setObjectName("PrimaryButton"); load_all.clicked.connect(self.load_all_presets); row2.addWidget(self.preset); row2.addWidget(load); row2.addWidget(load_all)
         import_btn=QPushButton("Импорт TXT/CSV"); import_btn.clicked.connect(self.import_targets_file); row2.addWidget(import_btn)
         export_btn=QPushButton("Экспорт CSV"); export_btn.clicked.connect(self.export_targets_file); row2.addWidget(export_btn)
@@ -2414,6 +2597,24 @@ class App(QMainWindow):
         except Exception as e: QMessageBox.warning(self,"Некорректная цель",str(e)); return
         if not any(x[0]==t for x in self.targets): self.targets.append((t,k)); self.render_targets()
         self.target_input.clear()
+    def auto_discover_targets(self):
+        dlg = AutoDiscoveryDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        existing = {target for target, _kind in self.targets}
+        added = 0
+        for target, kind in dlg.selected_targets():
+            if target not in existing:
+                self.targets.append((target, kind))
+                existing.add(target)
+                added += 1
+        self.render_targets()
+        self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")
+        if added:
+            QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
+        else:
+            QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
+
     def load_all_presets(self):
         n=0
         for items in PRESETS.values():

@@ -2654,7 +2654,7 @@ class App(QMainWindow):
                 except Exception as e: out="ERROR: "+str(e)
                 self.q.put(("DIAGOUT",(title+" · "+command,out,False,True)))
                 if title=="DNS resolve через RouterOS" and not out.startswith("ERROR:"):
-                    for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9])",out):
+                    for candidate in re.findall(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",out):
                         try:
                             ipaddress.IPv4Address(candidate)
                             if candidate not in resolved_ips: resolved_ips.append(candidate)

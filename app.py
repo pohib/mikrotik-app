@@ -1140,198 +1140,121 @@ class App(QMainWindow):
         known,fp=r.connect(); self.router=r; self.q.put(("CONNECTED",{"known":known,"fp":fp})); return r
 
     def show_ssh_login(self):
+        self.log("SSH UI: обработчик кнопки подключения вызван")
+        self.status.setText("Открывается окно SSH-подключения…")
         try:
             transport = self.router.client.get_transport() if self.router and self.router.client else None
-            if transport and transport.is_active():
-                if QMessageBox.question(self, "SSH подключение", "Отключиться от MikroTik?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            if transport and transport.is_active() and transport.is_authenticated():
+                answer = QMessageBox.question(
+                    self, "SSH подключение", "SSH уже подключён. Отключиться от MikroTik?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if answer == QMessageBox.StandardButton.Yes:
                     self.disconnect_router()
                 return
-        except Exception:
-            pass
 
-        d = QDialog(self)
-        d.setWindowTitle("SSH · Secure connection")
-        d.setModal(True)
-        d.setMinimumWidth(540)
-        # Используем обычное непрозрачное окно Qt: frameless + WA_TranslucentBackground
-        # на некоторых конфигурациях Windows приводили к невидимому диалогу авторизации.
-        d.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowCloseButtonHint)
-        d.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        d.setObjectName("SSHLoginDialog")
-        d.setStyleSheet(self.styleSheet() + """
-            QDialog#SSHLoginDialog { background: #0b1425; }
-            QFrame#LoginShell {
-                background: #0b1425;
-                border: 1px solid rgba(180,210,255,115);
-                border-radius: 22px;
-            }
-            QFrame#LoginTitleBar {
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #101e35,stop:1 #142542);
-                border: 0;
-                border-top-left-radius: 21px;
-                border-top-right-radius: 21px;
-                border-bottom: 1px solid rgba(160,190,235,35);
-            }
-            QLabel#LoginWindowCaption { color: #9db4d6; font-size: 9pt; font-weight: 700; }
-            QPushButton#LoginWindowClose {
-                background: transparent; border: 0; border-radius: 8px;
-                color: #9db4d6; font-size: 15pt; padding: 0;
-                min-width: 34px; min-height: 30px;
-            }
-            QPushButton#LoginWindowClose:hover { background: #d83d55; color: white; }
-            QFrame#LoginHero {
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(65,110,205,180),stop:1 rgba(20,35,70,220));
-                border: 1px solid rgba(200,225,255,90); border-radius: 18px;
-            }
-            QLineEdit { min-height: 38px; padding: 0 12px; }
-        """)
+            # Используем стандартный системный QDialog без frameless-окна,
+            # теней, вложенных оболочек и пользовательской панели заголовка.
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Подключение к MikroTik по SSH")
+            dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            dialog.setModal(True)
+            dialog.setWindowFlags(
+                Qt.WindowType.Dialog |
+                Qt.WindowType.WindowTitleHint |
+                Qt.WindowType.WindowSystemMenuHint |
+                Qt.WindowType.WindowCloseButtonHint
+            )
+            dialog.setMinimumWidth(480)
 
-        outer = QVBoxLayout(d)
-        outer.setContentsMargins(14, 14, 14, 14)
-        outer.setSpacing(0)
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(24, 22, 24, 22)
+            layout.setSpacing(14)
 
-        shell = QFrame()
-        shell.setObjectName("LoginShell")
-        add_shadow(shell, blur=38, dy=10, color=(0, 0, 0, 185))
-        shell_layout = QVBoxLayout(shell)
-        shell_layout.setContentsMargins(1, 1, 1, 18)
-        shell_layout.setSpacing(0)
-        outer.addWidget(shell)
+            heading = QLabel("SSH-подключение")
+            heading.setStyleSheet("font-size: 18px; font-weight: 700;")
+            layout.addWidget(heading)
+            description = QLabel("Укажите параметры доступа к маршрутизатору MikroTik.")
+            description.setWordWrap(True)
+            layout.addWidget(description)
 
-        class DragTitleBar(QFrame):
-            def __init__(self):
-                super().__init__()
-                self._drag_offset = None
+            form = QFormLayout()
+            form.setVerticalSpacing(10)
+            host = QLineEdit(self.settings.get("host", ""))
+            host.setPlaceholderText("192.168.0.2")
+            port = QLineEdit(self.settings.get("port", "2313"))
+            port.setMaximumWidth(120)
+            user = QLineEdit(self.settings.get("username", "pwned"))
+            key = QLineEdit(self.settings.get("key_file", ""))
+            key.setPlaceholderText("Путь к приватному SSH-ключу")
+            key_row = QWidget()
+            key_layout = QHBoxLayout(key_row)
+            key_layout.setContentsMargins(0, 0, 0, 0)
+            key_layout.addWidget(key, 1)
+            browse = QPushButton("Обзор…")
+            browse.clicked.connect(lambda: self.choose_key(key))
+            key_layout.addWidget(browse)
+            phrase = QLineEdit()
+            phrase.setEchoMode(QLineEdit.EchoMode.Password)
+            phrase.setPlaceholderText("Если приватный ключ защищён паролем")
+            form.addRow("Адрес роутера", host)
+            form.addRow("SSH-порт", port)
+            form.addRow("Пользователь", user)
+            form.addRow("Приватный ключ", key_row)
+            form.addRow("Passphrase", phrase)
+            layout.addLayout(form)
 
-            def mousePressEvent(self, event):
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._drag_offset = event.globalPosition().toPoint() - d.frameGeometry().topLeft()
-                    event.accept()
-                else:
-                    super().mousePressEvent(event)
+            buttons = QHBoxLayout()
+            skip = QPushButton("Отмена")
+            login = QPushButton("Подключиться")
+            login.setDefault(True)
+            buttons.addWidget(skip)
+            buttons.addStretch()
+            buttons.addWidget(login)
+            layout.addLayout(buttons)
+            skip.clicked.connect(dialog.reject)
 
-            def mouseMoveEvent(self, event):
-                if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-                    d.move(event.globalPosition().toPoint() - self._drag_offset)
-                    event.accept()
-                else:
-                    super().mouseMoveEvent(event)
+            def do_login():
+                h = host.text().strip()
+                u = user.text().strip()
+                k = key.text().strip()
+                try:
+                    p = int(port.text().strip())
+                    if not h or not u or not k or not Path(k).is_file():
+                        raise ValueError("Укажите адрес, пользователя и существующий файл приватного SSH-ключа.")
+                    if not 1 <= p <= 65535:
+                        raise ValueError("SSH-порт должен быть от 1 до 65535.")
+                except Exception as exc:
+                    QMessageBox.warning(dialog, "Проверьте данные", str(exc))
+                    return
+                self.settings.update({"host": h, "port": str(p), "username": u, "key_file": k})
+                self.passphrase_value = phrase.text()
+                self.save_settings()
+                dialog.accept()
 
-            def mouseReleaseEvent(self, event):
-                self._drag_offset = None
-                super().mouseReleaseEvent(event)
+            login.clicked.connect(do_login)
+            for field in (host, port, user, key, phrase):
+                field.returnPressed.connect(do_login)
 
-        titlebar = DragTitleBar()
-        titlebar.setObjectName("LoginTitleBar")
-        titlebar.setFixedHeight(48)
-        titlebar_layout = QHBoxLayout(titlebar)
-        titlebar_layout.setContentsMargins(18, 0, 10, 0)
-        caption = QLabel("MIKROTIK VPN MANAGER  /  SECURE ACCESS")
-        caption.setObjectName("LoginWindowCaption")
-        close_btn = QPushButton("×")
-        close_btn.setObjectName("LoginWindowClose")
-        close_btn.setToolTip("Закрыть окно")
-        close_btn.clicked.connect(d.reject)
-        titlebar_layout.addWidget(caption)
-        titlebar_layout.addStretch()
-        titlebar_layout.addWidget(close_btn)
-        shell_layout.addWidget(titlebar)
-
-        content = QWidget()
-        root = QVBoxLayout(content)
-        root.setContentsMargins(22, 18, 22, 0)
-        root.setSpacing(14)
-        shell_layout.addWidget(content)
-
-        hero = QFrame()
-        hero.setObjectName("LoginHero")
-        hl = QVBoxLayout(hero)
-        hl.setContentsMargins(20, 18, 20, 18)
-        tag = QLabel("SSH AUTHENTICATION")
-        tag.setObjectName("Eyebrow")
-        title = QLabel("Подключение к маршрутизатору")
-        title.setObjectName("HeroTitle")
-        desc = QLabel("Войди по SSH, чтобы управлять VPN-маршрутизацией и получать состояние сети. Можно продолжить без подключения.")
-        desc.setObjectName("HeroText")
-        desc.setWordWrap(True)
-        hl.addWidget(tag)
-        hl.addWidget(title)
-        hl.addWidget(desc)
-        root.addWidget(hero)
-
-        form = QFormLayout()
-        form.setVerticalSpacing(10)
-        form.setHorizontalSpacing(16)
-        host = QLineEdit(self.settings.get("host", ""))
-        host.setPlaceholderText("192.168.0.2 или router.example")
-        port = QLineEdit(self.settings.get("port", "2313"))
-        port.setMaximumWidth(110)
-        user = QLineEdit(self.settings.get("username", "pwned"))
-        key = QLineEdit(self.settings.get("key_file", ""))
-        key.setPlaceholderText("Путь к приватному SSH-ключу")
-        keyrow = QWidget()
-        kr = QHBoxLayout(keyrow)
-        kr.setContentsMargins(0, 0, 0, 0)
-        kr.addWidget(key, 1)
-        browse = QPushButton("Обзор…")
-        browse.clicked.connect(lambda: self.choose_key(key))
-        kr.addWidget(browse)
-        phrase = QLineEdit()
-        phrase.setEchoMode(QLineEdit.EchoMode.Password)
-        phrase.setPlaceholderText("Только если ключ защищён паролем")
-        form.addRow("Адрес роутера", host)
-        form.addRow("SSH-порт", port)
-        form.addRow("Пользователь", user)
-        form.addRow("Приватный ключ", keyrow)
-        form.addRow("Passphrase ключа", phrase)
-        root.addLayout(form)
-
-        note = QLabel("При первом подключении приложение покажет fingerprint SSH-сервера. Сверь его с MikroTik перед подтверждением.")
-        note.setObjectName("InfoNote")
-        note.setWordWrap(True)
-        root.addWidget(note)
-
-        buttons = QHBoxLayout()
-        skip = QPushButton("Пропустить вход")
-        skip.setObjectName("QuietButton")
-        login = QPushButton("Подключиться  →")
-        login.setObjectName("PrimaryButton")
-        buttons.addWidget(skip)
-        buttons.addStretch()
-        buttons.addWidget(login)
-        root.addLayout(buttons)
-        skip.clicked.connect(d.reject)
-
-        def do_login():
-            h = host.text().strip()
-            u = user.text().strip()
-            k = key.text().strip()
-            try:
-                p = int(port.text().strip())
-                if not h or not u or not k or not Path(k).is_file():
-                    raise ValueError("Укажи адрес, пользователя и существующий файл приватного SSH-ключа.")
-                if not 1 <= p <= 65535:
-                    raise ValueError("SSH-порт должен быть от 1 до 65535.")
-            except Exception as e:
-                QMessageBox.warning(d, "Проверь данные", str(e))
-                return
-            self.settings.update({"host": h, "port": str(p), "username": u, "key_file": k})
-            self.passphrase_value = phrase.text()
-            self.save_settings()
-            d.accept()
-
-        login.clicked.connect(do_login)
-        for field in (host, port, user, key, phrase):
-            field.returnPressed.connect(do_login)
-        d.setDefaultButton(login)
-        d.resize(580, 650)
-        d.setWindowModality(Qt.WindowModality.ApplicationModal)
-        d.show()
-        d.raise_()
-        d.activateWindow()
-        result = d.exec()
-        if result == QDialog.DialogCode.Accepted:
-            self.connect_router()
+            dialog.resize(540, 430)
+            self.log("SSH UI: диалог создан, вызывается exec()")
+            self.status.setText("Ожидание ввода параметров SSH…")
+            result = dialog.exec()
+            self.log(f"SSH UI: диалог закрыт, код результата {result}")
+            if result == QDialog.DialogCode.Accepted:
+                self.connect_router()
+            else:
+                self.status.setText("Подключение отменено")
+        except Exception as exc:
+            import traceback
+            details = traceback.format_exc()
+            self.log("SSH UI ERROR: " + details)
+            QMessageBox.critical(
+                self, "Ошибка окна SSH-подключения",
+                f"Не удалось открыть окно подключения.\\n\\n{type(exc).__name__}: {exc}"
+            )
+            self.status.setText("Ошибка открытия окна SSH-подключения")
 
     def connect_router(self):
         def job():

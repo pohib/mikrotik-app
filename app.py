@@ -589,11 +589,9 @@ class DialogTitleBar(QFrame):
 
 def add_dialog_chrome(dialog, layout, title):
     dialog.setWindowTitle(title)
-    # Используем системную рамку окна: она обеспечивает изменение размера мышью
-    # за края/углы и штатное разворачивание средствами Windows/Linux.
-    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint |
-                          Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowMinMaxButtonsHint |
-                          Qt.WindowType.WindowCloseButtonHint)
+    # Сохраняем фирменное безрамочное окно без системной Windows-обёртки.
+    # Масштабирование выполняется за компактный QSizeGrip в правом нижнем углу.
+    dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setMinimumSize(560, 380)
     dialog.setObjectName("AppDialog")
@@ -629,6 +627,19 @@ def add_dialog_chrome(dialog, layout, title):
                 layout.addItem(item,row+1,column,row_span,column_span)
     else:
         layout.insertWidget(0,header)
+    # Ручка изменения размера сохраняет кастомное оформление без системной рамки.
+    resize_row = QHBoxLayout()
+    resize_row.setContentsMargins(0, 0, 2, 2)
+    resize_row.addStretch(1)
+    resize_grip = QSizeGrip(dialog)
+    resize_grip.setToolTip("Изменить размер окна")
+    resize_grip.setFixedSize(16, 16)
+    resize_row.addWidget(resize_grip, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+    if isinstance(layout, QGridLayout):
+        last_row = max((layout.getItemPosition(i)[0] + layout.getItemPosition(i)[2] for i in range(layout.count())), default=0)
+        layout.addLayout(resize_row, last_row, 0, 1, max(1, grid_columns if 'grid_columns' in locals() else 1))
+    else:
+        layout.addLayout(resize_row)
 
 
 class QMessageBox:

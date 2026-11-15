@@ -641,7 +641,7 @@ class AutoDiscoveryDialog(QDialog):
             self._render()
             self.status.setText(f"HAR обработан: обнаружено {count} новых доменов; всего в списке: {len(self.discovered)}.")
         except Exception as exc:
-            QMessageBox.critical(self, "Ошибка HAR", f"Не удалось прочитать HAR-файл:\\n{exc}")
+            QMessageBox.critical(self, "Ошибка HAR", f"Не удалось прочитать HAR-файл:\n{exc}")
 
     def selected_targets(self):
         result = []
@@ -2611,7 +2611,7 @@ class App(QMainWindow):
         self.render_targets()
         self.log(f"Автоопределение: добавлено {added} целей; IP добавляются только по отдельному флажку.")
         if added:
-            QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
+            QMessageBox.information(self, "Зависимости добавлены", f"Добавлено целей: {added}.\nОни пока находятся только в приложении. Для отправки на MikroTik используй «Подготовить применение» и затем подтверди очередь изменений.")
         else:
             QMessageBox.information(self, "Новых целей нет", "Выбранные домены/IP уже присутствуют в списке или ничего не выбрано.")
 

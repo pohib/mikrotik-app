@@ -528,6 +528,7 @@ class AutoDiscoveryDialog(QDialog):
         self.dns_monitor_timer = QTimer(self)
         self.dns_monitor_timer.setInterval(7000)
         self.dns_monitor_timer.timeout.connect(self.request_dns_cache)
+        self.finished.connect(lambda _result: self.dns_monitor_timer.stop())
         self.status = QLabel("Укажи домен, импортируй HAR или открой сервис и сними DNS-кэш MikroTik.")
         self.status.setObjectName("Muted")
         self.status.setWordWrap(True)

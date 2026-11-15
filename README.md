@@ -1,4 +1,16 @@
-# MikroTik VPN Manager — v1.4.0
+# MikroTik VPN Manager — v1.5.0
+
+## v1.5.0 — Destination-aware routing diagnostics
+
+- Full diagnostics now resolve the selected domain and inspect active IPv4 routes matching each returned address in both the main and configured VPN routing tables (up to five returned addresses).
+- The separate per-domain diagnostic performs the same main/VPN route-table inspection after DNS resolution.
+- Route evidence includes the exact RouterOS command and output, making it possible to compare the selected address against the active route and next-hop in each table.
+- Added explicit read-only inspection of global IPv6 settings and IPv6 default routes.
+- Added detailed Mangle and firewall-filter counters to the diagnostic evidence, including FastTrack counters.
+- The report distinguishes route-table evidence from packet-level proof: a route in the VPN table does not alone prove that a particular LAN client's packets matched Mangle or avoided FastTrack. Check the managed address-list and counters alongside the route result.
+- All new checks are read-only. They do not add, remove, enable, disable, or reorder router configuration.
+
+
 
 ## v1.4.0 — Deep diagnostics
 

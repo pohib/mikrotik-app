@@ -2435,6 +2435,7 @@ class App(QMainWindow):
                         v=str(result.get(key.upper(),""))
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
+                elif kind=="VPN_SETUP_SCAN": self.on_vpn_setup_scan(payload)
                 elif kind=="FW_DATA": self.on_firewall_data(*payload)
                 elif kind=="FW_APPLIED": self.firewall_applied()
                 elif kind=="TERMOUT":

@@ -279,7 +279,9 @@ class NetworkMapView(QGraphicsView):
         self.setBackgroundBrush(QColor("#0b1220"))
         self.viewport().setAutoFillBackground(True)
         self.set_canvas_background(QColor("#0b1220"))
-        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        # Repaint only changed regions; full viewport repaints are costly on large LAN maps.
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
+        self.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground)
         self.setToolTip("Колесо — масштаб · перетаскивание — перемещение · двойной щелчок по узлу — центрировать")
 
     def set_canvas_background(self,color):
@@ -321,8 +323,16 @@ class NetworkMapView(QGraphicsView):
         if 0.25<=next_scale<=3.5: self.scale(factor,factor)
 
     def fit_map(self):
-        if self.scene() and not self.scene().itemsBoundingRect().isNull():
-            self.fitInView(self.scene().itemsBoundingRect().adjusted(-48,-48,48,48),Qt.AspectRatioMode.KeepAspectRatio)
+        scene=self.scene()
+        if scene is None:
+            return
+        # render_lan_map sets an explicit scene rect; reuse it instead of scanning
+        # every graphics item on each fit (including after every filter keystroke).
+        bounds=scene.sceneRect()
+        if bounds.isNull() or not bounds.isValid():
+            bounds=scene.itemsBoundingRect()
+        if not bounds.isNull() and bounds.isValid():
+            self.fitInView(bounds.adjusted(-48,-48,48,48),Qt.AspectRatioMode.KeepAspectRatio)
 
     def center_selected(self):
         if self.scene():
@@ -2887,7 +2897,10 @@ class App(QMainWindow):
         scene.setBackgroundBrush(bg)
         for map_view in (self.lan_map_view,self._lan_map_detached_view):
             if map_view is not None:
-                map_view.set_canvas_background(bg)
+                # Re-applying a stylesheet repolishes the widget tree; only change
+                # the canvas palette when the selected theme actually changed.
+                if map_view.backgroundBrush().color().rgba()!=bg.rgba():
+                    map_view.set_canvas_background(bg)
                 map_view.grid_color=QColor(30,45,65,24) if light else QColor(255,255,255,16)
                 map_view.viewport().update()
         def add_node(x,y,w,h,title,subtitle,color,tooltip="",payload=None):

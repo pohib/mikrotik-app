@@ -55,7 +55,7 @@ def test_backdrop_switches_real_canvas_theme(qt_app):
 
 
 def test_scrollbars_follow_selected_application_theme(qt_app):
-    window = manager.MainWindow()
+    window = manager.App()
     try:
         for theme, expected in (
             ("default", "#60a5fa"),

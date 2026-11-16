@@ -2066,6 +2066,7 @@ class App(QMainWindow):
             r=self.router_conn(); d={}
             cmds=[
                 ("table",f'/routing table print detail where name={ros_q(f["route_table"])}'),
+                ("main_route",'/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main'),
                 ("route",f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
                 ("wg",f'/interface wireguard print detail where name={ros_q(f["wg_interface"])}'),
                 ("peer",f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}'),
@@ -2080,7 +2081,8 @@ class App(QMainWindow):
                 try: d["ping"]=r.exec(f'/tool ping address=1.1.1.1 interface={ros_q(f["wg_interface"])} count=3',timeout=12)
                 except Exception as exc: d["ping"]="Ping через WG не прошёл: "+str(exc)
                 d["peer"]=r.exec(f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}')
-            table=bool(d["table"].strip()); route_count=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}').strip()
+            table=bool(d["table"].strip()); main_route=bool(d["main_route"].strip()) and "inactive" not in d["main_route"].lower()
+            route_count=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}').strip()
             route=route_count=="1" and bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
             wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
             handshake_match=re.search(r'last-handshake=("[^"]*"|\S+)',d["peer"])
@@ -2090,15 +2092,20 @@ class App(QMainWindow):
             dhcp_server=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
             dhcp=f'dns-server={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
-            nat=f'out-interface={f["wg_interface"]}' in d["nat"] and "action=masquerade" in d["nat"] and f'src-address={f["lan_subnet"]}' in d["nat"]
+            nat_count=r.exec(f'/ip firewall nat print count-only where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(f["wg_interface"])}').strip()
+            nat=nat_count=="1"
+            dns_udp=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-UDP")}').strip()
+            dns_tcp=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-TCP")}').strip()
+            dhcp_gateway=f'gateway={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
             blockers=[]
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
-            for ok,msg in [(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route")]:
+            for ok,msg in [(main_route,"Не найден активный основной default route через WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
+                f'{"✓" if main_route else "✕"} Основной маршрут main через WAN: {"активен" if main_route else "НЕ НАЙДЕН / неактивен"}',
                 f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
                 f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
                 f'{"✓" if peer_ready else "✕"} Peer/handshake: {"подключён" if peer_ready else "не подключён или handshake ещё не получен"}',
@@ -2107,7 +2114,9 @@ class App(QMainWindow):
                 f'{"✓" if dns else "＋"} DNS remote requests: {"включён" if dns else "будет включён с ограничением доступа из LAN"}',
                 f'{"✓" if dhcp else "＋"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else ("будет обновлён" if dhcp_server not in ("0","") else "DHCP-сервер не найден — DNS клиентам настрой вручную")}',
                 f'{"✓" if mc=="1" else "＋"} Управляемое Mangle: {mc or "0"}',
-                f'{"✓" if nat else "＋"} NAT masquerade: {"найден" if nat else "отсутствует"}',
+                f'{"✓" if nat else "＋"} NAT masquerade LAN → WG: {"одно правило найдено" if nat else ("дубликаты: "+nat_count if nat_count not in ("0","1") else "отсутствует")}',
+                f'DNS Firewall UDP/TCP: {dns_udp}/{dns_tcp} управляемых правил',
+                f'{"✓" if dhcp_gateway or dhcp_server in ("0","") else "⚠"} DHCP gateway: {"подтверждён" if dhcp_gateway else ("DHCP отсутствует" if dhcp_server in ("0","") else "не совпадает")}',
                 f'{"⚠" if fast else "✓"} FastTrack: {"обнаружен" if fast else "не обнаружен"}',
                 f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}']
             if dhcp_server in ("0",""): lines.append("ℹ DHCP-сервер на LAN не найден: IP-маршрутизация будет работать, но DNS на клиентах потребуется настроить вручную.")

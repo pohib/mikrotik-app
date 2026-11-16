@@ -4535,6 +4535,28 @@ class App(QMainWindow):
         item=table.item(row,0)
         return key,item.data(Qt.ItemDataRole.UserRole) if item else None
 
+    def firewall_rule_warnings(self,key,values):
+        warnings=[]
+        chain=values.get("chain","").lower(); action=values.get("action","").lower()
+        constrained=any(values.get(name) for name in ("src-address","src-address-list","in-interface","in-interface-list"))
+        if key=="filter" and chain=="input" and action=="accept" and not constrained:
+            warnings.append("Filter/input accept без ограничения источника или входного интерфейса может открыть доступ к самому роутеру.")
+        if key=="filter" and chain=="input" and action in ("drop","reject") and not constrained:
+            warnings.append("Широкое правило drop/reject в input может заблокировать управление роутером.")
+        if key=="filter" and chain=="forward" and action=="accept" and not (values.get("src-address") or values.get("dst-address") or values.get("in-interface") or values.get("out-interface")):
+            warnings.append("Forward accept без адресных или интерфейсных ограничений может разрешить слишком широкий транзитный трафик.")
+        if key=="nat" and action in ("masquerade","src-nat") and chain!="srcnat":
+            warnings.append("Masquerade/src-nat обычно применяется в chain=srcnat; проверь выбранную цепочку.")
+        if key=="nat" and action in ("masquerade","src-nat") and not (values.get("out-interface") or values.get("out-interface-list")):
+            warnings.append("NAT без out-interface/out-interface-list может затронуть больше трафика, чем планировалось.")
+        if key=="mangle" and action=="mark-routing" and not values.get("new-routing-mark"):
+            warnings.append("Для mark-routing не задан new-routing-mark — правило не задаст целевую таблицу.")
+        if key=="mangle" and action.startswith("mark-") and values.get("passthrough","").lower() not in ("no","false") and chain=="prerouting":
+            warnings.append("Проверь passthrough и порядок Mangle: последующие правила могут повторно изменить метки.")
+        if values.get("disabled")=="no" and action in ("accept","masquerade","mark-routing") and not values.get("comment"):
+            warnings.append("У активного правила нет комментария; его будет сложнее идентифицировать и сопровождать.")
+        return warnings
+
     def firewall_rule_dialog(self,key,record=None):
         title={"filter":"Filter","nat":"NAT","mangle":"Mangle"}[key]
         fields=["chain","action","protocol","src-address","dst-address","src-port","dst-port","in-interface","out-interface","connection-state","connection-nat-state","connection-mark","new-routing-mark","to-addresses","to-ports","comment"]
@@ -4552,6 +4574,7 @@ class App(QMainWindow):
         if not values.get("chain") or not values.get("action"):
             QtMessageBox.warning(self,"Недостаточно данных","Поля chain и action обязательны."); return
         values["disabled"]="no" if enabled.isChecked() else "yes"
+        warnings=self.firewall_rule_warnings(key,values)
         path=f"/ip firewall {key}"
         args=" ".join(f"{name}={ros_q(value)}" for name,value in values.items())
         if record:
@@ -4560,8 +4583,13 @@ class App(QMainWindow):
         else:
             command=f"{path} add {args}"
             description=f"Добавить правило {title} ({values['chain']} / {values['action']})."
-        self.fw_queue.append({"command":command,"description":description,"risk":"Изменение Firewall; проверь порядок, chain и влияние на доступ."})
+        risk="Изменение Firewall; проверь порядок, chain и влияние на доступ."
+        if warnings:
+            risk+="\n⚠ "+"\n⚠ ".join(warnings)
+        self.fw_queue.append({"command":command,"description":description,"risk":risk})
         self.update_firewall_queue()
+        if warnings:
+            QtMessageBox.warning(self,"Потенциально опасные настройки","Правило добавлено в локальную очередь, но перед применением проверь:\n\n"+"\n".join("• "+item for item in warnings))
 
     def firewall_add_rule(self):
         self.firewall_rule_dialog(("filter","nat","mangle")[self.fw_tabs.currentIndex()])

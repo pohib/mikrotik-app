@@ -4647,6 +4647,10 @@ class App(QMainWindow):
                 raise RuntimeError(f"DHCP network для {sub} не подтверждает dns-server={f['lan_dns']}. Проверь DHCP-настройки LAN.")
         else:
             self.q.put(("LOG",f"На LAN {lan} нет активного DHCP-сервера: IP-маршрутизация доступна, DNS на клиентах нужно задать вручную."))
+        filters=r.exec("/ip firewall filter print detail")
+        if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Нужна ручная проверка исключений перед настройкой mangle.")
+        mangle=r.exec("/ip firewall mangle print detail")
+        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")
         route_state=self.ensure_vpn_failover_routes(r,f)
         wan_nat_entries=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(sub)} and out-interface={ros_q(f["wan_interface"])}'))
         if len(wan_nat_entries)>1: raise RuntimeError("Найдено несколько одинаковых WAN masquerade правил для LAN; проверь их вручную.")
@@ -4654,10 +4658,6 @@ class App(QMainWindow):
             raise RuntimeError("Найдено отключённое WAN masquerade правило для LAN. Проверь его вручную.")
         if not wan_nat_entries:
             self.cmd(r,wan_nat_cmd(f))
-        filters=r.exec("/ip firewall filter print detail")
-        if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Нужна ручная проверка исключений перед настройкой mangle.")
-        mangle=r.exec("/ip firewall mangle print detail")
-        if "action=mark-routing" in mangle and MANGLE_COMMENT not in mangle: raise RuntimeError("Есть сторонние mark-routing правила. Автоматическое изменение отменено.")
         if MANGLE_COMMENT not in mangle:
             self.cmd(r,mangle_cmd(f))
         nat=r.exec("/ip firewall nat print detail")
@@ -5122,7 +5122,7 @@ class App(QMainWindow):
                     for proto in ("udp","tcp"):
                         comment=f"VPN-MANAGER-LAN-DNS-{proto.upper()}"
                         count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(comment)}').strip()
-                        if count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=accept protocol={proto} dst-port=53 src-address={f["lan_subnet"]} comment={ros_q(comment)} place-before=0')
+                        if count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=accept protocol={proto} dst-port=53 in-interface={ros_q(f["lan_interface"])} src-address={f["lan_subnet"]} comment={ros_q(comment)} place-before=0')
                         elif count!="1": raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {comment}")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):

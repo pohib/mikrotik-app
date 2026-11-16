@@ -4597,8 +4597,8 @@ class App(QMainWindow):
                     if f'gateway={wg}' not in verified or "inactive" in verified.lower(): raise RuntimeError("Default route не подтвердился как активный.")
                     mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
                     if mc!="1": raise RuntimeError(f"Mangle post-check: ожидалось одно правило, найдено {mc or '0'}.")
-                    nat_count=r.exec(f'/ip firewall nat print count-only where comment={ros_q(NAT_COMMENT)}').strip()
-                    if nat_count!="1": raise RuntimeError(f"NAT post-check: ожидалось одно управляемое правило, найдено {nat_count or '0'}.")
+                    nat_count=r.exec(f'/ip firewall nat print count-only where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}').strip()
+                    if nat_count in ("0",""): raise RuntimeError("NAT post-check: masquerade для LAN через WireGuard не найден.")
                     for proto in ("UDP","TCP"):
                         count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
                         if count!="1": raise RuntimeError(f"DNS firewall post-check ({proto}): ожидалось одно правило, найдено {count or '0'}.")

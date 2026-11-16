@@ -56,19 +56,20 @@ def test_backdrop_switches_real_canvas_theme(qt_app):
 
 
 def test_scrollbars_use_custom_antialiased_painter(qt_app):
-    style = manager.RoundedScrollBarStyle()
+    qt_app.setStyle(manager.RoundedScrollBarStyle())
     scrollbar = QScrollBar(Qt.Orientation.Vertical)
     scrollbar.setRange(0, 100)
     scrollbar.setPageStep(20)
     scrollbar.resize(18, 140)
-    scrollbar.setStyle(style)
     scrollbar.show()
     qt_app.processEvents()
     image = manager.QPixmap(scrollbar.size())
     image.fill(manager.Qt.GlobalColor.transparent)
     painter = manager.QPainter(image)
-    scrollbar.render(painter)
-    painter.end()
+    try:
+        scrollbar.render(painter)
+    finally:
+        painter.end()
 
     # The extreme corner stays transparent while the center of the track is painted.
     assert image.toImage().pixelColor(0, 0).alpha() == 0

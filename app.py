@@ -2054,6 +2054,7 @@ class App(QMainWindow):
                 ("table",f'/routing table print detail where name={ros_q(f["route_table"])}'),
                 ("route",f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
                 ("wg",f'/interface wireguard print detail where name={ros_q(f["wg_interface"])}'),
+                ("peer",f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}'),
                 ("lan",f'/interface print detail where name={ros_q(f["lan_interface"])}'),
                 ("dns","/ip dns print"),("dhcp","/ip dhcp-server network print detail"),
                 ("mangle",f'/ip firewall mangle print detail where comment={ros_q(MANGLE_COMMENT)}'),
@@ -2061,7 +2062,11 @@ class App(QMainWindow):
                 ("fasttrack",'/ip firewall filter print detail where action=fasttrack-connection')]
             for k,c in cmds: d[k]=r.exec(c,timeout=20)
             table=bool(d["table"].strip()); route=bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
-            wg=bool(d["wg"].strip()); lan=bool(d["lan"].strip()); dns="allow-remote-requests: yes" in d["dns"]
+            wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
+            handshake_match=re.search(r'last-handshake=("[^"]*"|\\S+)',d["peer"])
+            handshake=bool(handshake_match and handshake_match.group(1).strip('"').lower() not in ("","never","0"))
+            peer_ready=peer_count=="1" and handshake
+            lan=bool(d["lan"].strip()); dns="allow-remote-requests: yes" in d["dns"]
             dhcp_server=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
             dhcp=f'dns-server={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
@@ -2070,12 +2075,13 @@ class App(QMainWindow):
             blockers=[]
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
-            for ok,msg in [(wg,"WireGuard-интерфейс не найден — импортируй профиль и создай туннель"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
+            for ok,msg in [(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
                 f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
                 f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
+                f'{"✓" if peer_ready else "✕"} Peer/handshake: {"подключён" if peer_ready else "не подключён или handshake ещё не получен"}',
                 f'{"✓" if lan else "✕"} LAN {f["lan_interface"]}: {"найден" if lan else "НЕ НАЙДЕН"}',
                 f'{"✓" if dns else "＋"} DNS remote requests: {"включён" if dns else "будет включён с ограничением доступа из LAN"}',
                 f'{"✓" if dhcp else "＋"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else ("будет обновлён" if dhcp_server not in ("0","") else "DHCP-сервер не найден — DNS клиентам настрой вручную")}',

@@ -2061,6 +2061,11 @@ class App(QMainWindow):
                 ("all_mangle","/ip firewall mangle print detail"),("nat","/ip firewall nat print detail"),
                 ("fasttrack",'/ip firewall filter print detail where action=fasttrack-connection')]
             for k,c in cmds: d[k]=r.exec(c,timeout=20)
+            d["ping"]="Проверка не запускалась: WireGuard-интерфейс отсутствует."
+            if d["wg"].strip():
+                try: d["ping"]=r.exec(f'/tool ping address=1.1.1.1 interface={ros_q(f["wg_interface"])} count=3',timeout=12)
+                except Exception as exc: d["ping"]="Ping через WG не прошёл: "+str(exc)
+                d["peer"]=r.exec(f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}')
             table=bool(d["table"].strip()); route_count=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}').strip()
             route=route_count=="1" and bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
             wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
@@ -2083,6 +2088,7 @@ class App(QMainWindow):
                 f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
                 f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
                 f'{"✓" if peer_ready else "✕"} Peer/handshake: {"подключён" if peer_ready else "не подключён или handshake ещё не получен"}',
+                "Ping 1.1.1.1 через WireGuard: "+(d.get("ping","").strip().splitlines()[-1] if d.get("ping","").strip() else "нет данных"),
                 f'{"✓" if lan else "✕"} LAN {f["lan_interface"]}: {"найден" if lan else "НЕ НАЙДЕН"}',
                 f'{"✓" if dns else "＋"} DNS remote requests: {"включён" if dns else "будет включён с ограничением доступа из LAN"}',
                 f'{"✓" if dhcp else "＋"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else ("будет обновлён" if dhcp_server not in ("0","") else "DHCP-сервер не найден — DNS клиентам настрой вручную")}',

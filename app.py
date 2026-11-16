@@ -4583,7 +4583,7 @@ class App(QMainWindow):
         lines=[]
         for i,item in enumerate(self.fw_queue,1):
             lines.extend([f"{i}. {item['description']}",f"   Риск: {item['risk']}",f"   $ {item['command']}",""])
-        self.fw_queue_view.setPlainText("\\n".join(lines) if lines else "")
+        self.fw_queue_view.setPlainText("\n".join(lines) if lines else "")
 
     def firewall_clear_queue(self):
         self.fw_queue=[]; self.update_firewall_queue()
@@ -4594,7 +4594,7 @@ class App(QMainWindow):
         dialog=QDialog(self); dialog.setWindowTitle("Предпросмотр изменений Firewall"); dialog.resize(850,520)
         layout=QVBoxLayout(dialog); label=QLabel("Проверь каждую команду и её влияние перед подтверждением."); label.setWordWrap(True); layout.addWidget(label)
         preview=QPlainTextEdit(); preview.setReadOnly(True)
-        preview.setPlainText("\\n\\n".join(f"{i}. {item['description']}\\nРиск: {item['risk']}\\n$ {item['command']}" for i,item in enumerate(self.fw_queue,1)))
+        preview.setPlainText("\n\n".join(f"{i}. {item['description']}\nРиск: {item['risk']}\n$ {item['command']}" for i,item in enumerate(self.fw_queue,1)))
         preview.setStyleSheet("QPlainTextEdit {background:#07111f;color:#dce7f8;border:1px solid #304764;border-radius:10px;padding:12px;font-family:Consolas,monospace;}")
         layout.addWidget(preview,1)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
@@ -4611,7 +4611,7 @@ class App(QMainWindow):
             for item in pending:
                 output=router.exec(item["command"],timeout=30)
                 if re.search(r"failure:|expected end of command|syntax error",output,re.I):
-                    raise RuntimeError(item["command"]+"\\n"+output)
+                    raise RuntimeError(item["command"]+"\n"+output)
             self.q.put(("FW_APPLIED",None))
         self.run_job("Применение очереди Firewall…",job)
 

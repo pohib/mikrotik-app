@@ -1923,6 +1923,17 @@ class App(QMainWindow):
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Сетевые параметры","Здесь находятся параметры LAN, policy routing и WireGuard. SSH-авторизация вынесена в отдельное окно входа.")
+        wizard=self.panel("Мастер настройки VPN-маршрутизации","1. Заполни параметры ниже. 2. Сохрани их и проверь роутер. 3. Мастер покажет существующие и недостающие объекты. 4. Подготовь создание и подтверди его в общей очереди.")
+        wizard_row=QHBoxLayout()
+        self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
+        scan_btn=QPushButton("① Проверить роутер"); scan_btn.setObjectName("PrimaryButton"); scan_btn.clicked.connect(self.scan_vpn_setup)
+        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(scan_btn); wizard.layout().addLayout(wizard_row)
+        self.vpn_setup_report=QPlainTextEdit(); self.vpn_setup_report.setReadOnly(True); self.vpn_setup_report.setMaximumHeight(190); self.vpn_setup_report.setPlaceholderText("Состояние routing table, default route, WireGuard, LAN, DHCP, Mangle и NAT.")
+        wizard.layout().addWidget(self.vpn_setup_report)
+        self.vpn_setup_stage=QPushButton("② Подготовить создание недостающих правил"); self.vpn_setup_stage.setObjectName("PrimaryButton"); self.vpn_setup_stage.setEnabled(False); self.vpn_setup_stage.clicked.connect(self.stage_vpn_setup)
+        wizard.layout().addWidget(self.vpn_setup_stage)
+        note=QLabel("Сторонние правила не удаляются и не перезаписываются. При FastTrack, конфликтующем маршруте или стороннем mark-routing мастер остановится. Все изменения сначала попадут в очередь и будут отправлены только после предпросмотра и подтверждения.")
+        note.setObjectName("InfoNote"); note.setWordWrap(True); wizard.layout().addWidget(note); l.addWidget(wizard)
         form=QFormLayout(); self.inputs={}; form.setVerticalSpacing(12); form.setHorizontalSpacing(22); form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
         for label,key in fields:
@@ -1965,6 +1976,67 @@ class App(QMainWindow):
         warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address. DNS из .conf не применяется: DNS-политика MikroTik остаётся прежней.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
+
+    def scan_vpn_setup(self):
+        try:
+            self.save_settings(); f=dict(self.settings)
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",f["route_table"]): raise ValueError("Некорректное имя routing table.")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",f["address_list"]): raise ValueError("Некорректное имя address-list.")
+            ipaddress.ip_network(f["lan_subnet"],strict=False); ipaddress.ip_address(f["lan_dns"])
+        except Exception as exc:
+            QMessageBox.warning(self,"Проверь параметры",str(exc)); return
+        self.vpn_setup_status.setText("Проверка выполняется…"); self.vpn_setup_stage.setEnabled(False)
+        def job():
+            r=self.router_conn(); d={}
+            cmds=[
+                ("table",f'/routing table print detail where name={ros_q(f["route_table"])}'),
+                ("route",f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
+                ("wg",f'/interface wireguard print detail where name={ros_q(f["wg_interface"])}'),
+                ("lan",f'/interface print detail where name={ros_q(f["lan_interface"])}'),
+                ("dns","/ip dns print"),("dhcp","/ip dhcp-server network print detail"),
+                ("mangle",f'/ip firewall mangle print detail where comment={ros_q(MANGLE_COMMENT)}'),
+                ("all_mangle","/ip firewall mangle print detail"),("nat","/ip firewall nat print detail"),
+                ("fasttrack",'/ip firewall filter print detail where action=fasttrack-connection')]
+            for k,c in cmds: d[k]=r.exec(c,timeout=20)
+            table=bool(d["table"].strip()); route=bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
+            wg=bool(d["wg"].strip()); lan=bool(d["lan"].strip()); dns="allow-remote-requests: yes" in d["dns"]
+            dhcp=f'dns-server={f["lan_dns"]}' in d["dhcp"].replace(" ","")
+            mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
+            nat=f'out-interface={f["wg_interface"]}' in d["nat"] and "action=masquerade" in d["nat"] and f'src-address={f["lan_subnet"]}' in d["nat"]
+            fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
+            blockers=[]
+            for ok,msg in [(wg,"WireGuard-интерфейс не найден"),(lan,"LAN-интерфейс не найден"),(dns,"allow-remote-requests выключен"),(dhcp,f"DHCP не выдаёт DNS {f['lan_dns']}"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
+                if not ok: blockers.append(msg)
+            lines=[
+                f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
+                f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
+                f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
+                f'{"✓" if lan else "✕"} LAN {f["lan_interface"]}: {"найден" if lan else "НЕ НАЙДЕН"}',
+                f'{"✓" if dns else "✕"} DNS remote requests: {"включён" if dns else "выключен"}',
+                f'{"✓" if dhcp else "✕"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else "не совпадает"}',
+                f'{"✓" if mc=="1" else "＋"} Управляемое Mangle: {mc or "0"}',
+                f'{"✓" if nat else "＋"} NAT masquerade: {"найден" if nat else "отсутствует"}',
+                f'{"⚠" if fast else "✓"} FastTrack: {"обнаружен" if fast else "не обнаружен"}',
+                f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}']
+            self.q.put(("VPN_SETUP_SCAN",{"lines":lines,"blockers":blockers,"ready":not blockers}))
+        self.run_job("Сканирование VPN-маршрутизации…",job)
+
+    def on_vpn_setup_scan(self,payload):
+        self.vpn_setup_scan_result=payload
+        report="\n".join(payload["lines"])
+        if payload["blockers"]: report+="\n\nТРЕБУЕТ ВНИМАНИЯ:\n• "+"\n• ".join(payload["blockers"])
+        else: report+="\n\nПрепятствий нет. Можно подготовить создание недостающих объектов."
+        self.vpn_setup_report.setPlainText(report)
+        self.vpn_setup_status.setText("Проверка завершена · готово к настройке" if payload["ready"] else "Есть препятствия · исправь их и повтори проверку")
+        self.vpn_setup_stage.setEnabled(payload["ready"])
+
+    def stage_vpn_setup(self):
+        result=getattr(self,"vpn_setup_scan_result",None)
+        if not result or not result.get("ready"):
+            QMessageBox.warning(self,"Нужна проверка","Сначала выполни проверку роутера."); return
+        self.queue_change("setup_vpn_routing","Создать недостающую инфраструктуру VPN-маршрутизации")
+        self.vpn_setup_stage.setEnabled(False)
+        self.vpn_setup_status.setText("Добавлено в очередь · открой предпросмотр изменений")
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -4157,7 +4229,11 @@ class App(QMainWindow):
     def pending_action_details(self,a):
         """Пояснение, команды RouterOS и проверки для одной операции."""
         k=a["kind"]; f=dict(self.settings); f.update(self.fields() if hasattr(self,"inputs") else {}); commands=[]; checks=[]
-        if k=="apply_targets":
+        if k=="setup_vpn_routing":
+            commands=[f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(f["wg_interface"])} routing-table={ros_q(f["route_table"])} comment="VPN-MANAGER-DEFAULT"  # если отсутствует',mangle_cmd(f),nat_cmd(f)]
+            description="Проверить LAN/DNS/DHCP/WireGuard и отсутствие конфликтов; создать только отсутствующие routing table, default route, Mangle и NAT."
+            checks=["Таблица VPN существует","Default route активен через WireGuard","Mangle направляет выбранные цели в VPN-таблицу","NAT masquerade работает через WireGuard","Проверить ping и доступ с LAN-клиента"]
+        elif k=="apply_targets":
             commands += ["/ip dns print", "/ip dhcp-server network print detail", f'/ip route print detail where routing-table={ros_q(f["route_table"])}', "/ip firewall filter print detail", "/ip firewall mangle print detail", "/ip firewall nat print detail", "# Условно добавляются, если управляемые правила отсутствуют", mangle_cmd(f), nat_cmd(f)]
             commands += [target_cmd(f,t,kind) for t,kind in a.get("targets",[])] + ["/ip dns cache flush"]
             description=f"Проверить prerequisites и добавить {len(a.get('targets',[]))} VPN-целей. Недостающие управляемые Mangle/NAT создаются; сторонние правила не перезаписываются."
@@ -4400,7 +4476,25 @@ class App(QMainWindow):
             r=self.router_conn()
             for a in actions:
                 k=a["kind"]
-                if k=="apply_targets":
+                if k=="setup_vpn_routing":
+                    f=dict(self.settings); table=f["route_table"]; wg=f["wg_interface"]
+                    if r.exec(f'/interface wireguard print count-only where name={ros_q(wg)}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["lan_interface"])}').strip()!="1":
+                        raise RuntimeError("Интерфейс WireGuard или LAN изменился после сканирования. Повтори скан.")
+                    if "allow-remote-requests: yes" not in r.exec("/ip dns print") or f'dns-server={f["lan_dns"]}' not in r.exec("/ip dhcp-server network print detail").replace(" ",""):
+                        raise RuntimeError("DNS/DHCP prerequisites не выполнены. Ничего не применено.")
+                    filters=r.exec("/ip firewall filter print detail"); all_mangle=r.exec("/ip firewall mangle print detail")
+                    if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена.")
+                    if "action=mark-routing" in all_mangle and MANGLE_COMMENT not in all_mangle: raise RuntimeError("Обнаружено стороннее mark-routing правило.")
+                    tc=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
+                    if tc=="0": self.cmd(r,f'/routing table add name={ros_q(table)} fib')
+                    elif tc!="1": raise RuntimeError(f"Найдено таблиц {tc}; ожидается одна.")
+                    routes=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
+                    if not routes.strip(): self.cmd(r,f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(wg)} routing-table={ros_q(table)} comment="VPN-MANAGER-DEFAULT"')
+                    elif f'gateway={wg}' not in routes or "inactive" in routes.lower(): raise RuntimeError("В таблице уже есть конфликтующий или неактивный default route. Он не изменён.")
+                    self.prepare_router(r)
+                    verified=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
+                    if f'gateway={wg}' not in verified or "inactive" in verified.lower(): raise RuntimeError("Default route не подтвердился как активный.")
+                elif k=="apply_targets":
                     self.prepare_router(r)
                     for t,kind in a["targets"]: self.apply_target(r,t,kind)
                     self.cmd(r,"/ip dns cache flush")

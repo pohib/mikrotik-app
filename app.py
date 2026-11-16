@@ -4613,6 +4613,20 @@ class App(QMainWindow):
                     if lan_dns not in lan_net: raise RuntimeError("LAN DNS IP не входит в LAN subnet.")
                     assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns))}').strip()
                     if assigned=="0": raise RuntimeError("LAN DNS IP не назначен LAN-интерфейсу. Автоматическая настройка DNS остановлена.")
+                    # Полный preflight до любых изменений: при конфликте не оставляем частично настроенный DNS.
+                    filters_pre=r.exec("/ip firewall filter print detail"); mangle_pre=r.exec("/ip firewall mangle print detail")
+                    if "action=fasttrack-connection" in filters_pre.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена до внесения изменений.")
+                    if "action=mark-routing" in mangle_pre and MANGLE_COMMENT not in mangle_pre: raise RuntimeError("Обнаружено стороннее mark-routing правило. Автонастройка остановлена до внесения изменений.")
+                    table_pre=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
+                    if table_pre not in ("0","1"): raise RuntimeError(f"Найдено таблиц {table_pre}; ожидается не более одной.")
+                    route_pre=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
+                    if route_pre.strip() and (f'gateway={wg}' not in route_pre or "inactive" in route_pre.lower()): raise RuntimeError("В VPN-таблице уже есть конфликтующий или неактивный default route. Ничего не изменено.")
+                    dhcp_pre=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
+                    network_pre=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip() if dhcp_pre not in ("0","") else "0"
+                    if network_pre not in ("0","1"): raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей. Ничего не изменено.")
+                    for proto in ("UDP","TCP"):
+                        rule_count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
+                        if rule_count not in ("0","1"): raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {proto}. Ничего не изменено.")
                     dns_state=r.exec("/ip dns print")
                     if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     for proto in ("udp","tcp"):
@@ -4626,9 +4640,6 @@ class App(QMainWindow):
                         if network_count=="0": self.cmd(r,f'/ip dhcp-server network add address={f["lan_subnet"]} gateway={f["lan_dns"]} dns-server={f["lan_dns"]}')
                         elif network_count=="1": self.cmd(r,f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}')
                         else: raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей; автоматическое изменение остановлено.")
-                    filters=r.exec("/ip firewall filter print detail"); all_mangle=r.exec("/ip firewall mangle print detail")
-                    if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена.")
-                    if "action=mark-routing" in all_mangle and MANGLE_COMMENT not in all_mangle: raise RuntimeError("Обнаружено стороннее mark-routing правило.")
                     tc=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
                     if tc=="0": self.cmd(r,f'/routing table add name={ros_q(table)} fib')
                     elif tc!="1": raise RuntimeError(f"Найдено таблиц {tc}; ожидается одна.")

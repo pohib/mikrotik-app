@@ -1953,7 +1953,12 @@ class App(QMainWindow):
         wgbuttons=QHBoxLayout()
         imp=QPushButton("Импортировать .conf"); imp.clicked.connect(self.import_wireguard_conf)
         applywg=QPushButton("Применить новый VPN-профиль"); applywg.setObjectName("PrimaryButton"); applywg.clicked.connect(self.apply_wireguard_profile)
-        wgbuttons.addWidget(imp); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
+        keygen=QPushButton("Создать ключ на MikroTik / показать PublicKey"); keygen.clicked.connect(self.generate_wg_keypair)
+        wgbuttons.addWidget(imp); wgbuttons.addWidget(keygen); wgbuttons.addWidget(applywg); wg.layout().addLayout(wgbuttons)
+        self.wg_local_public_key=QLineEdit(); self.wg_local_public_key.setReadOnly(True); self.wg_local_public_key.setPlaceholderText("PublicKey этого MikroTik появится здесь")
+        keyrow=QHBoxLayout(); keyrow.addWidget(QLabel("Локальный PublicKey")); keyrow.addWidget(self.wg_local_public_key,1)
+        copykey=QPushButton("Копировать"); copykey.clicked.connect(lambda: QApplication.clipboard().setText(self.wg_local_public_key.text()) if self.wg_local_public_key.text() else None); keyrow.addWidget(copykey)
+        wg.layout().addLayout(keyrow)
         doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP; оба значения можно проверить и изменить вручную.")
         self.doh_enabled=QCheckBox("Использовать DoH")
         self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
@@ -2461,6 +2466,10 @@ class App(QMainWindow):
                 elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="ROUTER_STATUS": self.on_router_status(payload)
+                elif kind=="WG_LOCAL_PUBLIC_KEY":
+                    self.wg_local_public_key.setText(str(payload))
+                    self.log("Локальный PublicKey WireGuard получен. Передай его VPN-провайдеру для регистрации peer.")
+                    QMessageBox.information(self,"PublicKey MikroTik","Скопируй этот PublicKey и добавь его в панели VPN-провайдера. После регистрации peer введи полученные от провайдера PublicKey сервера, Endpoint, Address и AllowedIPs.")
                 elif kind=="WG_APPLIED":
                     self.save_settings()
                     self.wg_inputs["wg_private_key"].clear()
@@ -3712,10 +3721,31 @@ class App(QMainWindow):
             QMessageBox.information(self,"Профиль загружен","Конфигурация прочитана. Проверь поля и нажми «Применить новый VPN-профиль».")
         except Exception as e: QMessageBox.critical(self,"Ошибка импорта",str(e))
 
+    def generate_wg_keypair(self):
+        wg=self.settings.get("wg_interface","").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",wg):
+            QMessageBox.warning(self,"Имя интерфейса","Укажи корректное имя WireGuard-интерфейса в сетевых параметрах."); return
+        def job():
+            r=self.router_conn()
+            count=r.exec(f'/interface wireguard print count-only where name={ros_q(wg)}').strip()
+            if count=="0":
+                r.exec(f'/interface wireguard add name={ros_q(wg)} mtu={int(self.wg_inputs["wg_mtu"].text() or "1240")}',15)
+            elif count!="1":
+                raise RuntimeError(f"Найдено интерфейсов с именем {wg}: {count}.")
+            detail=r.exec(f'/interface wireguard print detail where name={ros_q(wg)}')
+            match=re.search(r'public-key="([^"]+)"',detail)
+            if not match: match=re.search(r'public-key=([^\\s]+)',detail)
+            if not match: raise RuntimeError("RouterOS не вернул public-key для интерфейса.")
+            self.q.put(("WG_LOCAL_PUBLIC_KEY",match.group(1)))
+        self.run_job("Создание/чтение ключа WireGuard…",job)
+
     def apply_wireguard_profile(self):
         cfg={k:w.text().strip() for k,w in self.wg_inputs.items()}
         try:
-            if len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
+            if cfg["wg_private_key"] and len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
+            if not cfg["wg_private_key"]:
+                exists=self.router_conn().exec(f'/interface wireguard print count-only where name={ros_q(self.settings["wg_interface"])}').strip()
+                if exists!="1": raise ValueError("PrivateKey пуст. Сначала создай интерфейс и ключ на MikroTik либо импортируй .conf провайдера.")
             if len(base64.b64decode(cfg["wg_public_key"],validate=True))!=32: raise ValueError("PublicKey должен быть корректным WireGuard-ключом.")
             if cfg.get("wg_preshared_key"):
                 if len(base64.b64decode(cfg["wg_preshared_key"],validate=True))!=32: raise ValueError("PresharedKey должен быть корректным ключом WireGuard (32 байта Base64).")
@@ -3748,10 +3778,14 @@ class App(QMainWindow):
         exists=r.exec(f"/interface wireguard print count-only where name={q(wg)}").strip()
         if exists not in ("0","1"): raise RuntimeError(f"Найдено интерфейсов WireGuard с именем {wg}: {exists}. Ожидался максимум один.")
         if exists=="0":
-            # Новый интерфейс создаётся только при отсутствии имени; существующие интерфейсы не трогаем.
-            r.exec(f"/interface wireguard add name={q(wg)} mtu={int(cfg['wg_mtu'])} private-key={q(cfg['wg_private_key'])}",15)
+            # Если ключ задан в профиле — импортируем его; иначе RouterOS создаёт собственную пару ключей.
+            create=f"/interface wireguard add name={q(wg)} mtu={int(cfg['wg_mtu'])}"
+            if cfg.get("wg_private_key"): create+=f" private-key={q(cfg['wg_private_key'])}"
+            r.exec(create,15)
         else:
-            r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])} mtu={int(cfg['wg_mtu'])}",10)
+            update=f"/interface wireguard set [find where name={q(wg)}] mtu={int(cfg['wg_mtu'])}"
+            if cfg.get("wg_private_key"): update+=f" private-key={q(cfg['wg_private_key'])}"
+            r.exec(update,10)
         peer_count=r.exec(f"/interface wireguard peers print count-only where interface={q(wg)}").strip()
         if peer_count not in ("0","1"): raise RuntimeError(f"На интерфейсе {wg} найдено peer: {peer_count}. Автоматически не выбираю, какой заменять.")
         psk=cfg.get("wg_preshared_key","")

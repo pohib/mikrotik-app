@@ -4715,7 +4715,7 @@ class App(QMainWindow):
                     "NAT masquerade действует на WAN; обычный трафик выходит напрямую через провайдера",
                     "Подключить клиент к LAN, получить DHCP lease и открыть сайт по IP и доменному имени"]
         elif k=="setup_vpn_routing":
-            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',*vpn_failover_route_cmds(f),wan_nat_cmd(f),mangle_cmd(f),nat_cmd(f)]
+            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=drop protocol=udp dst-port=53 in-interface={f["wan_interface"]} comment="VPN-MANAGER-WAN-DNS-DROP-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=drop protocol=tcp dst-port=53 in-interface={f["wan_interface"]} comment="VPN-MANAGER-WAN-DNS-DROP-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',*vpn_failover_route_cmds(f),wan_nat_cmd(f),mangle_cmd(f),nat_cmd(f)]
             description="Настроить DNS для LAN с ограниченными input-правилами, при наличии DHCP обновить DNS в DHCP network, затем создать только отсутствующие routing table, default route, Mangle и NAT. WireGuard-профиль применяется отдельно после импорта .conf."
             checks=["Таблица VPN существует","Default route активен через WireGuard","Mangle направляет выбранные цели в VPN-таблицу","NAT masquerade работает через WireGuard","Проверить ping и доступ с LAN-клиента"]
         elif k=="apply_targets":
@@ -5060,8 +5060,7 @@ class App(QMainWindow):
                     main_via_wan=any("I" not in x["flags"] and (x["f"].get("gateway")==wan_if or x["f"].get("immediate-gw","").endswith("%"+wan_if) or x["f"].get("immediate-gw")==wan_if) for x in main_rows)
                     if not main_via_wan:
                         raise RuntimeError("WAN is connected but an active main default route through the configured WAN was not confirmed. VPN routing has not been enabled.")
-                    if "allow-remote-requests: yes" not in r.exec("/ip dns print"): self.cmd(r,"/ip dns set allow-remote-requests=yes")
-                    self.q.put(("LOG","Первичная настройка WAN/LAN завершена. Проверен прямой main default route через WAN; VPN-маршрутизация не включалась."))
+                    self.q.put(("LOG","Первичная настройка WAN/LAN завершена. DNS resolver пока не включался: он будет разрешён для LAN на следующем шаге вместе с блокировкой DNS-запросов с WAN. Проверен прямой main default route; VPN-маршрутизация не включалась."))
                 elif k=="setup_vpn_routing":
                     f=dict(self.settings); table=f["route_table"]; wg=f["wg_interface"]
                     if r.exec(f'/interface wireguard print count-only where name={ros_q(wg)}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["lan_interface"])}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["wan_interface"])}').strip()!="1":
@@ -5102,6 +5101,13 @@ class App(QMainWindow):
                             expected={"chain":"input","action":"accept","protocol":proto.lower(),"dst-port":"53","in-interface":f["lan_interface"],"src-address":f["lan_subnet"]}
                             if "X" in entries[0]["flags"] or any(entries[0]["f"].get(k)!=v for k,v in expected.items()):
                                 raise RuntimeError(f"Существующее DNS firewall rule {proto} отключено или отличается от профиля. Исправь его вручную; мастер не перезаписывает чужое правило.")
+                        drop_comment="VPN-MANAGER-WAN-DNS-DROP-"+proto
+                        drop_entries=parse_terse(r.exec(f'/ip firewall filter print terse where comment={ros_q(drop_comment)}'))
+                        if len(drop_entries)>1: raise RuntimeError(f"Найдено дублирующихся WAN DNS drop rules: {proto}. Ничего не изменено.")
+                        if drop_entries:
+                            expected_drop={"chain":"input","action":"drop","protocol":proto.lower(),"dst-port":"53","in-interface":f["wan_interface"]}
+                            if "X" in drop_entries[0]["flags"] or any(drop_entries[0]["f"].get(k)!=v for k,v in expected_drop.items()):
+                                raise RuntimeError(f"Существующее WAN DNS drop rule {proto} отключено или отличается от профиля.")
                     managed_mangle_pre=parse_terse(r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}'))
                     if len(managed_mangle_pre)>1: raise RuntimeError("Найдено несколько управляемых Mangle правил. Ничего не изменено.")
                     if managed_mangle_pre:
@@ -5124,6 +5130,10 @@ class App(QMainWindow):
                         count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(comment)}').strip()
                         if count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=accept protocol={proto} dst-port=53 in-interface={ros_q(f["lan_interface"])} src-address={f["lan_subnet"]} comment={ros_q(comment)} place-before=0')
                         elif count!="1": raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {comment}")
+                        drop_comment=f"VPN-MANAGER-WAN-DNS-DROP-{proto.upper()}"
+                        drop_count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(drop_comment)}').strip()
+                        if drop_count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=drop protocol={proto} dst-port=53 in-interface={ros_q(f["wan_interface"])} comment={ros_q(drop_comment)} place-before=0')
+                        elif drop_count!="1": raise RuntimeError(f"Найдено дублирующихся WAN DNS drop rules: {drop_comment}")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):
                         network_count=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip()

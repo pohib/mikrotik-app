@@ -279,6 +279,21 @@ class NetworkMapView(QGraphicsView):
         self.setBackgroundBrush(QColor("#0b1220"))
         self.setToolTip("Колесо мыши — масштаб · зажми левую кнопку и перетаскивай — перемещение")
 
+    def drawBackground(self,painter,rect):
+        painter.save()
+        painter.setPen(QPen(getattr(self,"grid_color",QColor(255,255,255,18)),1))
+        step=32
+        left=math.floor(rect.left()/step)*step
+        top=math.floor(rect.top()/step)*step
+        x=left
+        while x<rect.right():
+            y=top
+            while y<rect.bottom():
+                painter.drawPoint(QPointF(x,y))
+                y+=step
+            x+=step
+        painter.restore()
+
     def wheelEvent(self,event):
         factor=1.18 if event.angleDelta().y()>0 else 1/1.18
         next_scale=self.transform().m11()*factor
@@ -2754,6 +2769,8 @@ class App(QMainWindow):
         muted=QColor("#53677f" if light else ("#aeb9c2" if neutral else "#9eb0c9"))
         green=QColor("#4ade80"); blue=QColor("#72a7ff"); amber=QColor("#fbbf24"); red=QColor("#fb7185"); cyan=QColor("#67e8f9")
         scene.setBackgroundBrush(bg)
+        self.lan_map_view.grid_color=QColor(30,45,65,24) if light else QColor(255,255,255,16)
+        self.lan_map_view.viewport().update()
         def add_node(x,y,w,h,title,subtitle,color,tooltip="",payload=None):
             path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),14,14)
             fill=QLinearGradient(x,y,x+w,y+h); fill.setColorAt(0,card.lighter(112)); fill.setColorAt(1,card)
@@ -2837,7 +2854,7 @@ class App(QMainWindow):
         scene.setSceneRect(bounds); self.lan_map_view.fit_map()
         active_count=sum(1 for r in current.values() if r.get("active"))
         online_count=sum(1 for r in current.values() if r.get("state") in ("online","new","returned"))
-        lost_total=sum(1 for r in records if r.get("state")=="lost")
+        lost_total=sum(1 for r in self._lan_map_records if r.get("state")=="lost")
         self.lan_map_summary.setText(f"СЕЙЧАС В СЕТИ  {len(current)}     ·     IP SCAN  {active_count}     ·     НОВЫЕ  {new_count}     ·     НЕ ОБНАРУЖЕНЫ  {lost_count}     ·     В ИСТОРИИ  {lost_total}")
 
     def page_terminal(self):

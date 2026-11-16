@@ -1925,7 +1925,7 @@ class App(QMainWindow):
 
     def page_setup_wizard(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        intro=self.panel("Настройка с нуля · пройди шаги по порядку","Мастер не переводит весь интернет в VPN. Основной default route остаётся в таблице main через WAN. Только домены и IP из VPN address-list получают routing-mark и идут через отдельную таблицу WireGuard.")
+        intro=self.panel("Настройка VPN · пройди шаги по порядку","Предусловие: на MikroTik уже должны работать интернет по WAN и локальная сеть LAN. Мастер настраивает WireGuard и выборочную маршрутизацию поверх существующей сети; PPPoE/VLAN/подключение провайдера и создание базового bridge/DHCP на полностью сброшенном роутере пока не выполняются. Весь обычный трафик остаётся в main через WAN, а только цели из VPN address-list идут через WireGuard.")
         steps=QGridLayout(); steps.setHorizontalSpacing(12); steps.setVerticalSpacing(8)
         for col,(number,title,detail) in enumerate([
             ("01","Подключи MikroTik","SSH и проверка доступности роутера"),
@@ -4768,7 +4768,9 @@ class App(QMainWindow):
                     for proto in ("UDP","TCP"):
                         detail=r.exec(f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}')
                         entries=parse_terse(detail)
-                        if len(entries)!=1 or "X" in entries[0]["flags"]: raise RuntimeError(f"DNS firewall post-check ({proto}): правило отсутствует, дублируется или отключено.")
+                        expected={"chain":"input","action":"accept","protocol":proto.lower(),"dst-port":"53","in-interface":f["lan_interface"],"src-address":f["lan_subnet"]}
+                        if len(entries)!=1 or "X" in entries[0]["flags"] or any(entries[0]["f"].get(k)!=v for k,v in expected.items()):
+                            raise RuntimeError(f"DNS firewall post-check ({proto}): правило отсутствует, дублируется, отключено или имеет неверные ограничения.")
                     if "allow-remote-requests: yes" not in r.exec("/ip dns print"): raise RuntimeError("DNS remote requests post-check не пройден.")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):

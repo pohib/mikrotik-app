@@ -4634,7 +4634,10 @@ class App(QMainWindow):
         answer=QtMessageBox.question(self,"Применить изменения Firewall",f"Отправить на MikroTik {len(self.fw_queue)} команд(ы)? Это изменит активные правила.",QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No,QtMessageBox.StandardButton.No)
         if answer!=QtMessageBox.StandardButton.Yes: return
         # Индексы RouterOS меняются после удаления: сначала add/set, затем remove по убыванию номера.
-        pending=sorted(list(self.fw_queue),key=lambda item:(1 if " remove " in item["command"] else 0,-int(re.search(r"\\sremove\\s+(\\d+)",item["command"]).group(1)) if " remove " in item["command"] and re.search(r"\\sremove\\s+(\\d+)",item["command"]) else 0))
+        def queue_order(item):
+            match=re.search(r"\bremove\s+(\d+)",item["command"])
+            return (1,-int(match.group(1))) if match else (0,0)
+        pending=sorted(list(self.fw_queue),key=queue_order)
         def job():
             router=self.router_conn()
             for item in pending:

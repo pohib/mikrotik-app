@@ -3458,6 +3458,8 @@ class App(QMainWindow):
             "Wizard LAN addresses": f'/ip address print detail where interface={ros_q(f["lan_interface"])}',
             "Wizard DNS UDP rule": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-UDP")}',
             "Wizard DNS TCP rule": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-TCP")}',
+            "Wizard WAN DNS UDP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-UDP")}',
+            "Wizard WAN DNS TCP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-TCP")}',
             "Wizard NAT rule": f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}',
             "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
             "Wizard routing rules": '/routing rule print terse',
@@ -3713,6 +3715,14 @@ class App(QMainWindow):
             lan_addresses=raw["Wizard LAN addresses"]
             if f["lan_dns"] not in lan_addresses:
                 add("bad","Мастер настройки · LAN IP",f"Адрес DNS-шлюза {f['lan_dns']} не найден на интерфейсе {f['lan_interface']}",lan_addresses,"Сверь LAN interface и LAN DNS IP в мастере. Не добавляй IP автоматически, если он уже используется другим устройством.")
+        for key,proto in (("Wizard WAN DNS UDP drop","UDP"),("Wizard WAN DNS TCP drop","TCP")):
+            if not failed(key):
+                entries=parse_terse(raw[key])
+                expected={"chain":"input","action":"drop","protocol":proto.lower(),"dst-port":"53","in-interface":f["wan_interface"]}
+                if len(entries)!=1 or "X" in entries[0]["flags"] or any(entries[0]["f"].get(k)!=v for k,v in expected.items()):
+                    add("bad","Мастер настройки · DNS Firewall",f"WAN DNS drop {proto} отсутствует, отключён или имеет неверный интерфейс",raw[key],"Оставь DNS resolver доступным только из LAN. Проверь action=drop, in-interface WAN и порт 53.")
+                else:
+                    add("ok","Мастер настройки · DNS Firewall",f"WAN DNS {proto} блокируется на входе",raw[key],"DNS-запросы из LAN разрешаются отдельным правилом; запросы с WAN блокируются.")
         if not failed("Managed Mangle") and nonempty("Managed Mangle"):
             entries=parse_terse(raw["Managed Mangle"])
             if len(entries)==1:
@@ -4584,6 +4594,8 @@ class App(QMainWindow):
     def ensure_vpn_failover_routes(self,r,f):
         """Install recursive WG health checks and WAN backup routes without touching foreign routes."""
         table=f["route_table"]; wg=f["wg_interface"]
+        if r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()!="1":
+            raise RuntimeError(f"Routing table {table} отсутствует. Сначала выполни шаг создания policy routing.")
         probe_comments=("VPN-MANAGER-WG-PROBE-1","VPN-MANAGER-WG-PROBE-2")
         primary_comments=("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2")
         backup_comments=("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2")
@@ -5164,6 +5176,11 @@ class App(QMainWindow):
                         expected={"chain":"input","action":"accept","protocol":proto.lower(),"dst-port":"53","in-interface":f["lan_interface"],"src-address":f["lan_subnet"]}
                         if len(entries)!=1 or "X" in entries[0]["flags"] or any(entries[0]["f"].get(k)!=v for k,v in expected.items()):
                             raise RuntimeError(f"DNS firewall post-check ({proto}): правило отсутствует, дублируется, отключено или имеет неверные ограничения.")
+                        drop_detail=r.exec(f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-"+proto)}')
+                        drop_entries=parse_terse(drop_detail)
+                        expected_drop={"chain":"input","action":"drop","protocol":proto.lower(),"dst-port":"53","in-interface":f["wan_interface"]}
+                        if len(drop_entries)!=1 or "X" in drop_entries[0]["flags"] or any(drop_entries[0]["f"].get(k)!=v for k,v in expected_drop.items()):
+                            raise RuntimeError(f"WAN DNS firewall post-check ({proto}): WAN DNS drop отсутствует, отключён или имеет неверные ограничения.")
                     if "allow-remote-requests: yes" not in r.exec("/ip dns print"): raise RuntimeError("DNS remote requests post-check не пройден.")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):

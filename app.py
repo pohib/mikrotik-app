@@ -2536,7 +2536,7 @@ class App(QMainWindow):
         else:
             track="rgba(255,255,255,12)"; border="rgba(255,255,255,24)"; thumb1="#60a5fa"; thumb2="#1d4ed8"; hover1="#93c5fd"; hover2="#3b82f6"
         scrollbars=f"""
-        QScrollBar:vertical{{background:{track};width:18px;margin:3px;border:1px solid {border};border-radius:12px}}
+        QScrollBar:vertical{{background:{track};width:18px;margin:3px;border:1px solid {border};border-radius:9px}}
         QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;margin:1px;border:0;border-radius:9px}}
         QScrollBar::handle:vertical:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
         QScrollBar:horizontal{{background:{track};height:18px;margin:3px;border:1px solid {border};border-radius:9px}}

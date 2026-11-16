@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 chcp 65001 >nul
 
-echo Starting MikroTik VPN Manager v1.9.0...
+echo Starting MikroTik VPN Manager v1.10.0...
 echo Log: startup.log
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1"
 set "RC=%ERRORLEVEL%"

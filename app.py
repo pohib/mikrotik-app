@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar, QGraphicsView, QGraphicsScene, QGraphicsItem
+    QFormLayout, QCheckBox, QGroupBox, QSpacerItem, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar, QGraphicsView, QGraphicsScene, QGraphicsItem
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -794,22 +794,34 @@ def add_dialog_chrome(dialog, layout, title):
     """)
     header=DialogTitleBar(dialog,title)
     if isinstance(layout,QGridLayout):
+        # Snapshot live widgets/layouts before changing the grid. QLayoutItem wrappers
+        # returned by itemAt() are invalidated when their items are removed/reinserted.
         old_items=[]
         grid_columns=1
         for index in range(layout.count()):
             item=layout.itemAt(index)
             row,column,row_span,column_span=layout.getItemPosition(index)
-            old_items.append((item,row,column,row_span,column_span))
+            widget=item.widget()
+            child_layout=item.layout()
+            spacer=item.spacerItem()
+            if spacer is not None:
+                policy=spacer.sizePolicy()
+                spacer_data=(spacer.sizeHint(),policy.horizontalPolicy(),policy.verticalPolicy())
+            else:
+                spacer_data=None
+            old_items.append((widget,child_layout,spacer_data,row,column,row_span,column_span))
             grid_columns=max(grid_columns,column+column_span)
         while layout.count():
             layout.takeAt(0)
         layout.addWidget(header,0,0,1,grid_columns)
-        for item,row,column,row_span,column_span in old_items:
-            widget=item.widget()
+        for widget,child_layout,spacer_data,row,column,row_span,column_span in old_items:
             if widget is not None:
                 layout.addWidget(widget,row+1,column,row_span,column_span)
-            else:
-                layout.addItem(item,row+1,column,row_span,column_span)
+            elif child_layout is not None:
+                layout.addLayout(child_layout,row+1,column,row_span,column_span)
+            elif spacer_data is not None:
+                size,horizontal_policy,vertical_policy=spacer_data
+                layout.addItem(QSpacerItem(size.width(),size.height(),horizontal_policy,vertical_policy),row+1,column,row_span,column_span)
     else:
         layout.insertWidget(0,header)
     # Ручка изменения размера сохраняет кастомное оформление без системной рамки.
@@ -1515,8 +1527,16 @@ class App(QMainWindow):
         self.nav.setWordWrap(False)
         for label in ["01     Мастер настройки VPN", "02     Обзор", "03     VPN-маршрутизация", "04     Диагностика", "05     Firewall и DNS", "06     DNS / DoH", "07     Резервные копии", "08     Настройки", "09     Терминал", "10     Журнал", "11     Карта локальной сети"]:
             QListWidgetItem(label, self.nav)
+        # Settings lives in a dedicated bottom-pinned control, while its hidden
+        # list item preserves the existing page-index and shortcut mapping.
+        self.nav.item(7).setHidden(True)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
+        self.settings_nav_button=QPushButton("⚙     Настройки")
+        self.settings_nav_button.setObjectName("SettingsNavButton")
+        self.settings_nav_button.setCheckable(True)
+        self.settings_nav_button.clicked.connect(lambda:self.nav.setCurrentRow(7))
+        sl.addWidget(self.settings_nav_button,0)
         foot = self.foot = QLabel("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace"); foot.setObjectName("SidebarFoot"); foot.setWordWrap(True); sl.addWidget(foot)
         main.addWidget(sidebar)
         content = QWidget(); cv = QVBoxLayout(content); cv.setContentsMargins(24,20,24,18); cv.setSpacing(14); main.addWidget(content,1)
@@ -3397,6 +3417,8 @@ class App(QMainWindow):
     def pages_changed(self,index):
         titles=[("Мастер настройки VPN","Первичная настройка MikroTik: LAN, WireGuard, policy routing и контроль результата"),("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","Сетевой профиль и DNS-over-HTTPS"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения"),("Карта локальной сети","Устройства LAN: DHCP, ARP, MAC, hostname и история обнаружения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
+        if hasattr(self,"settings_nav_button"):
+            self.settings_nav_button.setChecked(index==7)
 
     def log(self,msg):
         line=f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -6337,6 +6359,9 @@ QListWidget#Nav{background:transparent;border:0;outline:0;color:#8aa0c0;padding-
 QListWidget#Nav::item{padding:12px 8px;border-radius:11px;margin:3px 0;font-size:9.5pt;font-weight:600;border:1px solid transparent;}
 QListWidget#Nav::item:hover:!selected{background:rgba(255,255,255,14);color:#e4edfb;border:1px solid rgba(255,255,255,18)}
 QListWidget#Nav::item:selected{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(70,120,235,150),stop:1 rgba(50,90,190,70));color:#ffffff;border:1px solid rgba(130,175,255,140)}
+QPushButton#SettingsNavButton{background:rgba(255,255,255,7);border:1px solid rgba(255,255,255,20);border-radius:11px;color:#8aa0c0;text-align:left;padding:12px 10px;font-size:9.5pt;font-weight:700}
+QPushButton#SettingsNavButton:hover{background:rgba(255,255,255,14);color:#e4edfb;border-color:rgba(255,255,255,28)}
+QPushButton#SettingsNavButton:checked{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(70,120,235,150),stop:1 rgba(50,90,190,70));color:#ffffff;border:1px solid rgba(130,175,255,140)}
 
 /* ---------- typography ---------- */
 QLabel#PageTitle{font-size:21pt;font-weight:700;color:#ffffff}

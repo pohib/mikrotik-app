@@ -2151,6 +2151,7 @@ class App(QMainWindow):
             cfg=self.initial_setup_values()
         except Exception as exc:
             QMessageBox.warning(self,"Проверь параметры первичной настройки",str(exc)); return
+        cfg["backup_name"]="vpn-manager-before-network-setup-"+time.strftime("%Y%m%d-%H%M%S")
         self.settings.update({"wan_base":cfg["wan_base"],"wan_mode":cfg["mode"],"wan_vlan_id":cfg["vlan_id"],
                               "wan_pppoe_name":cfg["pppoe_name"],"wan_static_address":cfg["static_address"],"wan_static_gateway":cfg["static_gateway"],"wan_static_dns":cfg["static_dns"],"wan_interface":cfg["wan_interface"],
                               "lan_bridge":cfg["bridge"],"lan_interface":cfg["bridge"],"lan_ports":",".join(cfg["ports"]),
@@ -4745,7 +4746,7 @@ class App(QMainWindow):
         k=a["kind"]; f=dict(self.settings); f.update(self.fields() if hasattr(self,"inputs") else {}); commands=[]; checks=[]
         if k=="initial_network_setup":
             c=a["config"]; wan_if=c["wan_interface"]; base=c["wan_base"]; bridge=c["bridge"]
-            commands=["/system backup save name=vpn-manager-before-network-setup",
+            commands=[f'/system backup save name={ros_q(c["backup_name"])}',
                       f'/interface print detail where name={ros_q(base)}',
                       f'/interface bridge print detail where name={ros_q(bridge)}',
                       f'/ip address print detail where interface={ros_q(bridge)}',
@@ -5101,7 +5102,7 @@ class App(QMainWindow):
                     if nat_rows and (len(nat_rows)!=1 or "X" in nat_rows[0]["flags"] or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade" or nat_rows[0]["f"].get("src-address")!=c["lan_subnet"]):
                         raise RuntimeError("Managed WAN NAT comment is already used by a different/disabled rule.")
                     # Create a router backup before making any changes.
-                    backup_name="vpn-manager-before-network-setup-"+time.strftime("%Y%m%d-%H%M%S")
+                    backup_name=c["backup_name"]
                     self.cmd(r,f'/system backup save name={ros_q(backup_name)}')
                     if c["vlan_name"] and not vlan_rows:
                         self.cmd(r,f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}')

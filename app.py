@@ -6412,7 +6412,11 @@ QListWidget#Nav::item{padding:12px 12px}
 
 
 if __name__=="__main__":
-    app=QApplication(sys.argv); app.setApplicationName(APP_NAME)
+    app=QApplication(sys.argv)
+    # Use Qt Fusion as the base style so custom QSS subcontrols (including rounded scrollbars)
+    # are painted consistently instead of falling back to the native Windows scrollbar renderer.
+    app.setStyle("Fusion")
+    app.setApplicationName(APP_NAME)
     _ui_icons = make_ui_icons()
     _arrow = make_arrow_icon()
     STYLE = STYLE.replace("image:url(ARROW_URL);", f'image:url("{_arrow}");' if _arrow else "image:none;")

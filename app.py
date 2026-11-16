@@ -3495,6 +3495,7 @@ class App(QMainWindow):
             "Wizard WAN DNS UDP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-UDP")}',
             "Wizard WAN DNS TCP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-TCP")}',
             "Wizard NAT rule": f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}',
+            "Wizard WAN NAT rule": f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}',
             "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
             "Wizard routing rules": '/routing rule print terse',
             "Wizard managed route": f'/ip route print detail where comment={ros_q("VPN-MANAGER-DEFAULT")}',
@@ -3720,6 +3721,13 @@ class App(QMainWindow):
             add("bad","Мастер настройки · routing table",f"Таблица {f['route_table']} отсутствует",raw["Wizard routing table"],"Повтори проверку и подготовь создание инфраструктуры в первом разделе мастера.")
         if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower() or f"gateway={f['wg_interface']}" in raw["Wizard main route"] or f["wan_interface"].lower() not in raw["Wizard main route"].lower()):
             add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
+        if not failed("Wizard WAN NAT rule"):
+            wan_nat_entries=parse_terse(raw["Wizard WAN NAT rule"])
+            expected_wan_nat={"chain":"srcnat","action":"masquerade","src-address":f["lan_subnet"],"out-interface":f["wan_interface"]}
+            if len(wan_nat_entries)!=1 or "X" in wan_nat_entries[0]["flags"] or any(wan_nat_entries[0]["f"].get(k)!=v for k,v in expected_wan_nat.items()):
+                add("bad","Мастер настройки · WAN NAT","NAT для прямого WAN fallback отсутствует, отключён или отличается от LAN/WAN профиля",raw["Wizard WAN NAT rule"],"Проверь masquerade: src-address LAN subnet и out-interface WAN. Без этого выбранные цели при отказе WG не смогут нормально выйти напрямую.")
+            else:
+                add("ok","Мастер настройки · WAN NAT","NAT для прямого WAN fallback активен",raw["Wizard WAN NAT rule"],"LAN-трафик, переключённый с WireGuard на WAN, будет маскироваться на WAN-интерфейсе.")
         if not failed("Wizard fallback routes"):
             fallback_entries=parse_terse(raw["Wizard fallback routes"])
             if not any("A" in x["flags"] for x in fallback_entries):
@@ -5116,7 +5124,7 @@ class App(QMainWindow):
                     if not network_rows: self.cmd(r,f'/ip dhcp-server network add address={ros_q(c["lan_subnet"])} gateway={ros_q(c["lan_ip"])} dns-server={ros_q(c["lan_ip"])}')
                     if not dhcp_rows: self.cmd(r,f'/ip dhcp-server add name="vpn-manager-lan" interface={ros_q(bridge)} address-pool={ros_q(c["pool_name"])} lease-time=12h disabled=no')
                     if not nat_rows:
-                        existing_nat=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and out-interface={ros_q(wan_if)}'))
+                        existing_nat=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(c["lan_subnet"])} and out-interface={ros_q(wan_if)}'))
                         if not existing_nat: self.cmd(r,f'/ip firewall nat add chain=srcnat action=masquerade src-address={ros_q(c["lan_subnet"])} out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"')
                     # Verify that the provider link is live and the default route is in main (never in vpn).
                     if c["mode"]=="DHCP":

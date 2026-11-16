@@ -107,3 +107,53 @@ def test_lan_map_nodes_are_selectable_and_show_details(qt_app):
     finally:
         window._allow_close = True
         window.close()
+
+
+
+def test_default_topology_canvas_uses_dark_background(qt_app):
+    window = manager.App()
+    try:
+        window.settings["ui_theme"] = "default"
+        window.render_lan_map([], {}, 0, 0)
+        assert window.lan_map_scene.backgroundBrush().color().name() == "#0b1220"
+        assert window.lan_map_view.backgroundBrush().color().name() == "#0b1220"
+    finally:
+        window._allow_close = True
+        window.close()
+
+
+def test_detached_topology_window_shares_scene_and_selection(qt_app):
+    window = manager.App()
+    try:
+        record = {
+            "mac": "AA:BB:CC:DD:EE:10", "ip": "192.0.2.30", "hostname": "detached-test",
+            "interface": "bridge-LAN", "vendor": "Test vendor", "sources": ["IP Scan"],
+            "state": "online", "kind": "endpoint",
+        }
+        window.render_lan_map([record], {record["mac"]: record}, 0, 0)
+        window.open_lan_map_window()
+        assert window._lan_map_detached_view.scene() is window.lan_map_scene
+        node = next(
+            item for item in window.lan_map_scene.items()
+            if isinstance(item.data(0), dict) and item.data(0).get("ip") == "192.0.2.30"
+        )
+        node.setSelected(True)
+        assert "192.0.2.30" in window._lan_map_detached_details.text()
+        window._lan_map_window.close()
+        assert window._lan_map_window is None
+    finally:
+        if window._lan_map_window is not None:
+            window._lan_map_window.close()
+        window._allow_close = True
+        window.close()
+
+
+def test_custom_title_buttons_have_compact_dimensions(qt_app):
+    window = manager.App()
+    try:
+        buttons = window.title_bar.findChildren(QPushButton)
+        assert len(buttons) == 3
+        assert all(button.width() == 32 and button.height() == 24 for button in buttons)
+    finally:
+        window._allow_close = True
+        window.close()

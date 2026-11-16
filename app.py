@@ -1346,6 +1346,7 @@ class App(QMainWindow):
         self.pages=[]
         self.pages.append(self.page_setup_wizard()); self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
+        self.pages_changed(0)
         footer=QHBoxLayout()
         self.progress=QProgressBar(); self.progress.setObjectName("BusyProgress"); self.progress.setRange(0,0); self.progress.setFixedWidth(110); self.progress.setTextVisible(False); self.progress.hide(); footer.addWidget(self.progress)
         self.status=QLabel("Готово · Изменения отправляются на роутер только после подтверждения")

@@ -4674,7 +4674,7 @@ class App(QMainWindow):
                     "NAT masquerade действует на WAN; обычный трафик выходит напрямую через провайдера",
                     "Подключить клиент к LAN, получить DHCP lease и открыть сайт по IP и доменному имени"]
         elif k=="setup_vpn_routing":
-            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(f["wg_interface"])} routing-table={ros_q(f["route_table"])} comment="VPN-MANAGER-DEFAULT"  # если отсутствует',mangle_cmd(f),nat_cmd(f)]
+            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',*vpn_failover_route_cmds(f),wan_nat_cmd(f),mangle_cmd(f),nat_cmd(f)]
             description="Настроить DNS для LAN с ограниченными input-правилами, при наличии DHCP обновить DNS в DHCP network, затем создать только отсутствующие routing table, default route, Mangle и NAT. WireGuard-профиль применяется отдельно после импорта .conf."
             checks=["Таблица VPN существует","Default route активен через WireGuard","Mangle направляет выбранные цели в VPN-таблицу","NAT masquerade работает через WireGuard","Проверить ping и доступ с LAN-клиента"]
         elif k=="apply_targets":
@@ -5041,8 +5041,12 @@ class App(QMainWindow):
                     table_pre=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
                     if table_pre not in ("0","1"): raise RuntimeError(f"Найдено таблиц {table_pre}; ожидается не более одной.")
                     route_count_pre=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}').strip()
-                    route_pre=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
-                    if route_count_pre not in ("0","1") or (route_count_pre=="1" and (f'gateway={wg}' not in route_pre or "inactive" in route_pre.lower())): raise RuntimeError("В VPN-таблице несколько или конфликтующий/неактивный default route. Ничего не изменено.")
+                    route_pre=r.exec(f'/ip route print terse where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
+                    route_rows_pre=parse_terse(route_pre)
+                    legacy_route=(route_count_pre=="1" and route_rows_pre and route_rows_pre[0]["f"].get("comment")=="VPN-MANAGER-DEFAULT" and route_rows_pre[0]["f"].get("gateway")==wg)
+                    managed_comments={"VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2","VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2"}
+                    complete_routes=(route_count_pre=="4" and all(sum(1 for x in route_rows_pre if x["f"].get("comment")==comment)==1 for comment in managed_comments))
+                    if route_count_pre not in ("0","1","4") or (route_count_pre=="1" and not legacy_route) or (route_count_pre=="4" and not complete_routes): raise RuntimeError("В VPN-таблице найдены конфликтующие или неполные default routes. Ничего не изменено.")
                     dhcp_pre=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     network_pre=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip() if dhcp_pre not in ("0","") else "0"
                     if network_pre not in ("0","1"): raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей. Ничего не изменено.")
@@ -5086,12 +5090,12 @@ class App(QMainWindow):
                     tc=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
                     if tc=="0": self.cmd(r,f'/routing table add name={ros_q(table)} fib')
                     elif tc!="1": raise RuntimeError(f"Найдено таблиц {tc}; ожидается одна.")
-                    routes=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
-                    if not routes.strip(): self.cmd(r,f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(wg)} routing-table={ros_q(table)} comment="VPN-MANAGER-DEFAULT"')
-                    elif f'gateway={wg}' not in routes or "inactive" in routes.lower(): raise RuntimeError("В таблице уже есть конфликтующий или неактивный default route. Он не изменён.")
+                    self.ensure_vpn_failover_routes(r,f)
                     self.prepare_router(r)
-                    verified=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
-                    if f'gateway={wg}' not in verified or "inactive" in verified.lower(): raise RuntimeError("Default route не подтвердился как активный.")
+                    verified=parse_terse(r.exec(f'/ip route print terse where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}'))
+                    primary_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2") for x in verified)
+                    backup_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2") for x in verified)
+                    if not (primary_active or backup_active): raise RuntimeError("Ни один VPN primary route и ни один WAN fallback route не активен.")
                     mangle_detail=r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}')
                     mangle_entries=parse_terse(mangle_detail)
                     if len(mangle_entries)!=1 or "X" in mangle_entries[0]["flags"]: raise RuntimeError("Mangle post-check: управляемое правило отсутствует, дублируется или отключено.")

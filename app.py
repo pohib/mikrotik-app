@@ -5124,7 +5124,6 @@ class App(QMainWindow):
                     if len(matching_nat_pre)>1 or any("X" in x["flags"] for x in matching_nat_pre):
                         raise RuntimeError("Для LAN → WireGuard найдено несколько NAT masquerade правил или отключённое совпадение. Ничего не изменено.")
                     dns_state=r.exec("/ip dns print")
-                    if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     for proto in ("udp","tcp"):
                         comment=f"VPN-MANAGER-LAN-DNS-{proto.upper()}"
                         count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(comment)}').strip()
@@ -5134,6 +5133,7 @@ class App(QMainWindow):
                         drop_count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(drop_comment)}').strip()
                         if drop_count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=drop protocol={proto} dst-port=53 in-interface={ros_q(f["wan_interface"])} comment={ros_q(drop_comment)} place-before=0')
                         elif drop_count!="1": raise RuntimeError(f"Найдено дублирующихся WAN DNS drop rules: {drop_comment}")
+                    if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):
                         network_count=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip()

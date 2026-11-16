@@ -80,6 +80,30 @@ def test_scrollbars_follow_selected_application_theme(qt_app):
         window.close()
 
 
+def test_terminal_output_colors_do_not_leak_into_next_command(qt_app):
+    window = manager.App()
+    try:
+        window.terminal_output.clear()
+        window.append_terminal_text("[12:00:00] $ /system resource print", "#c9d7e8")
+        window.append_terminal_text("uptime: 1d", "#4ade80")
+
+        success_cursor = window.terminal_output.document().find("uptime: 1d")
+        assert success_cursor.charFormat().foreground().color().name() == "#4ade80"
+        assert window.terminal_output.textCursor().charFormat().foreground().color().name() == "#c9d7e8"
+
+        window.append_terminal_text("[12:00:01] $ /wrong-command", "#c9d7e8")
+        command_cursor = window.terminal_output.document().find("/wrong-command")
+        assert command_cursor.charFormat().foreground().color().name() == "#c9d7e8"
+
+        window.append_terminal_text("ОШИБКА: expected end of command", "#fb7185")
+        error_cursor = window.terminal_output.document().find("ОШИБКА:")
+        assert error_cursor.charFormat().foreground().color().name() == "#fb7185"
+        assert window.terminal_output.textCursor().charFormat().foreground().color().name() == "#c9d7e8"
+    finally:
+        window._allow_close = True
+        window.close()
+
+
 def test_application_theme_and_general_settings_smoke(qt_app):
     window = manager.App()
     try:

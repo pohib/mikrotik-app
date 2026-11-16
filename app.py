@@ -1326,7 +1326,7 @@ class App(QMainWindow):
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.nav.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.nav.setWordWrap(False)
-        for label in ["01     Обзор", "02     VPN-маршрутизация", "03     Диагностика", "04     Firewall и DNS", "05     DNS / DoH", "06     Резервные копии", "07     Настройки", "08     Терминал", "09     Журнал"]:
+        for label in ["01     Мастер настройки VPN", "02     Обзор", "03     VPN-маршрутизация", "04     Диагностика", "05     Firewall и DNS", "06     DNS / DoH", "07     Резервные копии", "08     Настройки", "09     Терминал", "10     Журнал"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
@@ -1339,12 +1339,12 @@ class App(QMainWindow):
         self.header_apply_btn=QPushButton("Применить изменения · 0"); self.header_apply_btn.setObjectName("PrimaryButton"); self.header_apply_btn.setEnabled(False); self.header_apply_btn.clicked.connect(self.apply_pending_changes); self.header_apply_btn.setToolTip("Просмотреть команды и применить выбранные подготовленные изменения на MikroTik."); header.addWidget(self.header_apply_btn)
         self.header_cancel_pending_btn=QPushButton("Отменить все"); self.header_cancel_pending_btn.setObjectName("DangerButton"); self.header_cancel_pending_btn.setEnabled(False); self.header_cancel_pending_btn.clicked.connect(self.cancel_all_pending); self.header_cancel_pending_btn.setToolTip("Очистить очередь ещё не применённых изменений."); header.addWidget(self.header_cancel_pending_btn)
         self.auth_btn=QPushButton("Подключиться"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.clicked.connect(self.show_ssh_login); header.addWidget(self.auth_btn)
-        self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(8)); header.addWidget(self.log_btn)
+        self.log_btn=QPushButton("Журнал"); self.log_btn.setObjectName("QuietButton"); self.log_btn.clicked.connect(lambda: self.nav.setCurrentRow(9)); header.addWidget(self.log_btn)
         cv.addLayout(header)
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
         self.pages=[]
-        self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
+        self.pages.append(self.page_setup_wizard()); self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         footer=QHBoxLayout()
         self.progress=QProgressBar(); self.progress.setObjectName("BusyProgress"); self.progress.setRange(0,0); self.progress.setFixedWidth(110); self.progress.setTextVisible(False); self.progress.hide(); footer.addWidget(self.progress)
@@ -1355,9 +1355,9 @@ class App(QMainWindow):
         self.status.setToolTip("Здесь отображаются текущая операция и результат последнего действия.")
         self.auth_btn.setToolTip("Открыть окно SSH-подключения или отключиться от роутера.")
         self.log_btn.setToolTip("Открыть журнал команд, ошибок и действий приложения.")
-        for i in range(9):
+        for i in range(10):
             action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
-        log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(8)); self.addAction(log_action)
+        log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(9)); self.addAction(log_action)
         fit_controls(self)
         for fr in self.findChildren(QFrame):
             n = fr.objectName()
@@ -1920,7 +1920,7 @@ class App(QMainWindow):
         b=QPushButton("Создать и скачать backup + export"); b.setObjectName("PrimaryButton"); b.clicked.connect(self.backup_router); p.layout().addWidget(b)
         self.backup_info=QLabel("Перед созданием копии проверь свободное место на компьютере и роутере."); self.backup_info.setObjectName("Muted"); p.layout().addWidget(self.backup_info); p.layout().addStretch(); l.addWidget(p,1); return w
 
-    def page_settings(self):
+    def page_setup_wizard(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Сетевые параметры","Здесь находятся параметры LAN, policy routing и WireGuard. SSH-авторизация вынесена в отдельное окно входа.")
         wizard=self.panel("Мастер настройки VPN с нуля","Порядок настройки: 1. Подключись к MikroTik по SSH. 2. Нажми «Найти LAN автоматически» или укажи LAN-параметры вручную. 3. Ниже импортируй .conf от VPN-провайдера и нажми «Применить новый VPN-профиль» — если интерфейса ещё нет, он будет создан. 4. Вернись сюда, проверь роутер и подготовь policy routing. 5. После применения добавляй домены и IP в разделе «VPN-маршрутизация».")
@@ -2116,6 +2116,28 @@ class App(QMainWindow):
         self.queue_change("setup_vpn_routing","Создать недостающую инфраструктуру VPN-маршрутизации")
         self.vpn_setup_stage.setEnabled(False)
         self.vpn_setup_status.setText("Добавлено в очередь · открой предпросмотр изменений")
+
+    def page_settings(self):
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
+        p=self.panel("Параметры сетевого профиля","Эти значения используются мастером настройки и VPN-маршрутизацией. Меняй их только если понимаешь, к каким интерфейсам и таблицам они относятся.")
+        form=QFormLayout(); self.inputs={}
+        fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
+        for label,key in fields:
+            e=QLineEdit(self.settings[key]); self.inputs[key]=e; form.addRow(label,e)
+        p.layout().addLayout(form)
+        save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); p.layout().addWidget(save)
+        note=QLabel("Первичную настройку выполняй в первом разделе «Мастер настройки VPN». Там находятся обнаружение LAN, профиль провайдера WireGuard, подготовка правил, применение и контрольная проверка. SSH-авторизация открывается кнопкой «Подключиться» в верхней панели.")
+        note.setObjectName("InfoNote"); note.setWordWrap(True); p.layout().addWidget(note)
+        doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP.")
+        self.doh_enabled=QCheckBox("Использовать DoH"); self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
+        self.doh_preset=QComboBox(); self.doh_preset.addItems(list(DOH_PRESETS.keys())+["Свой endpoint · вручную"])
+        self.doh_url=QLineEdit(self.settings.get("doh_url","https://dns.google/dns-query")); self.doh_bootstrap=QLineEdit(self.settings.get("doh_bootstrap","8.8.8.8, 8.8.4.4"))
+        selected=next((name for name,(url,_) in DOH_PRESETS.items() if url==self.doh_url.text().strip()),"Свой endpoint · вручную")
+        self.doh_preset.setCurrentText(selected); self.doh_preset.currentTextChanged.connect(self.select_doh_preset)
+        self.doh_verify_cert=QCheckBox("Проверять TLS-сертификат DoH-сервера"); self.doh_verify_cert.setChecked(self.settings.get("doh_verify_cert","1")=="1")
+        df=QFormLayout(); df.addRow("Готовый пресет",self.doh_preset); df.addRow("DoH endpoint URL",self.doh_url); df.addRow("Bootstrap DNS · IPv4",self.doh_bootstrap); df.addRow("",self.doh_enabled); df.addRow("",self.doh_verify_cert); doh.layout().addLayout(df)
+        actions=QHBoxLayout(); apply_doh=QPushButton("Подготовить применение DoH"); apply_doh.setObjectName("PrimaryButton"); apply_doh.clicked.connect(self.stage_doh_config); check_doh=QPushButton("Проверить DoH на роутере"); check_doh.clicked.connect(self.check_doh_config); actions.addWidget(apply_doh); actions.addWidget(check_doh); doh.layout().addLayout(actions)
+        l.addWidget(p); l.addWidget(doh); l.addStretch(); return w
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -2448,7 +2470,7 @@ class App(QMainWindow):
         self.run_job("RouterOS CLI: "+command,job)
 
     def pages_changed(self,index):
-        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
+        titles=[("Мастер настройки VPN","Первичная настройка MikroTik: LAN, WireGuard, policy routing и контроль результата"),("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","Сетевой профиль и DNS-over-HTTPS"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):

@@ -4855,6 +4855,18 @@ class App(QMainWindow):
             raise RuntimeError("Ни один VPN default route и ни один WAN fallback route не активен. Проверь WireGuard, main WAN route и доступность probe IP 1.1.1.1/8.8.8.8.")
         return {"primary":active_primary,"backup":active_backup}
 
+    def create_router_backup(self,r,prefix="vpn-manager-before-change"):
+        """Create a unique binary backup and readable export before a managed configuration stage."""
+        stamp=datetime.now().strftime("%Y%m%d-%H%M%S")
+        base=f"{prefix}-{stamp}"
+        suffix=1
+        while r.exec(f'/file print count-only where name={ros_q(base+".backup")}').strip() not in ("0",""):
+            suffix+=1; base=f"{prefix}-{stamp}-{suffix}"
+        self.cmd(r,f'/system backup save name={ros_q(base)}',timeout=60)
+        self.cmd(r,f'/export file={ros_q(base)}',timeout=60)
+        self.q.put(("LOG",f"Резервная копия перед изменениями создана на MikroTik: {base}.backup и {base}.rsc"))
+        return base
+
     def prepare_router(self,r):
         f=self.settings; table,wg,lan,sub,alist=f["route_table"],f["wg_interface"],f["lan_interface"],f["lan_subnet"],f["address_list"]
         for name,val in (("routing table",table),("address-list",alist),("interface",wg),("LAN interface",lan)):
@@ -5384,6 +5396,7 @@ class App(QMainWindow):
                     matching_nat_pre=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}'))
                     if len(matching_nat_pre)>1 or any("X" in x["flags"] for x in matching_nat_pre):
                         raise RuntimeError("Для LAN → WireGuard найдено несколько NAT masquerade правил или отключённое совпадение. Ничего не изменено.")
+                    backup_name=self.create_router_backup(r,"vpn-manager-before-vpn-setup")
                     dns_state=r.exec("/ip dns print")
                     for proto in ("udp","tcp"):
                         comment=f"VPN-MANAGER-LAN-DNS-{proto.upper()}"
@@ -5438,6 +5451,7 @@ class App(QMainWindow):
                     self.fetch_mangle_status(r); self.fetch_targets(r)
                     self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall, DHCP и DNS resolver проверены."))
                 elif k=="apply_targets":
+                    self.create_router_backup(r,"vpn-manager-before-targets")
                     self.prepare_router(r)
                     for t,kind in a["targets"]:
                         self.apply_target(r,t,kind)

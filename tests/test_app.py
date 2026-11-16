@@ -117,6 +117,9 @@ def test_default_topology_canvas_uses_dark_background(qt_app):
         window.render_lan_map([], {}, 0, 0)
         assert window.lan_map_scene.backgroundBrush().color().name() == "#0b1220"
         assert window.lan_map_view.backgroundBrush().color().name() == "#0b1220"
+        assert window.lan_map_view.viewport().palette().color(
+            manager.QPalette.ColorRole.Base
+        ).name() == "#0b1220"
     finally:
         window._allow_close = True
         window.close()
@@ -130,9 +133,14 @@ def test_detached_topology_window_shares_scene_and_selection(qt_app):
             "interface": "bridge-LAN", "vendor": "Test vendor", "sources": ["IP Scan"],
             "state": "online", "kind": "endpoint",
         }
+        window.settings["ui_theme"] = "default"
         window.render_lan_map([record], {record["mac"]: record}, 0, 0)
         window.open_lan_map_window()
         assert window._lan_map_detached_view.scene() is window.lan_map_scene
+        assert window._lan_map_detached_view.backgroundBrush().color().name() == "#0b1220"
+        assert window._lan_map_detached_view.viewport().palette().color(
+            manager.QPalette.ColorRole.Base
+        ).name() == "#0b1220"
         node = next(
             item for item in window.lan_map_scene.items()
             if isinstance(item.data(0), dict) and item.data(0).get("ip") == "192.0.2.30"

@@ -3454,6 +3454,7 @@ class App(QMainWindow):
             "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
             "Wizard routing rules": '/routing rule print terse',
             "Wizard managed route": f'/ip route print detail where comment={ros_q("VPN-MANAGER-DEFAULT")}',
+            "Wizard fallback routes": '/ip route print terse where comment~"VPN-MANAGER-WAN-FALLBACK-"',
             "Managed NAT": "/ip firewall nat print terse",
             "DNS redirect NAT": '/ip firewall nat print terse where comment~"DNS-REDIRECT"',
             "Firewall filter": "/ip firewall filter print terse",
@@ -3638,9 +3639,17 @@ class App(QMainWindow):
         elif not nonempty("WireGuard interface"):
             add("bad","WireGuard interface","Интерфейс WireGuard не найден",raw["WireGuard interface"],"Сверь имя интерфейса в настройках приложения с RouterOS.")
         if failed("VPN default route"):
-            add("info","Policy routing","Не удалось прочитать VPN default route",raw["VPN default route"],"Проверь права SSH и имя routing table.")
-        elif not nonempty("VPN default route") or "inactive" in raw["VPN default route"].lower() or f"gateway={f['wg_interface']}" not in raw["VPN default route"]:
-            add("bad","Policy routing","Нет активного default route через ожидаемый WireGuard-интерфейс в VPN-таблице",raw["VPN default route"],"Проверь routing table, gateway=WireGuard и флаг активности маршрута.")
+            add("info","Policy routing","Не удалось прочитать VPN/WAN failover routes",raw["VPN default route"],"Проверь права SSH и имя routing table.")
+        else:
+            route_entries=parse_terse(raw["VPN default route"])
+            primary_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2") for x in route_entries)
+            backup_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2") for x in route_entries)
+            if primary_active:
+                add("ok","Policy routing","Проверочные маршруты WireGuard активны; WAN fallback подготовлен",raw["VPN default route"],"При потере ответа от обоих probe IP primary routes станут inactive, и distance=2 WAN routes примут выбранный трафик.")
+            elif backup_active:
+                add("warn","Policy routing","WireGuard probe не отвечает: активен прямой WAN fallback",raw["VPN default route"],"Выбранные домены/IP сейчас идут напрямую через WAN. Проверь handshake и доступность VPN-сервера.")
+            else:
+                add("bad","Policy routing","Нет активного маршрута ни через WireGuard, ни через WAN fallback",raw["VPN default route"],"Проверь main WAN route, recursive gateways, probe routes и состояние интерфейсов.")
         if failed("VPN interface ping"):
             add("info","Трафик через WireGuard","Проба ping через WG не выполнилась",raw["VPN interface ping"],"Проверь поддержку параметра interface в этой версии RouterOS. Это не доказывает отказ туннеля.")
         elif not nonempty("VPN interface ping") or "received=0" in raw["VPN interface ping"].lower() or "packet-loss=100%" in raw["VPN interface ping"].lower():
@@ -3667,8 +3676,14 @@ class App(QMainWindow):
             add("bad","Мастер настройки · routing table",f"Таблица {f['route_table']} отсутствует",raw["Wizard routing table"],"Повтори проверку и подготовь создание инфраструктуры в первом разделе мастера.")
         if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower() or f"gateway={f['wg_interface']}" in raw["Wizard main route"] or f["wan_interface"].lower() not in raw["Wizard main route"].lower()):
             add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
+        if not failed("Wizard fallback routes"):
+            fallback_entries=parse_terse(raw["Wizard fallback routes"])
+            if not any("A" in x["flags"] for x in fallback_entries):
+                add("bad","Мастер настройки · WAN fallback","Не найден активный резервный маршрут через main/WAN",raw["Wizard fallback routes"],"Проверь gateway=<probe>@main, distance=2 и доступность основного WAN-маршрута.")
+            else:
+                add("ok","Мастер настройки · WAN fallback","Резервный путь через основной WAN активен",raw["Wizard fallback routes"],"При недоступности обоих WG probe routes выбранный трафик должен переключиться на этот маршрут.")
         if not failed("Wizard managed route") and not nonempty("Wizard managed route"):
-            add("warn","Мастер настройки · VPN default route","Управляемый default route VPN не найден",raw["Wizard managed route"],"Проверь таблицу vpn и gateway WireGuard; обычный маршрут main должен оставаться через WAN.")
+            add("warn","Мастер настройки · VPN default route","Управляемый primary default route VPN не найден",raw["Wizard managed route"],"Проверь recursive gateway через probe IP.")
         if not failed("Wizard routing rules"):
             vpn_rules=[x for x in parse_terse(raw["Wizard routing rules"]) if x["f"].get("table")==f["route_table"]]
             if vpn_rules:
@@ -3851,7 +3866,7 @@ class App(QMainWindow):
             "Предупреждения":str(warnings),
             "Успешные проверки":str(passed),
             "WireGuard handshake":handshake.group(1) if handshake else "не подтверждён",
-            "VPN default route":"найден" if nonempty("VPN default route") and "inactive" not in raw["VPN default route"].lower() and f"gateway={f['wg_interface']}" in raw["VPN default route"] else "не подтверждён",
+            "VPN default route":"WG primary" if any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2") for x in parse_terse(raw["VPN default route"])) else ("WAN fallback" if any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2") for x in parse_terse(raw["VPN default route"])) else "не подтверждён"),
             "DoH":"включён" if doh_ok else "не подтверждён",
             "DNS redirect UDP/TCP":"UDP + TCP" if redirect_udp and redirect_tcp else ("UDP" if redirect_udp else ("TCP" if redirect_tcp else "не обнаружен")),
             "DoT/DoQ block":"TCP/853 + UDP/853" if dot_ok and doq_ok else ("TCP/853" if dot_ok else ("UDP/853" if doq_ok else "не обнаружена")),

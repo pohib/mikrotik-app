@@ -4553,6 +4553,43 @@ class App(QMainWindow):
         fit_controls(dlg,42)
         if dlg.exec()==QDialog.DialogCode.Accepted: self.apply_all()
 
+    def ensure_vpn_failover_routes(self,r,f):
+        """Install recursive WG health checks and WAN backup routes without touching foreign routes."""
+        table=f["route_table"]; wg=f["wg_interface"]
+        probe_comments=("VPN-MANAGER-WG-PROBE-1","VPN-MANAGER-WG-PROBE-2")
+        primary_comments=("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2")
+        backup_comments=("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2")
+        required=probe_comments+primary_comments+backup_comments
+        rows=parse_terse(r.exec(f'/ip route print terse where routing-table={ros_q(table)}'))
+        defaults=[x for x in rows if x["f"].get("dst-address")=="0.0.0.0/0"]
+        by_comment={name:[x for x in rows if x["f"].get("comment")==name] for name in required}
+        legacy=(len(defaults)==1 and defaults[0]["f"].get("comment")=="VPN-MANAGER-DEFAULT"
+                and defaults[0]["f"].get("gateway")==wg and not any(by_comment[name] for name in required if name!="VPN-MANAGER-DEFAULT"))
+        complete=(len(defaults)==4 and all(len(by_comment[name])==1 for name in required))
+        if not any(by_comment[name] for name in required):
+            if defaults:
+                raise RuntimeError("В VPN-таблице уже есть сторонние default routes. Мастер не перезаписывает их.")
+            for command in vpn_failover_route_cmds(f):
+                self.cmd(r,command)
+        elif legacy:
+            commands=vpn_failover_route_cmds(f)
+            self.cmd(r,commands[0]); self.cmd(r,commands[1])
+            self.cmd(r,f'/ip route set [find where comment="VPN-MANAGER-DEFAULT"] gateway=1.1.1.1@{table} check-gateway=ping distance=1 target-scope=11')
+            for command in commands[3:]:
+                self.cmd(r,command)
+        elif not complete:
+            raise RuntimeError("Найдена неполная или конфликтующая конфигурация VPN failover routes. Автоматическое исправление остановлено; проверь комментарии VPN-MANAGER-WG-PROBE/DEFAULT/WAN-FALLBACK.")
+        # Verify exact route objects and ensure at least one path (WG or WAN backup) is active.
+        verified=parse_terse(r.exec(f'/ip route print terse where routing-table={ros_q(table)}'))
+        verified_by_comment={name:[x for x in verified if x["f"].get("comment")==name] for name in required}
+        if any(len(verified_by_comment[name])!=1 for name in required):
+            raise RuntimeError("VPN failover post-check: не все шесть probe/default routes присутствуют ровно по одному разу.")
+        active_primary=any("A" in verified_by_comment[name][0]["flags"] for name in primary_comments)
+        active_backup=any("A" in verified_by_comment[name][0]["flags"] for name in backup_comments)
+        if not (active_primary or active_backup):
+            raise RuntimeError("Ни один VPN default route и ни один WAN fallback route не активен. Проверь WireGuard, main WAN route и доступность probe IP 1.1.1.1/8.8.8.8.")
+        return {"primary":active_primary,"backup":active_backup}
+
     def prepare_router(self,r):
         f=self.settings; table,wg,lan,sub,alist=f["route_table"],f["wg_interface"],f["lan_interface"],f["lan_subnet"],f["address_list"]
         for name,val in (("routing table",table),("address-list",alist),("interface",wg),("LAN interface",lan)):
@@ -4570,8 +4607,12 @@ class App(QMainWindow):
                 raise RuntimeError(f"DHCP network для {sub} не подтверждает dns-server={f['lan_dns']}. Проверь DHCP-настройки LAN.")
         else:
             self.q.put(("LOG",f"На LAN {lan} нет активного DHCP-сервера: IP-маршрутизация доступна, DNS на клиентах нужно задать вручную."))
-        route=r.exec(f"/ip route print detail where routing-table={ros_q(table)}")
-        if f"gateway={wg}" not in route or "dst-address=0.0.0.0/0" not in route or "inactive" in route.lower(): raise RuntimeError(f"Не найден активный default route {table} через {wg}. Маршруты автоматически не создаю.")
+        route_state=self.ensure_vpn_failover_routes(r,f)
+        wan_nat_entries=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(sub)} and out-interface={ros_q(f["wan_interface"])}'))
+        if any("X" in x["flags"] for x in wan_nat_entries):
+            raise RuntimeError("Найдено отключённое WAN masquerade правило для LAN. Проверь его вручную.")
+        if not wan_nat_entries:
+            self.cmd(r,wan_nat_cmd(f))
         filters=r.exec("/ip firewall filter print detail")
         if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Нужна ручная проверка исключений перед настройкой mangle.")
         mangle=r.exec("/ip firewall mangle print detail")

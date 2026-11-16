@@ -2149,21 +2149,11 @@ class App(QMainWindow):
 
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        p=self.panel("Параметры сетевого профиля","LAN, WAN, VPN-интерфейс, routing table и address-list задаются в первом разделе мастера. Здесь оставлены настройки DNS-over-HTTPS и переход к сетевому профилю.")
-        note=QLabel("Чтобы изменить LAN interface, LAN subnet, LAN DNS IP, WAN interface, имя WireGuard-интерфейса, таблицу маршрутизации или address-list, открой «Мастер настройки VPN» вверху бокового меню. Не создавай вручную второй набор параметров: мастер и VPN-маршрутизация используют один профиль.")
+        p=self.panel("Параметры сетевого профиля","Все параметры LAN, WAN, WireGuard, policy routing и DoH находятся в первом разделе бокового меню.")
+        note=QLabel("Для первоначальной настройки и изменения сетевого профиля используй «Мастер настройки VPN». Он содержит единый набор полей, чтобы диагностика, маршрутизация и применение правил всегда работали с одними и теми же значениями.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); p.layout().addWidget(note)
         go=QPushButton("Открыть мастер настройки VPN"); go.setObjectName("PrimaryButton"); go.clicked.connect(lambda:self.nav.setCurrentRow(0)); p.layout().addWidget(go)
-        l.addWidget(p)
-        doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP.")
-        self.doh_enabled=QCheckBox("Использовать DoH"); self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
-        self.doh_preset=QComboBox(); self.doh_preset.addItems(list(DOH_PRESETS.keys())+["Свой endpoint · вручную"])
-        self.doh_url=QLineEdit(self.settings.get("doh_url","https://dns.google/dns-query")); self.doh_bootstrap=QLineEdit(self.settings.get("doh_bootstrap","8.8.8.8, 8.8.4.4"))
-        selected=next((name for name,(url,_) in DOH_PRESETS.items() if url==self.doh_url.text().strip()),"Свой endpoint · вручную")
-        self.doh_preset.setCurrentText(selected); self.doh_preset.currentTextChanged.connect(self.select_doh_preset)
-        self.doh_verify_cert=QCheckBox("Проверять TLS-сертификат DoH-сервера"); self.doh_verify_cert.setChecked(self.settings.get("doh_verify_cert","1")=="1")
-        df=QFormLayout(); df.addRow("Готовый пресет",self.doh_preset); df.addRow("DoH endpoint URL",self.doh_url); df.addRow("Bootstrap DNS · IPv4",self.doh_bootstrap); df.addRow("",self.doh_enabled); df.addRow("",self.doh_verify_cert); doh.layout().addLayout(df)
-        actions=QHBoxLayout(); apply_doh=QPushButton("Подготовить применение DoH"); apply_doh.setObjectName("PrimaryButton"); apply_doh.clicked.connect(self.stage_doh_config); check_doh=QPushButton("Проверить DoH на роутере"); check_doh.clicked.connect(self.check_doh_config); actions.addWidget(apply_doh); actions.addWidget(check_doh); doh.layout().addLayout(actions)
-        l.addWidget(doh); l.addStretch(); return w
+        l.addWidget(p); l.addStretch(); return w
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -3531,7 +3521,7 @@ class App(QMainWindow):
         # Отдельно подтверждаем основной WAN route и selective VPN policy route.
         if not failed("Wizard routing table") and not nonempty("Wizard routing table"):
             add("bad","Мастер настройки · routing table",f"Таблица {f['route_table']} отсутствует",raw["Wizard routing table"],"Повтори проверку и подготовь создание инфраструктуры в первом разделе мастера.")
-        if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower() or f"gateway={f['wg_interface']}" in raw["Wizard main route"]):
+        if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower() or f"gateway={f['wg_interface']}" in raw["Wizard main route"] or f["wan_interface"].lower() not in raw["Wizard main route"].lower()):
             add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
         if not failed("Wizard managed route") and not nonempty("Wizard managed route"):
             add("warn","Мастер настройки · VPN default route","Управляемый default route VPN не найден",raw["Wizard managed route"],"Проверь таблицу vpn и gateway WireGuard; обычный маршрут main должен оставаться через WAN.")

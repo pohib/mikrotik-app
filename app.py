@@ -3495,7 +3495,7 @@ class App(QMainWindow):
             "Wizard WAN DNS UDP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-UDP")}',
             "Wizard WAN DNS TCP drop": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-WAN-DNS-DROP-TCP")}',
             "Wizard NAT rule": f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}',
-            "Wizard WAN NAT rule": f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}',
+            "Wizard WAN NAT rule": f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(f["wan_interface"])}',
             "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
             "Wizard routing rules": '/routing rule print terse',
             "Wizard managed route": f'/ip route print detail where comment={ros_q("VPN-MANAGER-DEFAULT")}',

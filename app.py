@@ -2297,7 +2297,7 @@ class App(QMainWindow):
         self.run_job("RouterOS CLI: "+command,job)
 
     def pages_changed(self,index):
-        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Firewall и DNS","Просмотр правил и защита DNS"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
+        titles=[("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","SSH и профиль VPN-провайдера"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):
@@ -4559,7 +4559,7 @@ class App(QMainWindow):
 
     def firewall_rule_dialog(self,key,record=None):
         title={"filter":"Filter","nat":"NAT","mangle":"Mangle"}[key]
-        fields=["chain","action","protocol","src-address","dst-address","src-port","dst-port","in-interface","out-interface","connection-state","connection-nat-state","connection-mark","new-routing-mark","to-addresses","to-ports","comment"]
+        fields=["chain","action","protocol","src-address","src-address-list","dst-address","dst-address-list","src-port","dst-port","in-interface","in-interface-list","out-interface","out-interface-list","connection-state","connection-nat-state","connection-mark","new-connection-mark","new-packet-mark","new-routing-mark","passthrough","to-addresses","to-ports","jump-target","limit","log","log-prefix","tls-host","comment"]
         dialog=QDialog(self); dialog.setWindowTitle(("Редактировать " if record else "Новое правило ")+title); dialog.setMinimumWidth(520)
         form=QFormLayout(dialog); widgets={}; current=record["fields"] if record else {}
         for name in fields:
@@ -4633,7 +4633,8 @@ class App(QMainWindow):
         self.firewall_preview_queue()
         answer=QtMessageBox.question(self,"Применить изменения Firewall",f"Отправить на MikroTik {len(self.fw_queue)} команд(ы)? Это изменит активные правила.",QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No,QtMessageBox.StandardButton.No)
         if answer!=QtMessageBox.StandardButton.Yes: return
-        pending=list(self.fw_queue)
+        # Индексы RouterOS меняются после удаления: сначала add/set, затем remove по убыванию номера.
+        pending=sorted(list(self.fw_queue),key=lambda item:(1 if " remove " in item["command"] else 0,-int(re.search(r"\\sremove\\s+(\\d+)",item["command"]).group(1)) if " remove " in item["command"] and re.search(r"\\sremove\\s+(\\d+)",item["command"]) else 0))
         def job():
             router=self.router_conn()
             for item in pending:
@@ -4644,7 +4645,7 @@ class App(QMainWindow):
         self.run_job("Применение очереди Firewall…",job)
 
     def firewall_applied(self):
-        self.fw_queue=[]; self.update_firewall_queue(); self.refresh_firewall()
+        self.fw_queue=[]; self.update_firewall_queue(); QTimer.singleShot(350,self.refresh_firewall)
 
     def choose_key(self,e):
         p,_=QFileDialog.getOpenFileName(self,"Выбрать приватный SSH-ключ",str(Path.home()),"All files (*.*)")

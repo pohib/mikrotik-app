@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar, QGraphicsView, QGraphicsScene
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -263,6 +263,28 @@ def parse_terse(text):
         fields = {k: v.strip('"') for k, v in re.findall(r'([\w.-]+)=("(?:[^"\\]|\\.)*"|\S*)', line)}
         items.append({"flags": flags, "f": fields})
     return items
+
+
+class NetworkMapView(QGraphicsView):
+    """Interactive topology canvas: wheel zoom and drag-to-pan."""
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setMinimumHeight(480)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setBackgroundBrush(QColor("#0b1220"))
+        self.setToolTip("Колесо мыши — масштаб · зажми левую кнопку и перетаскивай — перемещение")
+
+    def wheelEvent(self,event):
+        factor=1.18 if event.angleDelta().y()>0 else 1/1.18
+        self.scale(factor,factor)
+
+    def fit_map(self):
+        if self.scene() and not self.scene().itemsBoundingRect().isNull():
+            self.fitInView(self.scene().itemsBoundingRect().adjusted(-48,-48,48,48),Qt.AspectRatioMode.KeepAspectRatio)
 
 
 class Dot(QWidget):
@@ -1306,7 +1328,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "wan_static_address":"", "wan_static_gateway":"", "wan_static_dns":"1.1.1.1,8.8.8.8", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}", "ui_theme":"default", "ui_font_size":"10", "ui_density":"normal", "ui_start_page":"0", "confirm_exit":"1", "lan_map_history":"{}"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "wan_static_address":"", "wan_static_gateway":"", "wan_static_dns":"1.1.1.1,8.8.8.8", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}", "ui_theme":"default", "ui_font_size":"10", "ui_density":"normal", "ui_start_page":"0", "confirm_exit":"1", "lan_map_history":"{}", "lan_scan_subnet":""}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -2386,36 +2408,99 @@ class App(QMainWindow):
         self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+compact)
 
     def page_lan_map(self):
-        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        intro=self.panel("Карта локальной сети","Снимок устройств из DHCP leases, ARP, RouterOS Neighbor и MAC-таблицы bridge. Сканирование только читает данные MikroTik.")
-        row=QHBoxLayout(); self.lan_map_status=QLabel("Ожидает сканирования · требуется SSH"); self.lan_map_status.setObjectName("StatusBar")
-        scan=QPushButton("Обновить карту LAN"); scan.setObjectName("PrimaryButton"); scan.clicked.connect(self.scan_lan_map)
-        row.addWidget(self.lan_map_status,1); row.addWidget(scan); intro.layout().addLayout(row); l.addWidget(intro)
-        stats=self.panel("Сводка","Новые и пропавшие устройства определяются сравнением с предыдущими успешными сканированиями.")
-        self.lan_map_summary=QLabel("Устройств: — · Новых: — · Пропавших: —"); self.lan_map_summary.setObjectName("SectionTitle"); stats.layout().addWidget(self.lan_map_summary); l.addWidget(stats)
-        split=QSplitter(Qt.Orientation.Horizontal)
-        topology=self.panel("Связи устройств","Логическая схема: MikroTik → LAN-интерфейс → устройство. Не является физической схемой кабелей.")
-        self.lan_map_tree=QTreeWidget(); self.lan_map_tree.setHeaderLabels(["Узел / связь","Состояние"]); self.lan_map_tree.setMinimumHeight(280); topology.layout().addWidget(self.lan_map_tree)
-        devices=self.panel("Устройства","IP, MAC, hostname, производитель и источник обнаружения.")
-        self.lan_map_table=QTableWidget(0,8); self.lan_map_table.setHorizontalHeaderLabels(["Статус","IP","MAC","Hostname","Производитель","Интерфейс","Источник","Последнее обнаружение"])
-        self.lan_map_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.lan_map_table.setAlternatingRowColors(True)
-        self.lan_map_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents); self.lan_map_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
-        devices.layout().addWidget(self.lan_map_table); split.addWidget(topology); split.addWidget(devices); split.setStretchFactor(0,1); split.setStretchFactor(1,2); l.addWidget(split,1)
-        note=QLabel("Производитель определяется по локальному сокращённому справочнику OUI; неизвестные MAC показываются как «Не определён». Активного ping-сканирования нет: обнаруживаются только устройства, присутствующие в таблицах DHCP/ARP/Neighbor/Bridge на момент запроса.")
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
+        intro=self.panel("Карта локальной сети","Активное обнаружение через RouterOS IP Scan с объединением DHCP, ARP, Bridge Host и LLDP/CDP/MNDP Neighbor. Карта показывает фактические интерфейсы MikroTik и отдельно помечает предполагаемые связи.")
+        controls=QHBoxLayout(); controls.setSpacing(8)
+        self.lan_map_status=QLabel("Ожидает сканирования · требуется SSH"); self.lan_map_status.setObjectName("StatusBar")
+        self.lan_scan_subnet=QLineEdit(self.settings.get("lan_scan_subnet") or self.settings.get("lan_subnet","192.168.88.0/24"))
+        self.lan_scan_subnet.setMaximumWidth(190); self.lan_scan_subnet.setPlaceholderText("192.168.88.0/24")
+        self.lan_active_scan=QCheckBox("Активный IP Scan"); self.lan_active_scan.setChecked(self.settings.get("lan_active_scan","1")=="1")
+        scan=QPushButton("⟳  Сканировать сеть"); scan.setObjectName("PrimaryButton"); scan.clicked.connect(self.scan_lan_map)
+        controls.addWidget(self.lan_map_status,1); controls.addWidget(QLabel("Подсеть:")); controls.addWidget(self.lan_scan_subnet); controls.addWidget(self.lan_active_scan); controls.addWidget(scan)
+        intro.layout().addLayout(controls); l.addWidget(intro)
+        stats=self.panel("Обнаружение","Новые и пропавшие устройства сравниваются с историей успешных сканирований. Для активного сканирования используется IP Scan на самом MikroTik, поэтому результат не зависит от подсети компьютера, на котором запущено приложение.")
+        self.lan_map_summary=QLabel("Устройств: — · Новых: — · Не обнаружено: —"); self.lan_map_summary.setObjectName("SectionTitle")
+        stats.layout().addWidget(self.lan_map_summary); l.addWidget(stats)
+        canvas=self.panel("Топология LAN","MikroTik → LAN-интерфейсы/порты → обнаруженные коммутаторы и конечные устройства. Пунктир означает предположение по таблице MAC, а не подтверждённое физическое соединение.")
+        map_tools=QHBoxLayout()
+        self.lan_map_legend=QLabel("● Маршрутизатор   ● Сетевое оборудование   ● Устройство в сети   ● Новое   ● Не обнаружено")
+        self.lan_map_legend.setObjectName("Muted")
+        fit=QPushButton("По размеру"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
+        zoom_in=QPushButton("＋"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
+        zoom_out=QPushButton("−"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
+        map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(fit)
+        canvas.layout().addLayout(map_tools)
+        self.lan_map_scene=QGraphicsScene(self); self.lan_map_view=NetworkMapView(); self.lan_map_view.setScene(self.lan_map_scene)
+        canvas.layout().addWidget(self.lan_map_view,1); l.addWidget(canvas,1)
+        note=QLabel("Активный IP Scan отправляет сетевые запросы к адресам выбранной IPv4-подсети. Ограничение — не более /24 за один проход (до 254 адресов). Производитель определяется по локальному OUI-справочнику и может быть неизвестен. Устройства за неуправляемыми коммутаторами нельзя физически локализовать по одному MAC-адресу; такие связи отмечаются как предполагаемые.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+        self.lan_scan_subnet.editingFinished.connect(self.save_lan_scan_preferences)
+        self.lan_active_scan.toggled.connect(self.save_lan_scan_preferences)
+        self.render_lan_map([],{},0,0)
         return w
+
+    def save_lan_scan_preferences(self,*_):
+        if not hasattr(self,"lan_scan_subnet"): return
+        self.settings["lan_scan_subnet"]=self.lan_scan_subnet.text().strip()
+        self.settings["lan_active_scan"]="1" if self.lan_active_scan.isChecked() else "0"
+        self.save_settings()
 
     def scan_lan_map(self):
         if self.busy: return
-        self.lan_map_status.setText("Сбор DHCP leases, ARP, Neighbor и bridge host…")
+        subnet=self.lan_scan_subnet.text().strip()
+        try:
+            net=ipaddress.ip_network(subnet,strict=False)
+            if net.version!=4: raise ValueError("Поддерживается только IPv4")
+            if net.prefixlen<24: raise ValueError("Активное сканирование ограничено подсетью /24 или меньше (не более 254 адресов). Укажи, например, 192.168.88.0/24.")
+            if net.prefixlen>30: raise ValueError("Для сканирования укажи подсеть от /24 до /30.")
+            hosts=list(net.hosts())
+            if len(hosts)>254: raise ValueError("Слишком большая подсеть для одного прохода.")
+        except ValueError as exc:
+            QMessageBox.warning(self,"Подсеть для сканирования",str(exc)); return
+        active=self.lan_active_scan.isChecked()
+        self.settings["lan_scan_subnet"]=str(net); self.settings["lan_active_scan"]="1" if active else "0"; self.save_settings()
+        self.lan_map_status.setText("Активное сканирование RouterOS…" if active else "Сбор таблиц RouterOS…")
         def job():
             r=self.router_conn()
-            data={"dhcp":r.exec("/ip dhcp-server lease print detail",timeout=30),
-                  "arp":r.exec(f'/ip arp print detail where interface={ros_q(self.settings.get("lan_interface",""))}',timeout=25),
-                  "neighbor":r.exec("/ip neighbor print detail",timeout=25),
-                  "bridge":r.exec("/interface bridge host print detail",timeout=25)}
+            data={"scan_success":False,"scan_raw":"","scan_error":"","scan":[],
+                  "dhcp":r.exec("/ip dhcp-server lease print detail",timeout=30),
+                  "arp":r.exec("/ip arp print detail",timeout=30),
+                  "neighbor":r.exec("/ip neighbor print detail",timeout=30),
+                  "bridge":r.exec("/interface bridge host print detail",timeout=30),
+                  "bridge_ports":r.exec("/interface bridge port print detail",timeout=30),
+                  "interfaces":r.exec("/interface print detail",timeout=30)}
+            if active:
+                first,last=hosts[0],hosts[-1]
+                command=f"/tool ip-scan address-range={first}-{last}"
+                try:
+                    raw=r.exec(command,timeout=90)
+                    data["scan_raw"]=raw; data["scan"]=self.parse_ip_scan(raw); data["scan_success"]=True
+                except Exception as exc:
+                    data["scan_error"]=str(exc)
+                    self.q.put(("LOG","Активный IP Scan не завершился; карта будет построена по DHCP/ARP/Neighbor/Bridge. История пропавших устройств не обновляется. "+str(exc)))
+            else:
+                data["scan_success"]=True
             self.q.put(("LAN_MAP",data))
-        self.run_job("Обнаружение устройств LAN…",job)
+        self.run_job("Активное обнаружение устройств LAN…" if active else "Обновление топологии LAN…",job)
+
+    def parse_ip_scan(self,output):
+        found=[]
+        mac_re=re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+        for line in output.splitlines():
+            m=re.match(r"^\\s*(\\d{1,3}(?:\\.\\d{1,3}){3})\\s+(.*)$",line)
+            if not m: continue
+            try: ip=str(ipaddress.IPv4Address(m.group(1)))
+            except ValueError: continue
+            rest=m.group(2).strip(); mac=""
+            tokens=rest.split()
+            if tokens and mac_re.fullmatch(tokens[0]): mac=tokens.pop(0).upper()
+            response=""
+            for i,token in enumerate(tokens):
+                if re.fullmatch(r"\\d+(?:\\.\\d+)?(?:ms|us)",token,re.I):
+                    response=token; tokens.pop(i); break
+            name=" ".join(tokens).strip()
+            found.append({"ip":ip,"mac":mac,"response":response,"scan_name":name})
+        return found
 
     def lan_vendor(self,mac):
         parts=(mac or "").upper().replace("-",":").split(":"); prefix=":".join(parts[:3]) if len(parts)>=3 else ""
@@ -2423,66 +2508,165 @@ class App(QMainWindow):
             "B8:27:EB":"Raspberry Pi Foundation","DC:A6:32":"Raspberry Pi Foundation","E4:5F:01":"Raspberry Pi Foundation",
             "00:15:5D":"Microsoft Hyper-V","00:50:56":"VMware","08:00:27":"Oracle VirtualBox","00:0C:29":"VMware",
             "DC:2C:6E":"TP-Link","50:C7:BF":"TP-Link","C0:06:C3":"TP-Link","D8:07:B6":"TP-Link",
-            "4C:5E:0C":"Ubiquiti","24:A4:3C":"Ubiquiti","74:AC:B9":"Ubiquiti"}
+            "4C:5E:0C":"Ubiquiti","24:A4:3C":"Ubiquiti","74:AC:B9":"Ubiquiti",
+            "00:1D:AA":"D-Link","1C:7E:E5":"D-Link","00:26:5A":"D-Link",
+            "00:1E:58":"ASUSTek","AC:9E:17":"ASUSTek","F8:32:E4":"ASUSTek",
+            "00:17:C8":"Intel","3C:97:0E":"Intel","A4:4C:C8":"Intel","8C:EC:4B":"Intel",
+            "00:1B:21":"Intel","00:25:90":"Super Micro","00:1C:42":"Parallels",
+            "00:16:3E":"Xen","52:54:00":"QEMU/KVM","00:0F:4B":"Realtek"}
         return vendors.get(prefix,"Не определён")
 
     def on_lan_map(self,data):
         try: history=json.loads(self.settings.get("lan_map_history","{}"))
         except Exception: history={}
         if not isinstance(history,dict): history={}
-        now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"); current={}
-        def merge(items,source):
-            for item in items:
-                f=item.get("f",{}); mac=f.get("mac-address","").upper().replace("-",":"); ip=f.get("address",f.get("active-address",""))
-                if not mac or mac in ("00:00:00:00:00:00","FF:FF:FF:FF:FF:FF"): continue
-                try:
-                    if ip and ipaddress.ip_address(ip).version!=4: ip=""
-                except ValueError: ip=""
-                rec=current.setdefault(mac,{"mac":mac,"ip":"","hostname":"","interface":"","sources":[],"vendor":self.lan_vendor(mac)})
-                if ip: rec["ip"]=ip
-                host=f.get("host-name",f.get("hostname",f.get("identity","")))
-                if host and host.lower() not in ("unknown",""): rec["hostname"]=host
-                iface=f.get("on-interface",f.get("interface",f.get("bridge","")))
-                if iface: rec["interface"]=iface
-                if source not in rec["sources"]: rec["sources"].append(source)
-        merge(parse_terse(data.get("dhcp","")),"DHCP"); merge(parse_terse(data.get("arp","")),"ARP")
-        merge(parse_terse(data.get("neighbor","")),"Neighbor"); merge(parse_terse(data.get("bridge","")),"Bridge MAC")
+        now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"); current={}; by_ip={}
+        def merge_record(fields,source):
+            mac=(fields.get("mac-address") or fields.get("mac") or "").upper().replace("-",":")
+            ip=fields.get("address") or fields.get("active-address") or fields.get("ip") or ""
+            try: ip=str(ipaddress.IPv4Address(ip)) if ip else ""
+            except ValueError: ip=""
+            if not mac and not ip: return
+            key=mac or "ip:"+ip
+            if key not in current and ip and ip in by_ip:
+                key=by_ip[ip]
+                if mac and key!=mac:
+                    old=current.pop(key); key=mac; old["mac"]=mac; current[key]=old
+            rec=current.setdefault(key,{"mac":mac,"ip":"","hostname":"","interface":"","sources":[],"vendor":self.lan_vendor(mac),
+                "response":"","scan_name":"","identity":"","platform":"","board":"","kind":"endpoint"})
+            if mac: rec["mac"]=mac; rec["vendor"]=self.lan_vendor(mac)
+            if ip: rec["ip"]=ip; by_ip[ip]=key
+            host=fields.get("host-name") or fields.get("hostname") or fields.get("dns") or fields.get("netbios") or ""
+            if host and host.lower() not in ("unknown",""): rec["hostname"]=host
+            for field in ("identity","platform","board","response","scan_name"):
+                if fields.get(field): rec[field]=fields[field]
+            iface=fields.get("on-interface") or fields.get("interface") or fields.get("bridge") or ""
+            if iface: rec["interface"]=iface
+            if source not in rec["sources"]: rec["sources"].append(source)
+            if source=="IP Scan": rec["active"]=True
+            if source=="Neighbor" and (rec.get("identity") or rec.get("platform") or rec.get("board")): rec["kind"]="network"
+        for row in data.get("scan",[]):
+            merge_record({"ip":row.get("ip"),"mac":row.get("mac"),"response":row.get("response"),"scan_name":row.get("scan_name")},"IP Scan")
+        for item in parse_terse(data.get("dhcp","")):
+            f=item.get("f",{}); merge_record(f,"DHCP")
+        for item in parse_terse(data.get("arp","")):
+            merge_record(item.get("f",{}),"ARP")
+        for item in parse_terse(data.get("neighbor","")):
+            f=item.get("f",{}); merge_record(f,"Neighbor")
+        for item in parse_terse(data.get("bridge","")):
+            merge_record(item.get("f",{}),"Bridge MAC")
+        for item in parse_terse(data.get("bridge_ports","")):
+            f=item.get("f",{}); port=f.get("interface","")
+            if port:
+                for rec in current.values():
+                    if rec.get("interface")==port: rec["bridge"]=f.get("bridge","")
+        for item in parse_terse(data.get("interfaces","")):
+            f=item.get("f",{}); name=f.get("name","")
+            if name:
+                for rec in current.values():
+                    if rec.get("interface")==name: rec["interface_running"]="R" in item.get("flags",set())
         try:
-            net=ipaddress.ip_network(self.settings.get("lan_subnet","0.0.0.0/0"),strict=False)
-            current={k:v for k,v in current.items() if not v["ip"] or ipaddress.ip_address(v["ip"]) in net}
+            net=ipaddress.ip_network(self.settings.get("lan_scan_subnet") or self.settings.get("lan_subnet","0.0.0.0/0"),strict=False)
+            current={k:v for k,v in current.items() if not v.get("ip") or ipaddress.ip_address(v["ip"]) in net}
         except Exception: pass
-        new_count=lost_count=0
-        for mac,rec in current.items():
-            old=history.get(mac,{})
+        new_count=lost_count=returned_count=0
+        for key,rec in current.items():
+            old=history.get(key,{})
             rec["state"]="returned" if old.get("state")=="lost" else ("online" if old else "new")
-            if rec["state"] in ("new","returned"): new_count+=1
-            rec["last_seen"]=now; history[mac]=dict(rec,state="online",last_seen=now)
+            if rec["state"]=="new": new_count+=1
+            elif rec["state"]=="returned": returned_count+=1
+            rec["last_seen"]=now
+            history[key]=dict(rec,state="online",last_seen=now)
+        # Mark missing only after a successful active scan or a complete table-only snapshot.
+        if data.get("scan_success"):
+            for key,old in list(history.items()):
+                if key not in current and old.get("state")!="lost":
+                    old["state"]="lost"; old["missing_since"]=now; history[key]=old; lost_count+=1
         visible=list(current.values())
-        for mac,old in list(history.items()):
-            if mac not in current:
-                if old.get("state")=="online": old["state"]="lost"; history[mac]=old; lost_count+=1
-                if old.get("state")=="lost": visible.append(dict(old))
+        for key,old in history.items():
+            if key not in current and old.get("state")=="lost": visible.append(dict(old))
         self.settings["lan_map_history"]=json.dumps(history,ensure_ascii=False); self.save_settings()
-        self.render_lan_map(visible,current,new_count,lost_count)
-        self.lan_map_status.setText(f"Сканирование завершено · {now} · найдено {len(current)} устройств")
+        self.render_lan_map(visible,current,new_count+returned_count,lost_count)
+        scan_label="активный IP Scan" if data.get("scan_success") and data.get("scan_raw") else ("таблицы RouterOS" if not data.get("scan_error") else "частичный снимок · IP Scan недоступен")
+        self.lan_map_status.setText(f"Завершено · {now} · {scan_label} · найдено {len(current)}")
+        if data.get("scan_error"):
+            self.log("LAN map: активное сканирование не выполнено: "+data["scan_error"])
 
     def render_lan_map(self,records,current,new_count,lost_count):
-        names={"new":"НОВОЕ","returned":"ВЕРНУЛОСЬ","online":"В СЕТИ","lost":"ПРОПАЛО"}
-        colors={"new":TONES["info"],"returned":TONES["ok"],"online":TONES["ok"],"lost":TONES["bad"]}
-        self.lan_map_table.setRowCount(0); self.lan_map_tree.clear()
-        root=QTreeWidgetItem(self.lan_map_tree,[f'MikroTik · {self.settings.get("host","router")}','Шлюз']); groups={}
+        scene=self.lan_map_scene; scene.clear()
+        bg=QColor("#0b1220"); card=QColor("#172337"); border=QColor("#3a506d")
+        text_color=QColor("#e8eef8"); muted=QColor("#9eb0c9")
+        green=QColor("#4ade80"); blue=QColor("#72a7ff"); amber=QColor("#fbbf24"); red=QColor("#fb7185"); cyan=QColor("#67e8f9")
+        scene.setBackgroundBrush(bg)
+        def add_node(x,y,w,h,title,subtitle,color,tooltip=""):
+            path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),12,12)
+            node=scene.addPath(path,QPen(color,2),QBrush(card)); node.setToolTip(tooltip or title+"\n"+subtitle)
+            dot=scene.addEllipse(x+13,y+15,10,10,QPen(color,1),QBrush(color))
+            title_item=scene.addText(title); title_item.setDefaultTextColor(text_color); title_item.setFont(QFont("Segoe UI",10,QFont.Weight.Bold)); title_item.setPos(x+31,y+8)
+            sub_item=scene.addText(subtitle); sub_item.setDefaultTextColor(muted); sub_item.setFont(QFont("Segoe UI",8)); sub_item.setPos(x+13,y+39)
+            return (x+w/2,y+h), (x+w/2,y), node
+        def edge(a,b,color=border,dashed=False):
+            pen=QPen(color,2,Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
+            line=scene.addLine(a[0],a[1],b[0],b[1],pen); line.setZValue(-2)
+        router_title=f'MikroTik · {self.settings.get("host","router") or "router"}'
+        root_bottom,root_top,_=add_node(0,25,270,82,router_title,"Шлюз / корень топологии",cyan,"Маршрутизатор, к которому подключено приложение по SSH")
+        if not records:
+            add_node(-160,185,320,78,"Нет обнаруженных устройств","Нажми «Сканировать сеть» для активного поиска",amber)
+            scene.setSceneRect(scene.itemsBoundingRect().adjusted(-80,-60,80,60)); self.lan_map_view.fit_map()
+            self.lan_map_summary.setText("Устройств: 0 · Новых: 0 · Не обнаружено: 0"); return
+        grouped={}
         for rec in records:
-            iface=rec.get("interface") or "Интерфейс неизвестен"; state=rec.get("state","online")
-            if iface not in groups: groups[iface]=QTreeWidgetItem(root,[iface,"LAN link"])
-            QTreeWidgetItem(groups[iface],[f'{rec.get("hostname") or "Без hostname"} · {rec.get("ip") or "IP неизвестен"}',names.get(state,state.upper())])
-            row=self.lan_map_table.rowCount(); self.lan_map_table.insertRow(row)
-            vals=[names.get(state,state.upper()),rec.get("ip",""),rec.get("mac",""),rec.get("hostname",""),rec.get("vendor","Не определён"),iface,", ".join(rec.get("sources",[])),rec.get("last_seen","")]
-            for col,value in enumerate(vals):
-                cell=QTableWidgetItem(str(value))
-                if col==0: cell.setForeground(QColor(colors.get(state,TONES["muted"])))
-                self.lan_map_table.setItem(row,col,cell)
-        self.lan_map_tree.expandAll()
-        self.lan_map_summary.setText(f"Сейчас в сети: {len(current)} · Новых/вернувшихся: {new_count} · Пропавших: {lost_count} · Записей: {len(records)}")
+            iface=rec.get("interface") or "Порт не определён"
+            grouped.setdefault(iface,[]).append(rec)
+        interfaces=sorted(grouped,key=str.casefold); port_w=230; gap=50
+        total_width=max(270,len(interfaces)*port_w+max(0,len(interfaces)-1)*gap)
+        root_x=total_width/2-135
+        # redraw router centered over all port branches
+        scene.clear()
+        root_bottom,root_top,_=add_node(root_x,25,270,82,router_title,"Шлюз / корень топологии",cyan)
+        for idx,iface in enumerate(interfaces):
+            x=idx*(port_w+gap)+(total_width-port_w)/2-(len(interfaces)*(port_w+gap)-gap)/2
+            port_x=x+port_w/2
+            port_records=grouped[iface]
+            edge((root_x+135,107),(port_x,165),cyan)
+            port_color=green if any(r.get("interface_running") for r in port_records) else blue
+            port_top,port_bottom,_=add_node(x,165,port_w,76,iface,f'{len(port_records)} MAC / IP записей',port_color,
+                "Интерфейс MikroTik, по которому изучена MAC/ARP-информация")
+            # Recognized network devices via LLDP/CDP/MNDP Neighbor Discovery.
+            infra=[r for r in port_records if r.get("kind")=="network" and r.get("state")!="lost"]
+            infra_keys={r.get("mac") for r in infra if r.get("mac")}
+            endpoints=[r for r in port_records if r not in infra]
+            cursor_y=300
+            if infra:
+                for ni,device in enumerate(infra):
+                    nx=x+(ni%2)*115; ny=cursor_y+(ni//2)*116
+                    label=device.get("identity") or device.get("hostname") or device.get("board") or "Сетевое устройство"
+                    details=" · ".join(v for v in [device.get("platform"),device.get("board"),device.get("ip")] if v) or device.get("mac","")
+                    top,bottom,_=add_node(nx,ny,108,78,label[:17],details[:28],cyan,
+                        f'{label}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nОбнаружение: {", ".join(device.get("sources",[]))}')
+                    edge((port_x,241),(nx+54,ny),cyan)
+                cursor_y+=((len(infra)+1)//2)*116
+            columns=2 if len(endpoints)>1 else 1
+            for di,device in enumerate(endpoints):
+                col=di%columns; row=di//columns
+                nx=x+col*115; ny=cursor_y+row*116
+                state=device.get("state","online")
+                color={"new":amber,"returned":green,"online":green,"lost":red}.get(state,blue)
+                title=device.get("hostname") or device.get("scan_name") or device.get("ip") or device.get("mac") or "Устройство"
+                subtitle=" · ".join(v for v in [device.get("ip"),device.get("vendor") if device.get("vendor")!="Не определён" else None] if v) or device.get("mac","")
+                subtitle=(subtitle or "MAC без IP")[:30]
+                tooltip=(f'{title}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nПроизводитель: {device.get("vendor","Не определён")}\nОтклик: {device.get("response") or "—"}\nИсточники: {", ".join(device.get("sources",[]))}\nСостояние: {state}')
+                top,bottom,_=add_node(nx,ny,108,78,title[:17],subtitle,color,tooltip)
+                # If an LLDP/CDP/MNDP switch is known on this port, downstream placement is inferred.
+                edge((port_x,241) if not infra else (port_x,cursor_y-116),(nx,ny),color,dashed=bool(infra))
+            # Per-port caption
+            caption=scene.addText("Порт MikroTik"); caption.setDefaultTextColor(muted); caption.setFont(QFont("Segoe UI",8)); caption.setPos(x+6,246)
+        bounds=scene.itemsBoundingRect().adjusted(-70,-35,70,55)
+        scene.setSceneRect(bounds); self.lan_map_view.fit_map()
+        active_count=sum(1 for r in current.values() if r.get("active"))
+        online_count=sum(1 for r in current.values() if r.get("state") in ("online","new","returned"))
+        lost_total=sum(1 for r in records if r.get("state")=="lost")
+        self.lan_map_summary.setText(f"Сейчас обнаружено: {len(current)} · Активный IP Scan: {active_count} · Новых/вернувшихся: {new_count} · Не обнаружено: {lost_count} · В истории: {lost_total}")
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)

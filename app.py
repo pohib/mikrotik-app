@@ -1942,7 +1942,8 @@ class App(QMainWindow):
         self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
         lan_detect_btn=QPushButton("Найти LAN/WAN автоматически"); lan_detect_btn.clicked.connect(self.discover_lan_settings)
         scan_btn=QPushButton("Проверить готовность к настройке"); scan_btn.setObjectName("PrimaryButton"); scan_btn.clicked.connect(self.scan_vpn_setup)
-        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(lan_detect_btn); wizard_row.addWidget(scan_btn); wizard.layout().addLayout(wizard_row)
+        full_diag_btn=QPushButton("Полная диагностика"); full_diag_btn.clicked.connect(lambda:(self.nav.setCurrentRow(3),self.run_diagnostics()))
+        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(lan_detect_btn); wizard_row.addWidget(scan_btn); wizard_row.addWidget(full_diag_btn); wizard.layout().addLayout(wizard_row)
         self.vpn_setup_report=QPlainTextEdit(); self.vpn_setup_report.setReadOnly(True); self.vpn_setup_report.setMaximumHeight(190); self.vpn_setup_report.setPlaceholderText("Состояние routing table, default route, WireGuard, LAN, DHCP, Mangle и NAT.")
         wizard.layout().addWidget(self.vpn_setup_report)
         self.vpn_setup_stage=QPushButton("Подготовить policy routing и DNS для VPN-целей"); self.vpn_setup_stage.setObjectName("PrimaryButton"); self.vpn_setup_stage.setEnabled(False); self.vpn_setup_stage.clicked.connect(self.stage_vpn_setup)
@@ -2142,15 +2143,11 @@ class App(QMainWindow):
 
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        p=self.panel("Параметры сетевого профиля","Эти значения используются мастером настройки и VPN-маршрутизацией. Меняй их только если понимаешь, к каким интерфейсам и таблицам они относятся.")
-        form=QFormLayout(); self.inputs={}
-        fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
-        for label,key in fields:
-            e=QLineEdit(self.settings[key]); self.inputs[key]=e; form.addRow(label,e)
-        p.layout().addLayout(form)
-        save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); p.layout().addWidget(save)
-        note=QLabel("Первичную настройку выполняй в первом разделе «Мастер настройки VPN». Там находятся обнаружение LAN, профиль провайдера WireGuard, подготовка правил, применение и контрольная проверка. SSH-авторизация открывается кнопкой «Подключиться» в верхней панели.")
+        p=self.panel("Параметры сетевого профиля","LAN, WAN, VPN-интерфейс, routing table и address-list задаются в первом разделе мастера. Здесь оставлены настройки DNS-over-HTTPS и переход к сетевому профилю.")
+        note=QLabel("Чтобы изменить LAN interface, LAN subnet, LAN DNS IP, WAN interface, имя WireGuard-интерфейса, таблицу маршрутизации или address-list, открой «Мастер настройки VPN» вверху бокового меню. Не создавай вручную второй набор параметров: мастер и VPN-маршрутизация используют один профиль.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); p.layout().addWidget(note)
+        go=QPushButton("Открыть мастер настройки VPN"); go.setObjectName("PrimaryButton"); go.clicked.connect(lambda:self.nav.setCurrentRow(0)); p.layout().addWidget(go)
+        l.addWidget(p)
         doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP.")
         self.doh_enabled=QCheckBox("Использовать DoH"); self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
         self.doh_preset=QComboBox(); self.doh_preset.addItems(list(DOH_PRESETS.keys())+["Свой endpoint · вручную"])
@@ -2160,7 +2157,7 @@ class App(QMainWindow):
         self.doh_verify_cert=QCheckBox("Проверять TLS-сертификат DoH-сервера"); self.doh_verify_cert.setChecked(self.settings.get("doh_verify_cert","1")=="1")
         df=QFormLayout(); df.addRow("Готовый пресет",self.doh_preset); df.addRow("DoH endpoint URL",self.doh_url); df.addRow("Bootstrap DNS · IPv4",self.doh_bootstrap); df.addRow("",self.doh_enabled); df.addRow("",self.doh_verify_cert); doh.layout().addLayout(df)
         actions=QHBoxLayout(); apply_doh=QPushButton("Подготовить применение DoH"); apply_doh.setObjectName("PrimaryButton"); apply_doh.clicked.connect(self.stage_doh_config); check_doh=QPushButton("Проверить DoH на роутере"); check_doh.clicked.connect(self.check_doh_config); actions.addWidget(apply_doh); actions.addWidget(check_doh); doh.layout().addLayout(actions)
-        l.addWidget(p); l.addWidget(doh); l.addStretch(); return w
+        l.addWidget(doh); l.addStretch(); return w
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -3528,7 +3525,7 @@ class App(QMainWindow):
         # Отдельно подтверждаем основной WAN route и selective VPN policy route.
         if not failed("Wizard routing table") and not nonempty("Wizard routing table"):
             add("bad","Мастер настройки · routing table",f"Таблица {f['route_table']} отсутствует",raw["Wizard routing table"],"Повтори проверку и подготовь создание инфраструктуры в первом разделе мастера.")
-        if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower()):
+        if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower() or f"gateway={f['wg_interface']}" in raw["Wizard main route"]):
             add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
         if not failed("Wizard managed route") and not nonempty("Wizard managed route"):
             add("warn","Мастер настройки · VPN default route","Управляемый default route VPN не найден",raw["Wizard managed route"],"Проверь таблицу vpn и gateway WireGuard; обычный маршрут main должен оставаться через WAN.")
@@ -4720,7 +4717,10 @@ class App(QMainWindow):
                     if lan_dns not in lan_net: raise RuntimeError("LAN DNS IP не входит в LAN subnet.")
                     assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns))}').strip()
                     if assigned=="0": raise RuntimeError("LAN DNS IP не назначен LAN-интерфейсу. Автоматическая настройка DNS остановлена.")
-                    # Полный preflight до любых изменений: при конфликте не оставляем частично настроенный DNS.
+                    # Полный preflight до любых изменений: обычный интернет обязан оставаться через WAN/main.
+                    main_routes_pre=r.exec('/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main')
+                    if not main_routes_pre.strip() or "inactive" in main_routes_pre.lower() or f'gateway={wg}' in main_routes_pre:
+                        raise RuntimeError("Основной default route в main отсутствует, неактивен или указывает на WireGuard. Сначала восстанови прямой WAN-маршрут; мастер не будет переводить весь интернет в VPN.")
                     filters_pre=r.exec("/ip firewall filter print detail"); mangle_pre=r.exec("/ip firewall mangle print detail")
                     if "action=fasttrack-connection" in filters_pre.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена до внесения изменений.")
                     if "action=mark-routing" in mangle_pre and MANGLE_COMMENT not in mangle_pre: raise RuntimeError("Обнаружено стороннее mark-routing правило. Автонастройка остановлена до внесения изменений.")

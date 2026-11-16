@@ -1948,7 +1948,7 @@ class App(QMainWindow):
             n=QLabel(number); n.setObjectName("CardTitle"); t=QLabel(title); t.setObjectName("SectionTitle"); d=QLabel(detail); d.setObjectName("Muted"); d.setWordWrap(True)
             cl.addWidget(n); cl.addWidget(t); cl.addWidget(d); steps.addWidget(card,col//3,col%3)
         intro.layout().addLayout(steps)
-        model=QLabel("Схема: LAN → обычные сайты → WAN напрямую; LAN → домен/IP из VPN-списка → Mangle → таблица vpn → WireGuard. IPv6 проверяется отдельно: IPv4 policy routing само по себе не гарантирует выборочную маршрутизацию IPv6.")
+        model=QLabel("Схема: LAN → обычные сайты → WAN напрямую; LAN → домен/IP из VPN-списка → Mangle → таблица vpn → WireGuard. Если VPN-маршрут становится недоступен, RouterOS должен продолжить lookup в main и отправить этот трафик напрямую через WAN. Kill Switch и блокировка интернета при отказе WG не используются. IPv6 проверяется отдельно.")
         model.setObjectName("InfoNote"); model.setWordWrap(True); intro.layout().addWidget(model); l.addWidget(intro)
 
         # Полноценный первый этап: подключение провайдера и создание LAN.
@@ -2078,7 +2078,7 @@ class App(QMainWindow):
         start=ipaddress.ip_address(pool.split("-",1)[0].strip()); end=ipaddress.ip_address(pool.split("-",1)[1].strip())
         if start.version!=4 or end.version!=4 or int(start)>int(end): raise ValueError("Некорректный диапазон DHCP pool.")
         net=iface.network
-        if start not in net or end not in net or iface.ip in (start,end) or start==iface.ip or end==iface.ip: raise ValueError("DHCP pool должен целиком входить в LAN subnet и не включать адрес роутера.")
+        if start not in net or end not in net or start<=net.network_address or end>=net.broadcast_address or int(start)<=int(iface.ip)<=int(end): raise ValueError("DHCP pool должен целиком входить в LAN subnet, не включать network/broadcast и не пересекаться с адресом роутера.")
         if not self.initial_setup_ack.isChecked(): raise ValueError("Подтверди проверку WAN/LAN-портов и риск потери SSH-доступа.")
         vlan_name=("wan-vlan"+vlan) if vlan else ""
         wan_effective=(pppoe_name if mode=="PPPoE" else (vlan_name or base))
@@ -2175,6 +2175,7 @@ class App(QMainWindow):
                 ("table",f'/routing table print detail where name={ros_q(f["route_table"])}'),
                 ("main_route",'/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main'),
                 ("routing_rules",'/routing rule print terse'),
+                ("routing_settings",'/routing settings print'),
                 ("route",f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
                 ("wg",f'/interface wireguard print detail where name={ros_q(f["wg_interface"])}'),
                 ("peer",f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}'),
@@ -2208,7 +2209,9 @@ class App(QMainWindow):
             dhcp_gateway=f'gateway={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
             routing_rule_conflict=any(x["f"].get("table")==f["route_table"] for x in parse_terse(d["routing_rules"]))
+            main_fallback=bool(re.search(r"\\bmain\\b",d["routing_settings"],re.I))
             blockers=[]
+            if not main_fallback: blockers.append("В /routing/settings отсутствует main: fallback для помеченного Mangle-трафика на WAN не подтверждён")
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
             for ok,msg in [(wan,"WAN-интерфейс не найден — проверь имя интерфейса"),(main_route,"Не найден активный основной default route через указанный WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(not routing_rule_conflict,"Обнаружено routing rule, направляющее трафик в VPN-таблицу; проверь правила вручную"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
@@ -2231,6 +2234,7 @@ class App(QMainWindow):
                 f'{"⚠" if fast else "✓"} FastTrack: {"обнаружен" if fast else "не обнаружен"}',
                 f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}',
                 f'{"⚠" if routing_rule_conflict else "✓"} Routing rules → VPN table: {"обнаружены — нужна ручная проверка" if routing_rule_conflict else "не обнаружены"}']
+            lines.append(("✓" if main_fallback else "✕")+" Fallback при отказе WG: "+("main присутствует в policy-rules; выбранный трафик вернётся в main/WAN" if main_fallback else "main не найден в policy-rules — проверь порядок правил"))
             if dhcp_server in ("0",""): lines.append("ℹ DHCP-сервер на LAN не найден: IP-маршрутизация будет работать, но DNS на клиентах потребуется настроить вручную.")
             self.q.put(("VPN_SETUP_SCAN",{"lines":lines,"blockers":blockers,"ready":not blockers,"dhcp_server":dhcp_server}))
         self.run_job("Сканирование VPN-маршрутизации…",job)
@@ -3405,6 +3409,7 @@ class App(QMainWindow):
             "Interfaces": "/interface print terse",
             "WAN interface": f"/interface monitor-traffic interface={ros_q(f['wan_interface'])} once",
             "Main default route": "/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main",
+            "Routing settings": "/routing settings print",
             "VPN default route": f"/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f['route_table'])}",
             "DNS configuration": "/ip dns print",
             "DNS resolve Cloudflare": ':put [:resolve "cloudflare.com"]',
@@ -3546,6 +3551,11 @@ class App(QMainWindow):
             add("bad","WAN / основной маршрут","Не найден основной IPv4 default route в таблице main","/ip route print не вернул default route для main","Проверь WAN, DHCP/адрес шлюза и default route. VPN-таблицу пока не трогай.")
         elif "inactive" in raw["Main default route"].lower():
             add("bad","WAN / основной маршрут","Основной default route найден, но помечен inactive",raw["Main default route"],"Проверь доступность шлюза и состояние WAN-интерфейса.")
+        if not failed("Routing settings"):
+            if re.search(r"\\bmain\\b",raw["Routing settings"],re.I):
+                add("ok","Аварийный возврат на WAN","В policy-rules присутствует main: если lookup в VPN-таблице не найдёт активный маршрут, RouterOS продолжит lookup в main",raw["Routing settings"],"Не удаляй main из policy-rules. Это обеспечивает прямой WAN fallback при недоступности WireGuard; Kill Switch не используется.")
+            else:
+                add("bad","Аварийный возврат на WAN","В /routing/settings не найден main: fallback для помеченного Mangle-трафика не подтверждён",raw["Routing settings"],"Верни main в policy-rules после mangle согласно RouterOS policy routing. Не добавляй drop/unreachable и не включай Kill Switch.")
         if failed("WAN interface"):
             add("info","WAN-интерфейс","Проверка monitor-traffic не выполнилась",raw["WAN interface"],"Проверь имя WAN-интерфейса и поддержку команды на этой версии RouterOS.")
         elif not nonempty("WAN interface"):
@@ -4939,7 +4949,9 @@ class App(QMainWindow):
                             time.sleep(1)
                         if not ready: raise RuntimeError("PPPoE client was created but is not running. Verify provider login/password, service name and VLAN.")
                     main=r.exec('/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main')
-                    if not main.strip() or "inactive" in main.lower() or f'gateway={wan_if}' not in main.lower():
+                    main_rows=parse_terse(main)
+                    main_via_wan=any("I" not in x["flags"] and (x["f"].get("gateway")==wan_if or x["f"].get("immediate-gw","").endswith("%"+wan_if) or x["f"].get("immediate-gw")==wan_if) for x in main_rows)
+                    if not main_via_wan:
                         raise RuntimeError("WAN is connected but an active main default route through the configured WAN was not confirmed. VPN routing has not been enabled.")
                     if "allow-remote-requests: yes" not in r.exec("/ip dns print"): self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     self.q.put(("LOG","Первичная настройка WAN/LAN завершена. Проверен прямой main default route через WAN; VPN-маршрутизация не включалась."))

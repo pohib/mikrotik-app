@@ -79,4 +79,4 @@ jobs:
         shell: pwsh
         run: |
           $batch = Get-Content "start.bat" -Raw
-          if ($batch -notmatch "start\.ps1" -or $batch -notmatch "v1\.8\.0") { throw "start.bat is out of sync with the application release" }
+          if ($batch -notmatch "start\.ps1" -or $batch -notmatch "v1\.10\.0") { throw "start.bat is out of sync with the application release" }

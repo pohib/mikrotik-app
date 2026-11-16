@@ -19,11 +19,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar, QGraphicsView, QGraphicsScene
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar, QGraphicsView, QGraphicsScene, QGraphicsItem
 )
 
 APP_NAME = "MikroTik VPN Manager"
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "MikroTikVPNManager"
 CONFIG_FILE = APP_DIR / "settings.json"
 KNOWN_HOSTS_FILE = APP_DIR / "known_hosts"
@@ -2509,22 +2509,76 @@ class App(QMainWindow):
         self.lan_map_summary=QLabel("Устройств: — · Новых: — · Не обнаружено: —"); self.lan_map_summary.setObjectName("SectionTitle")
         stats.layout().addWidget(self.lan_map_summary); l.addWidget(stats)
         canvas=self.panel("Топология LAN","MikroTik → LAN-интерфейсы/порты → обнаруженные коммутаторы и конечные устройства. Пунктир означает предположение по таблице MAC, а не подтверждённое физическое соединение.")
-        map_tools=QHBoxLayout()
-        self.lan_map_legend=QLabel("● Маршрутизатор   ● Сетевое оборудование   ● Устройство в сети   ● Новое   ● Не обнаружено")
+        map_tools=QHBoxLayout(); map_tools.setSpacing(8)
+        self.lan_map_search=QLineEdit(); self.lan_map_search.setPlaceholderText("⌕  Найти устройство, IP, MAC…")
+        self.lan_map_search.setClearButtonEnabled(True); self.lan_map_search.setMaximumWidth(260)
+        self.lan_map_filter=QComboBox()
+        self.lan_map_filter.addItem("Все устройства","all")
+        self.lan_map_filter.addItem("На связи","online")
+        self.lan_map_filter.addItem("Новые","new")
+        self.lan_map_filter.addItem("Не обнаружены","lost")
+        self.lan_map_filter.setMaximumWidth(155)
+        self.lan_map_legend=QLabel("● Router   ● Network   ● Endpoint   ● New   ● Lost")
         self.lan_map_legend.setObjectName("Muted")
-        fit=QPushButton("По размеру"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
+        fit=QPushButton("Вписать"); fit.setObjectName("QuietButton"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
         zoom_in=QPushButton("＋"); zoom_in.setObjectName("MapZoom"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
         zoom_out=QPushButton("−"); zoom_out.setObjectName("MapZoom"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
+        map_tools.addWidget(self.lan_map_search); map_tools.addWidget(self.lan_map_filter)
         map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(fit)
         canvas.layout().addLayout(map_tools)
         self.lan_map_scene=QGraphicsScene(self); self.lan_map_view=NetworkMapView(); self.lan_map_view.setScene(self.lan_map_scene)
-        canvas.layout().addWidget(self.lan_map_view,1); l.addWidget(canvas,1)
+        self.lan_map_scene.selectionChanged.connect(self.on_lan_map_node_selected)
+        canvas.layout().addWidget(self.lan_map_view,1)
+        self.lan_map_details=QLabel("Выбери узел на карте, чтобы посмотреть его параметры.")
+        self.lan_map_details.setObjectName("InfoNote"); self.lan_map_details.setWordWrap(True)
+        canvas.layout().addWidget(self.lan_map_details)
+        l.addWidget(canvas,1)
+        self._lan_map_records=[]; self._lan_map_current={}; self._lan_map_new_count=0; self._lan_map_lost_count=0
+        self.lan_map_search.textChanged.connect(self.filter_lan_map)
+        self.lan_map_filter.currentIndexChanged.connect(self.filter_lan_map)
         note=QLabel("Активный IP Scan отправляет сетевые запросы к адресам выбранной IPv4-подсети. Ограничение — не более /24 за один проход (до 254 адресов). Производитель определяется по локальному OUI-справочнику и может быть неизвестен. Устройства за неуправляемыми коммутаторами нельзя физически локализовать по одному MAC-адресу; такие связи отмечаются как предполагаемые.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
         self.lan_scan_subnet.editingFinished.connect(self.save_lan_scan_preferences)
         self.lan_active_scan.toggled.connect(self.save_lan_scan_preferences)
         self.render_lan_map([],{},0,0)
         return w
+
+    def on_lan_map_node_selected(self):
+        if not hasattr(self,"lan_map_details"): return
+        selected=self.lan_map_scene.selectedItems()
+        if not selected:
+            self.lan_map_details.setText("Выбери узел на карте, чтобы посмотреть его параметры.")
+            return
+        data=selected[0].data(0)
+        if not isinstance(data,dict) or not data:
+            self.lan_map_details.setText("Системный узел топологии.")
+            return
+        rows=[
+            f"Устройство: {data.get('hostname') or data.get('identity') or data.get('board') or data.get('scan_name') or 'Без имени'}",
+            f"IP: {data.get('ip') or '—'}    MAC: {data.get('mac') or '—'}",
+            f"Интерфейс: {data.get('interface') or '—'}    Производитель: {data.get('vendor') or '—'}",
+            f"Состояние: {data.get('state') or '—'}    Источники: {', '.join(data.get('sources',[])) or '—'}",
+            f"Отклик: {data.get('response') or '—'}    Последнее обнаружение: {data.get('last_seen') or '—'}",
+        ]
+        for key,label in (("platform","Платформа"),("board","Модель"),("signal","Сигнал"),("tx-rate","TX"),("rx-rate","RX"),("uptime","Uptime")):
+            if data.get(key): rows.append(f"{label}: {data[key]}")
+        self.lan_map_details.setText("    ·    ".join(rows))
+
+    def filter_lan_map(self,*_):
+        if not hasattr(self,"_lan_map_records"): return
+        query=self.lan_map_search.text().strip().casefold()
+        state=self.lan_map_filter.currentData()
+        filtered=[]
+        for rec in self._lan_map_records:
+            status=rec.get("state","online")
+            if state=="online" and status=="lost": continue
+            if state=="new" and status not in ("new","returned"): continue
+            if state=="lost" and status!="lost": continue
+            searchable=" ".join(str(v) for v in rec.values() if not isinstance(v,(dict,list,set))).casefold()
+            searchable+=" "+" ".join(str(v) for v in rec.get("sources",[])).casefold()
+            if query and query not in searchable: continue
+            filtered.append(rec)
+        self.render_lan_map(filtered,self._lan_map_current,self._lan_map_new_count,self._lan_map_lost_count,cache=False)
 
     def save_lan_scan_preferences(self,*_):
         if not hasattr(self,"lan_scan_subnet"): return
@@ -2686,7 +2740,10 @@ class App(QMainWindow):
         if data.get("scan_error"):
             self.log("LAN map: активное сканирование не выполнено: "+data["scan_error"])
 
-    def render_lan_map(self,records,current,new_count,lost_count):
+    def render_lan_map(self,records,current,new_count,lost_count,cache=True):
+        if cache:
+            self._lan_map_records=list(records); self._lan_map_current=dict(current)
+            self._lan_map_new_count=new_count; self._lan_map_lost_count=lost_count
         scene=self.lan_map_scene; scene.clear()
         theme=self.settings.get("ui_theme","default")
         light=theme=="light"; neutral=theme=="dark"
@@ -2697,12 +2754,17 @@ class App(QMainWindow):
         muted=QColor("#53677f" if light else ("#aeb9c2" if neutral else "#9eb0c9"))
         green=QColor("#4ade80"); blue=QColor("#72a7ff"); amber=QColor("#fbbf24"); red=QColor("#fb7185"); cyan=QColor("#67e8f9")
         scene.setBackgroundBrush(bg)
-        def add_node(x,y,w,h,title,subtitle,color,tooltip=""):
-            path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),12,12)
-            node=scene.addPath(path,QPen(color,2),QBrush(card)); node.setToolTip(tooltip or title+"\n"+subtitle)
-            dot=scene.addEllipse(x+13,y+15,10,10,QPen(color,1),QBrush(color))
-            title_item=scene.addText(title); title_item.setDefaultTextColor(text_color); title_item.setFont(QFont("Segoe UI",10,QFont.Weight.Bold)); title_item.setTextWidth(max(45,w-42)); title_item.setPos(x+31,y+8)
-            sub_item=scene.addText(subtitle); sub_item.setDefaultTextColor(muted); sub_item.setFont(QFont("Segoe UI",8)); sub_item.setTextWidth(max(60,w-24)); sub_item.setPos(x+13,y+39)
+        def add_node(x,y,w,h,title,subtitle,color,tooltip="",payload=None):
+            path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),14,14)
+            fill=QLinearGradient(x,y,x+w,y+h); fill.setColorAt(0,card.lighter(112)); fill.setColorAt(1,card)
+            node=scene.addPath(path,QPen(color,1.7),QBrush(fill)); node.setToolTip(tooltip or title+"\n"+subtitle)
+            node.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,True)
+            node.setAcceptHoverEvents(True); node.setCursor(Qt.CursorShape.PointingHandCursor)
+            node.setData(0,payload or {})
+            node.setZValue(1)
+            dot=scene.addEllipse(x+15,y+15,9,9,QPen(color,1),QBrush(color)); dot.setZValue(2)
+            title_item=scene.addText(title); title_item.setDefaultTextColor(text_color); title_item.setFont(QFont("Segoe UI",10,QFont.Weight.Bold)); title_item.setTextWidth(max(45,w-48)); title_item.setPos(x+33,y+7); title_item.setZValue(2)
+            sub_item=scene.addText(subtitle); sub_item.setDefaultTextColor(muted); sub_item.setFont(QFont("Segoe UI",8)); sub_item.setTextWidth(max(60,w-26)); sub_item.setPos(x+13,y+39); sub_item.setZValue(2)
             return (x+w/2,y+h), (x+w/2,y), node
         def edge(a,b,color=border,dashed=False):
             pen=QPen(color,2,Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
@@ -2710,9 +2772,11 @@ class App(QMainWindow):
         router_title=f'MikroTik · {self.settings.get("host","router") or "router"}'
         root_bottom,root_top,_=add_node(0,25,270,82,router_title,"Шлюз / корень топологии",cyan,"Маршрутизатор, к которому подключено приложение по SSH")
         if not records:
-            add_node(-160,185,320,78,"Нет обнаруженных устройств","Нажми «Сканировать сеть» для активного поиска",amber)
+            message="Нет устройств по текущему фильтру" if self._lan_map_records else "Сеть ещё не просканирована"
+            hint="Измени фильтр или строку поиска" if self._lan_map_records else "Нажми «Сканировать сеть» для обнаружения"
+            add_node(-190,185,380,88,message,hint,amber)
             scene.setSceneRect(scene.itemsBoundingRect().adjusted(-80,-60,80,60)); self.lan_map_view.fit_map()
-            self.lan_map_summary.setText("Устройств: 0 · Новых: 0 · Не обнаружено: 0"); return
+            self.lan_map_summary.setText(f"Устройств в сети: {len(current)} · В истории: {len(self._lan_map_records)}"); return
         grouped={}
         for rec in records:
             iface=rec.get("interface") or "Порт не определён"
@@ -2722,15 +2786,18 @@ class App(QMainWindow):
         root_x=total_width/2-135
         # redraw router centered over all port branches
         scene.clear()
-        root_bottom,root_top,_=add_node(root_x,25,270,82,router_title,"Шлюз / корень топологии",cyan)
+        root_bottom,root_top,_=add_node(root_x,25,290,88,router_title,"ROUTER  ·  SSH CONNECTED",cyan,
+            "Маршрутизатор, к которому подключено приложение по SSH",
+            {"identity":router_title,"kind":"router","state":"connected","sources":["SSH"]})
         for idx,iface in enumerate(interfaces):
             x=idx*(port_w+gap)+(total_width-(len(interfaces)*port_w+max(0,len(interfaces)-1)*gap))/2
             port_x=x+port_w/2
             port_records=grouped[iface]
             edge((root_x+135,107),(port_x,165),cyan)
             port_color=green if any(r.get("interface_running") for r in port_records) else blue
-            port_top,port_bottom,_=add_node(x,165,port_w,76,iface,f'{len(port_records)} MAC / IP записей',port_color,
-                "Интерфейс MikroTik, по которому изучена MAC/ARP-информация")
+            port_top,port_bottom,_=add_node(x,165,port_w,76,iface,f'{len(port_records)} устройств / MAC-записей',port_color,
+                "Интерфейс MikroTik, по которому изучена MAC/ARP-информация",
+                {"identity":iface,"kind":"interface","state":"running" if any(r.get("interface_running") for r in port_records) else "unknown","sources":["RouterOS interface table"]})
             # Recognized network devices via LLDP/CDP/MNDP Neighbor Discovery.
             infra=[r for r in port_records if r.get("kind")=="network" and r.get("state")!="lost"]
             infra_keys={r.get("mac") for r in infra if r.get("mac")}
@@ -2747,8 +2814,8 @@ class App(QMainWindow):
                     nx=x+(ni%2)*172; ny=cursor_y+(ni//2)*112
                     label=device.get("identity") or device.get("hostname") or device.get("board") or "Сетевое устройство"
                     details=" · ".join(v for v in [device.get("platform"),device.get("board"),device.get("ip")] if v) or device.get("mac","")
-                    top,bottom,_=add_node(nx,ny,160,88,label[:24],details[:42],cyan,
-                        f'{label}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nОбнаружение: {", ".join(device.get("sources",[]))}')
+                    top,bottom,_=add_node(nx,ny,178,92,label[:26],details[:48],cyan,
+                        f'{label}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nОбнаружение: {", ".join(device.get("sources",[]))}',device)
                     edge((port_x,241),(nx+80,ny),cyan)
                 cursor_y+=((len(infra)+1)//2)*116
             columns=2 if len(endpoints)>1 else 1
@@ -2761,7 +2828,7 @@ class App(QMainWindow):
                 subtitle=" · ".join(v for v in [device.get("ip"),device.get("vendor") if device.get("vendor")!="Не определён" else None] if v) or device.get("mac","")
                 subtitle=(subtitle or "MAC без IP")[:30]
                 tooltip=(f'{title}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nПроизводитель: {device.get("vendor","Не определён")}\nОтклик: {device.get("response") or "—"}\nИсточники: {", ".join(device.get("sources",[]))}\nСостояние: {state}')
-                top,bottom,_=add_node(nx,ny,160,88,title[:24],subtitle,color,tooltip)
+                top,bottom,_=add_node(nx,ny,178,92,title[:26],subtitle,color,tooltip,device)
                 # If an LLDP/CDP/MNDP switch is known on this port, downstream placement is inferred.
                 edge((port_x,241) if not infra and not inferred_switch else ((x+115,cursor_y-116) if inferred_switch and not infra else (port_x,cursor_y-116)),(nx,ny),color,dashed=bool(infra or inferred_switch))
             # Per-port caption
@@ -2771,7 +2838,7 @@ class App(QMainWindow):
         active_count=sum(1 for r in current.values() if r.get("active"))
         online_count=sum(1 for r in current.values() if r.get("state") in ("online","new","returned"))
         lost_total=sum(1 for r in records if r.get("state")=="lost")
-        self.lan_map_summary.setText(f"Сейчас обнаружено: {len(current)} · Активный IP Scan: {active_count} · Новых/вернувшихся: {new_count} · Не обнаружено: {lost_count} · В истории: {lost_total}")
+        self.lan_map_summary.setText(f"СЕЙЧАС В СЕТИ  {len(current)}     ·     IP SCAN  {active_count}     ·     НОВЫЕ  {new_count}     ·     НЕ ОБНАРУЖЕНЫ  {lost_count}     ·     В ИСТОРИИ  {lost_total}")
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)

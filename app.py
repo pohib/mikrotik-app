@@ -4321,7 +4321,7 @@ class App(QMainWindow):
         dhcp_servers=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(lan)} and disabled=no').strip()
         if dhcp_servers not in ("0",""):
             dhcp=r.exec(f'/ip dhcp-server network print detail where address={ros_q(sub)}')
-            if f"dns-server={f['lan_dns']}" not in dhcp.replace(" ", ""):
+            if f"dns-server={f['lan_dns']}" not in dhcp.replace(" ", "") or f"gateway={f['lan_dns']}" not in dhcp.replace(" ", ""):
                 raise RuntimeError(f"DHCP network для {sub} не подтверждает dns-server={f['lan_dns']}. Проверь DHCP-настройки LAN.")
         else:
             self.q.put(("LOG",f"На LAN {lan} нет активного DHCP-сервера: IP-маршрутизация доступна, DNS на клиентах нужно задать вручную."))
@@ -4635,7 +4635,7 @@ class App(QMainWindow):
                     if dhcp_count not in ("0",""):
                         network_count=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip()
                         if network_count=="0": self.cmd(r,f'/ip dhcp-server network add address={f["lan_subnet"]} gateway={f["lan_dns"]} dns-server={f["lan_dns"]}')
-                        elif network_count=="1": self.cmd(r,f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}')
+                        elif network_count=="1": self.cmd(r,f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] gateway={f["lan_dns"]} dns-server={f["lan_dns"]}')
                         else: raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей; автоматическое изменение остановлено.")
                     tc=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
                     if tc=="0": self.cmd(r,f'/routing table add name={ros_q(table)} fib')
@@ -4657,7 +4657,7 @@ class App(QMainWindow):
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):
                         dhcp_verify=r.exec(f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}')
-                        if f'dns-server={f["lan_dns"]}' not in dhcp_verify.replace(" ",""): raise RuntimeError("DHCP DNS post-check не пройден.")
+                        if f'dns-server={f["lan_dns"]}' not in dhcp_verify.replace(" ","") or f'gateway={f["lan_dns"]}' not in dhcp_verify.replace(" ",""): raise RuntimeError("DHCP gateway/DNS post-check не пройден.")
                     self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall и DNS resolver проверены."))
                 elif k=="apply_targets":
                     self.prepare_router(r)

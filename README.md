@@ -1,4 +1,11 @@
-# MikroTik VPN Manager — v1.9.0
+# MikroTik VPN Manager — v1.10.0
+
+## v1.10.0 — Detached topology workspace and theme fixes
+
+- Fixed the LAN topology canvas background by applying the active theme to both the graphics scene and every attached view; Default is explicitly dark, Dark is charcoal and Light is pale.
+- Added a separate resizable, maximizable topology window sharing the same live scene and selection with the embedded map.
+- Added focus-selected, copy-selected-node details, double-click-to-center and synchronized detail panels.
+- Reduced custom window minimize/maximize/close controls to compact 32×24 px buttons.
 
 ## v1.9.0 — Interactive LAN topology
 

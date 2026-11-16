@@ -76,6 +76,7 @@ def test_scrollbars_use_custom_antialiased_painter(qt_app):
 
 
 def test_scrollbars_follow_selected_application_theme(qt_app):
+    qt_app.setStyle(manager.RoundedScrollBarStyle())
     window = manager.App()
     try:
         for theme, expected in (

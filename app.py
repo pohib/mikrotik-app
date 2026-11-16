@@ -1296,7 +1296,7 @@ class App(QMainWindow):
             self.settings.update(self.fields())
         if hasattr(self, "wg_inputs"):
             for k,w in self.wg_inputs.items():
-                if k != "wg_private_key": self.settings[k] = w.text().strip()
+                if k not in ("wg_private_key","wg_preshared_key"): self.settings[k] = w.text().strip()
         if hasattr(self, "doh_enabled"):
             self.settings["doh_enabled"] = "1" if self.doh_enabled.isChecked() else "0"
             self.settings["doh_url"] = self.doh_url.text().strip()
@@ -1945,9 +1945,9 @@ class App(QMainWindow):
         p.layout().addLayout(form)
         wg=self.panel("Профиль WireGuard / смена VPN-провайдера","Импортируй конфигурацию провайдера .conf или заполни поля вручную. Правила маршрутизации сохраняются.")
         wgform=QFormLayout(); self.wg_inputs={}
-        for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
-            e=QLineEdit("" if key=="wg_private_key" else self.settings.get(key,""))
-            if key=="wg_private_key": e.setEchoMode(QLineEdit.EchoMode.Password); e.setPlaceholderText("Не сохраняется на диск")
+        for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("PresharedKey · если выдан провайдером","wg_preshared_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
+            e=QLineEdit("" if key in ("wg_private_key","wg_preshared_key") else self.settings.get(key,""))
+            if key in ("wg_private_key","wg_preshared_key"): e.setEchoMode(QLineEdit.EchoMode.Password); e.setPlaceholderText("Секрет не сохраняется на диск")
             self.wg_inputs[key]=e; wgform.addRow(label,e)
         wg.layout().addLayout(wgform)
         wgbuttons=QHBoxLayout()
@@ -3703,7 +3703,7 @@ class App(QMainWindow):
                 host,port=endpoint[1:].split("]:",1)
             elif ":" in endpoint: host,port=endpoint.rsplit(":",1)
             else: raise ValueError("Endpoint должен содержать порт, например vpn.example:51820")
-            values={"wg_private_key":interface["privatekey"],"wg_public_key":peers["publickey"],"wg_endpoint":host,"wg_port":port,
+            values={"wg_private_key":interface["privatekey"],"wg_public_key":peers["publickey"],"wg_preshared_key":peers.get("presharedkey",""),"wg_endpoint":host,"wg_port":port,
                     "wg_allowed":peers.get("allowedips","0.0.0.0/0"),"wg_address":interface.get("address","").split(",")[0].strip(),
                     "wg_keepalive":("0" if peers.get("persistentkeepalive","25").lower()=="off" else peers.get("persistentkeepalive","25")),"wg_mtu":interface.get("mtu",self.wg_inputs["wg_mtu"].text() or "1240")}
             for k,v in values.items():

@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF,
 from html import escape as esc
 from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QPalette, QSyntaxHighlighter, QTextCharFormat, QIcon
 from PySide6.QtWidgets import (
+    QProxyStyle, QStyle, QStyleOptionSlider,
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit, QCompleter, QInputDialog,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
@@ -55,6 +56,68 @@ PRESETS = {
     "Instagram": ["instagram.com", "i.instagram.com", "graph.instagram.com", "cdninstagram.com", "fbcdn.net", "instagram.fna.fbcdn.net"],
     "TikTok": ["tiktok.com", "tiktokv.com", "tiktokcdn.com", "tiktokcdn-us.com", "byteoversea.com", "ibytedtos.com", "ipstatp.com", "byteimg.com", "muscdn.com"],
 }
+
+
+class RoundedScrollBarStyle(QProxyStyle):
+    """Paint scrollbars with antialiased capsule geometry instead of native/QSS rectangles."""
+
+    def __init__(self):
+        super().__init__("Fusion")
+
+    def pixelMetric(self, metric, option=None, widget=None):
+        if metric == QStyle.PixelMetric.PM_ScrollBarExtent:
+            return 18
+        return super().pixelMetric(metric, option, widget)
+
+    def drawComplexControl(self, control, option, painter, widget=None):
+        if control != QStyle.ComplexControl.CC_ScrollBar or not isinstance(option, QStyleOptionSlider):
+            return super().drawComplexControl(control, option, painter, widget)
+
+        rect = option.rect
+        if rect.isEmpty():
+            return
+
+        app = QApplication.instance()
+        theme = app.property("scrollbar_theme") if app is not None else "default"
+        if theme == "light":
+            track_color, handle_color, hover_color = QColor("#d3deeb"), QColor("#60a5fa"), QColor("#2563eb")
+        elif theme == "dark":
+            track_color, handle_color, hover_color = QColor("#30383e"), QColor("#65717b"), QColor("#8b98a2")
+        else:
+            track_color, handle_color, hover_color = QColor(255, 255, 255, 24), QColor("#60a5fa"), QColor("#93c5fd")
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        vertical = option.orientation == Qt.Orientation.Vertical
+        if vertical:
+            groove = QRectF(rect.center().x() - 2.0, rect.top() + 3.0, 4.0, max(0.0, rect.height() - 6.0))
+        else:
+            groove = QRectF(rect.left() + 3.0, rect.center().y() - 2.0, max(0.0, rect.width() - 6.0), 4.0)
+        painter.setBrush(track_color)
+        painter.drawRoundedRect(groove, 2.0, 2.0)
+
+        slider = self.subControlRect(
+            QStyle.ComplexControl.CC_ScrollBar,
+            option,
+            QStyle.SubControl.SC_ScrollBarSlider,
+            widget,
+        )
+        if not slider.isEmpty():
+            if vertical:
+                handle = QRectF(slider).adjusted(4.0, 1.0, -4.0, -1.0)
+            else:
+                handle = QRectF(slider).adjusted(1.0, 4.0, -1.0, -4.0)
+            if handle.width() > 0 and handle.height() > 0:
+                hovered = bool(
+                    option.state & QStyle.StateFlag.State_MouseOver
+                    and option.activeSubControls & QStyle.SubControl.SC_ScrollBarSlider
+                )
+                painter.setBrush(hover_color if hovered else handle_color)
+                radius = min(handle.width(), handle.height()) / 2.0
+                painter.drawRoundedRect(handle, radius, radius)
+        painter.restore()
 
 
 def normalize_target(value: str) -> tuple[str, str]:
@@ -2535,17 +2598,10 @@ class App(QMainWindow):
             track="#202428"; border="#30383e"; thumb1="#65717b"; thumb2="#46525b"; hover1="#8b98a2"; hover2="#65717b"
         else:
             track="rgba(255,255,255,12)"; border="rgba(255,255,255,24)"; thumb1="#60a5fa"; thumb2="#1d4ed8"; hover1="#93c5fd"; hover2="#3b82f6"
-        scrollbars=f"""
-        QScrollBar:vertical{{background:{track};width:18px;margin:3px;border:1px solid {border};border-radius:9px}}
-        QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;margin:1px;border:0;border-radius:9px}}
-        QScrollBar::handle:vertical:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
-        QScrollBar:horizontal{{background:{track};height:18px;margin:3px;border:1px solid {border};border-radius:9px}}
-        QScrollBar::handle:horizontal{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {thumb1},stop:1 {thumb2});min-width:32px;margin:1px;border:0;border-radius:9px}}
-        QScrollBar::handle:horizontal:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
-        QScrollBar::add-line,QScrollBar::sub-line{{width:0;height:0;border:0;background:transparent}}
-        QScrollBar::add-page,QScrollBar::sub-page,QScrollBar::corner{{background:transparent}}
-        """
-        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+controls+"\n"+compact+"\n"+scrollbars)
+        app = QApplication.instance()
+        if app is not None:
+            app.setProperty("scrollbar_theme", theme)
+        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+controls+"\n"+compact)
 
     def reset_visual_preferences(self):
         widgets=(self.ui_theme,self.ui_font_size,self.ui_density,self.ui_start_page,self.confirm_exit_check)
@@ -6379,16 +6435,7 @@ QLabel#IndTitle{color:#cfdbef;font-size:10pt}
 QLabel#IndValue{color:#9fb3d1;font-weight:600}
 QFrame#Sep{background:rgba(255,255,255,18);border:0}
 
-/* ---------- scrollbars ---------- */
-QScrollBar:vertical{background:transparent;width:18px;margin:2px;border:0;border-radius:9px}
-QScrollBar::handle:vertical{background:rgba(255,255,255,45);min-height:28px;margin:1px;border:0;border-radius:9px}
-QScrollBar::handle:vertical:hover{background:rgba(255,255,255,80)}
-QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0}
-QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent}
-QScrollBar:horizontal{background:transparent;height:18px;margin:2px;border:0;border-radius:9px}
-QScrollBar::handle:horizontal{background:rgba(255,255,255,45);min-width:28px;margin:1px;border:0;border-radius:9px}
-QScrollBar::handle:horizontal:hover{background:rgba(255,255,255,80)}
-QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0}
+/* Scrollbars are painted by RoundedScrollBarStyle for true antialiased rounded ends. */
 QToolTip{background:#142238;color:#edf4ff;border:1px solid #3b5575;padding:6px}
 /* ---------- enhanced liquid-glass finish ---------- */
 QFrame#Panel{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 rgba(58,82,125,105),stop:.42 rgba(19,31,54,174),stop:1 rgba(8,14,26,205));border:1px solid rgba(180,210,255,48);border-top:1px solid rgba(220,235,255,72);border-radius:20px}
@@ -6413,9 +6460,8 @@ QListWidget#Nav::item{padding:12px 12px}
 
 if __name__=="__main__":
     app=QApplication(sys.argv)
-    # Use Qt Fusion as the base style so custom QSS subcontrols (including rounded scrollbars)
-    # are painted consistently instead of falling back to the native Windows scrollbar renderer.
-    app.setStyle("Fusion")
+    # Draw scrollbars ourselves: Windows native controls and QSS can ignore rounded corners.
+    app.setStyle(RoundedScrollBarStyle())
     app.setApplicationName(APP_NAME)
     _ui_icons = make_ui_icons()
     _arrow = make_arrow_icon()

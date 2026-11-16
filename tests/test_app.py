@@ -67,7 +67,7 @@ def test_scrollbars_use_custom_antialiased_painter(qt_app):
     image.fill(manager.Qt.GlobalColor.transparent)
     painter = manager.QPainter(image)
     try:
-        scrollbar.render(painter)
+        scrollbar.render(painter, manager.QPoint())
     finally:
         painter.end()
 

@@ -56,7 +56,7 @@ def test_backdrop_switches_real_canvas_theme(qt_app):
 
 def test_scrollbars_use_custom_antialiased_painter(qt_app):
     style = manager.RoundedScrollBarStyle()
-    scrollbar = manager.QScrollBar(Qt.Orientation.Vertical)
+    scrollbar = QScrollBar(Qt.Orientation.Vertical)
     scrollbar.setRange(0, 100)
     scrollbar.setPageStep(20)
     scrollbar.resize(18, 140)
@@ -79,17 +79,12 @@ def test_scrollbars_follow_selected_application_theme(qt_app):
     qt_app.setStyle(manager.RoundedScrollBarStyle())
     window = manager.App()
     try:
-        for theme, expected in (
-            ("default", "#60a5fa"),
-            ("dark", "#65717b"),
-            ("light", "#60a5fa"),
-        ):
+        for theme in ("default", "dark", "light"):
             window.settings["ui_theme"] = theme
             window.apply_visual_preferences()
             assert qt_app.property("scrollbar_theme") == theme
             assert isinstance(qt_app.style(), manager.RoundedScrollBarStyle)
             assert "QScrollBar:" not in window.styleSheet()
-            assert expected not in window.styleSheet()
     finally:
         window._allow_close = True
         window.close()

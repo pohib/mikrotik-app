@@ -13,7 +13,7 @@ except ImportError:
 
 from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint, QSize, QStringListModel
 from html import escape as esc
-from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat, QIcon
+from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QPalette, QSyntaxHighlighter, QTextCharFormat, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit, QCompleter, QInputDialog,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
@@ -2662,7 +2662,11 @@ class App(QMainWindow):
         heading.addWidget(zoom_out); heading.addWidget(zoom_in); heading.addWidget(focus); heading.addWidget(copy); heading.addWidget(fit)
         layout.addLayout(heading)
         self._lan_map_detached_view=NetworkMapView(dialog); self._lan_map_detached_view.setScene(self.lan_map_scene)
-        self._lan_map_detached_view.setMinimumHeight(400); layout.addWidget(self._lan_map_detached_view,1)
+        theme=self.settings.get("ui_theme","default")
+        map_bg=QColor("#f1f5fb" if theme=="light" else ("#171a1d" if theme=="dark" else "#0b1220"))
+        self._lan_map_detached_view.set_canvas_background(map_bg)
+        self._lan_map_detached_view.grid_color=QColor(30,45,65,24) if theme=="light" else QColor(255,255,255,16)
+        self._lan_map_detached_view.setMinimumHeight(0); layout.addWidget(self._lan_map_detached_view,1)
         self._lan_map_detached_details=QLabel(self.lan_map_details.text()); self._lan_map_detached_details.setObjectName("InfoNote"); self._lan_map_detached_details.setWordWrap(True)
         layout.addWidget(self._lan_map_detached_details)
         self._lan_map_window=dialog

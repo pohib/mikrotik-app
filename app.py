@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
-    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
+    QFormLayout, QCheckBox, QGroupBox, QAbstractItemView, QTabWidget, QTreeWidget, QTreeWidgetItem, QToolButton, QSpinBox, QScrollArea, QSizePolicy, QTextEdit, QGraphicsDropShadowEffect, QSizeGrip, QProgressBar
 )
 
 APP_NAME = "MikroTik VPN Manager"
@@ -1972,12 +1972,12 @@ class App(QMainWindow):
         self.terminal_history_hint=QLabel("↑ / ↓  история команд   ·   Enter  выполнить")
         self.terminal_history_hint.setObjectName("TerminalHint")
         self.terminal_risk_badge=QLabel("ОЖИДАНИЕ КОМАНДЫ"); self.terminal_risk_badge.setObjectName("TerminalRiskBadge")
-        self.terminal_readonly_mode=QCheckBox("Режим только чтение")
-        self.terminal_readonly_mode.setToolTip("Блокирует команды, которые не распознаны как безопасные read-only запросы.")
-        self.terminal_readonly_mode.setChecked(False)
-        self.terminal_readonly_mode.toggled.connect(self.update_terminal_command_hint)
+        self.terminal_expert_mode=QCheckBox("Режим эксперта")
+        self.terminal_expert_mode.setToolTip("В экспертном режиме подтверждения для изменяющих и неизвестных команд пропускаются. Индикатор риска остаётся активным.")
+        self.terminal_expert_mode.setChecked(False)
+        self.terminal_expert_mode.toggled.connect(self.update_terminal_command_hint)
         command_header.addWidget(command_caption); command_header.addStretch(1)
-        command_header.addWidget(self.terminal_risk_badge); command_header.addWidget(self.terminal_readonly_mode); command_header.addWidget(self.terminal_history_hint)
+        command_header.addWidget(self.terminal_risk_badge); command_header.addWidget(self.terminal_expert_mode); command_header.addWidget(self.terminal_history_hint)
         pl.addLayout(command_header)
 
         command_row=QHBoxLayout(); command_row.setSpacing(10)
@@ -1995,7 +1995,16 @@ class App(QMainWindow):
         self.terminal_completer=QCompleter(self.terminal_completer_model,self.terminal_input)
         self.terminal_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.terminal_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.terminal_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.terminal_input.setCompleter(self.terminal_completer)
+        self.terminal_completer.popup().setObjectName("TerminalCompletionPopup")
+        self.terminal_completer.popup().setStyleSheet("""
+            QListView#TerminalCompletionPopup { background:#0b1627; color:#dce7f8; border:1px solid #365273;
+                border-radius:9px; padding:5px; outline:0; selection-background-color:#244b7b; selection-color:#fff; }
+            QListView#TerminalCompletionPopup::item { background:#0b1627; color:#dce7f8; padding:7px 10px; border-bottom:1px solid #1b2d45; }
+            QListView#TerminalCompletionPopup::item:hover { background:#172a45; color:#fff; }
+            QListView#TerminalCompletionPopup::item:selected { background:#244b7b; color:#fff; }
+        """)
         self.terminal_parameter_hint=QLabel("Автодополнение RouterOS появится при вводе раздела.")
         self.terminal_parameter_hint.setObjectName("TerminalHint")
         pl.addWidget(self.terminal_parameter_hint)
@@ -2209,7 +2218,7 @@ class App(QMainWindow):
         level,label,_reason=classify_routeros_command(command)
         colors={"read":("#8ce9c5","#10372f","#267a62"),"change":("#ffd58a","#3b2b12","#a87527"),"critical":("#ffb3bd","#431b25","#a64254"),"unknown":("#ffd58a","#3b2b12","#a87527")}
         fg,bg,border=colors.get(level,("#91a9cc","#142238","#304764"))
-        suffix=" · ЗАБЛОКИРОВАНО" if self.terminal_readonly_mode.isChecked() and level!="read" else ""
+        suffix=" · ЭКСПЕРТ" if self.terminal_expert_mode.isChecked() and level in ("change","critical","unknown") else ""
         self.terminal_risk_badge.setText(label.upper()+suffix)
         self.terminal_risk_badge.setStyleSheet(f"color:{fg};background:{bg};border:1px solid {border};border-radius:8px;padding:5px 9px;font-size:8pt;font-weight:800")
 
@@ -2221,10 +2230,7 @@ class App(QMainWindow):
         if not command: return
         level,risk_label,risk_reason=classify_routeros_command(command)
         if level=="empty": return
-        if self.terminal_readonly_mode.isChecked() and level!="read":
-            QtMessageBox.warning(self,"Режим только чтение","Команда не распознана как безопасная read-only операция и поэтому не будет выполнена.\n\nОтключи режим только чтение, если действительно хочешь выполнить её.")
-            return
-        if level in ("change","critical","unknown"):
+        if level in ("change","critical","unknown") and not self.terminal_expert_mode.isChecked():
             details={"change":"Команда изменяет конфигурацию или состояние устройства.","critical":"Команда может нарушить доступ к роутеру, изменить критичные сетевые настройки или привести к потере данных.","unknown":"Команда не распознана как безопасная. Считай её потенциально изменяющей до проверки."}[level]
             box=QtMessageBox(self)
             box.setIcon(QtMessageBox.Icon.Warning if level!="critical" else QtMessageBox.Icon.Critical)

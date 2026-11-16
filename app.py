@@ -3679,20 +3679,35 @@ class App(QMainWindow):
         r=self.router_conn(); wg=self.settings["wg_interface"]; q=ros_q
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",wg): raise ValueError("Некорректное имя WireGuard-интерфейса.")
         exists=r.exec(f"/interface wireguard print count-only where name={q(wg)}").strip()
-        if exists!="1": raise RuntimeError(f"Ожидался один WireGuard-интерфейс {wg}, найдено: {exists}.")
+        if exists not in ("0","1"): raise RuntimeError(f"Найдено интерфейсов WireGuard с именем {wg}: {exists}. Ожидался максимум один.")
+        if exists=="0":
+            # Новый интерфейс создаётся только при отсутствии имени; существующие интерфейсы не трогаем.
+            r.exec(f"/interface wireguard add name={q(wg)} mtu={int(cfg['wg_mtu'])} private-key={q(cfg['wg_private_key'])}",15)
+        else:
+            r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])} mtu={int(cfg['wg_mtu'])}",10)
         peer_count=r.exec(f"/interface wireguard peers print count-only where interface={q(wg)}").strip()
         if peer_count not in ("0","1"): raise RuntimeError(f"На интерфейсе {wg} найдено peer: {peer_count}. Автоматически не выбираю, какой заменять.")
         peer_fields=f"public-key={q(cfg['wg_public_key'])} endpoint-address={q(cfg['wg_endpoint'])} endpoint-port={int(cfg['wg_port'])} allowed-address={q(cfg['wg_allowed'])} persistent-keepalive={int(cfg['wg_keepalive'])}s"
         if peer_count=="1": r.exec(f"/interface wireguard peers set [find where interface={q(wg)}] {peer_fields}",10)
         else: r.exec(f"/interface wireguard peers add interface={q(wg)} {peer_fields}",10)
-        r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])} mtu={int(cfg['wg_mtu'])}",10)
-        self.q.put(("LOG",f"Обновлены ключ и peer интерфейса {wg}; private-key скрыт в журнале."))
+        self.q.put(("LOG",f"Создан/обновлён WireGuard-интерфейс {wg} и peer; private-key скрыт в журнале."))
         if cfg["wg_address"]:
             addr=ipaddress.ip_interface(cfg["wg_address"])
             family="/ip address" if addr.version==4 else "/ipv6 address"
-            r.exec(f"{family} remove [find where interface={q(wg)}]",10)
-            r.exec(f"{family} add address={q(cfg['wg_address'])} interface={q(wg)} comment={q('VPN-MANAGER:WireGuard address')}",10)
-        self.q.put(("LOG","Профиль применён. Mangle, NAT, address-list и default route не изменялись."))
+            existing=r.exec(f"{family} print detail where interface={q(wg)}")
+            if cfg["wg_address"] not in existing:
+                managed=r.exec(f'{family} print count-only where interface={q(wg)} and comment={q("VPN-MANAGER:WireGuard address")}').strip()
+                foreign_count=r.exec(f'{family} print count-only where interface={q(wg)}').strip()
+                if foreign_count not in ("0",managed):
+                    raise RuntimeError(f"На {wg} уже есть сторонние адреса. Они не удалены; проверь адреса вручную перед повторным применением.")
+                if managed not in ("0","1"): raise RuntimeError("Найдено несколько управляемых WG-адресов; автоматическая замена остановлена.")
+                if managed=="1": r.exec(f'{family} remove [find where interface={q(wg)} and comment={q("VPN-MANAGER:WireGuard address")}]',10)
+                r.exec(f"{family} add address={q(cfg['wg_address'])} interface={q(wg)} comment={q('VPN-MANAGER:WireGuard address')}",10)
+        # Подтверждаем, что интерфейс и peer действительно появились.
+        verify_iface=r.exec(f"/interface wireguard print count-only where name={q(wg)}").strip()
+        verify_peer=r.exec(f"/interface wireguard peers print count-only where interface={q(wg)}").strip()
+        if verify_iface!="1" or verify_peer!="1": raise RuntimeError("WireGuard интерфейс/peer не прошёл контрольную проверку.")
+        self.q.put(("LOG","Профиль WireGuard применён. Mangle, NAT, address-list и default route пока не менялись."))
         self.fetch_mangle_status(r)
         self.pending_wg_config=None
         self.q.put(("WG_APPLIED",None))

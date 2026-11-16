@@ -777,9 +777,6 @@ def add_dialog_chrome(dialog, layout, title):
     # Сохраняем фирменное безрамочное окно без системной Windows-обёртки.
     # Масштабирование выполняется за компактный QSizeGrip в правом нижнем углу.
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-    # Changing window flags can recreate Qt's internal QMessageBox/QFileDialog layout.
-    # Reacquire it only after all operations that may replace the C++ layout object.
-    layout=dialog.layout()
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setMinimumSize(560, 380)
     dialog.setObjectName("AppDialog")
@@ -795,6 +792,9 @@ def add_dialog_chrome(dialog, layout, title):
         QPushButton#DialogClose:hover { background:#8f3548; border-color:#c65d70; }
         QPushButton#DialogClose:pressed { background:#6e293a; }
     """)
+    # Window flags, attributes and stylesheet changes may recreate the internal layout.
+    # Always fetch the live layout after those changes; the argument may be a stale wrapper.
+    layout=dialog.layout()
     header=DialogTitleBar(dialog,title)
     if isinstance(layout,QGridLayout):
         # Snapshot live widgets/layouts before changing the grid. QLayoutItem wrappers

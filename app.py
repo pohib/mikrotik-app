@@ -2063,7 +2063,7 @@ class App(QMainWindow):
             for k,c in cmds: d[k]=r.exec(c,timeout=20)
             table=bool(d["table"].strip()); route=bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
             wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
-            handshake_match=re.search(r'last-handshake=("[^"]*"|\\S+)',d["peer"])
+            handshake_match=re.search(r'last-handshake=("[^"]*"|\S+)',d["peer"])
             handshake=bool(handshake_match and handshake_match.group(1).strip('"').lower() not in ("","never","0"))
             peer_ready=peer_count=="1" and handshake
             lan=bool(d["lan"].strip()); dns="allow-remote-requests: yes" in d["dns"]
@@ -3740,7 +3740,7 @@ class App(QMainWindow):
                 raise RuntimeError(f"Найдено интерфейсов с именем {wg}: {count}.")
             detail=r.exec(f'/interface wireguard print detail where name={ros_q(wg)}')
             match=re.search(r'public-key="([^"]+)"',detail)
-            if not match: match=re.search(r'public-key=([^\\s]+)',detail)
+            if not match: match=re.search(r'public-key=([^\s]+)',detail)
             if not match: raise RuntimeError("RouterOS не вернул public-key для интерфейса.")
             self.q.put(("WG_LOCAL_PUBLIC_KEY",match.group(1)))
         self.run_job("Создание/чтение ключа WireGuard…",job)

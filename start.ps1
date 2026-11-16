@@ -4,7 +4,7 @@ Set-Location $Root
 $Log = Join-Path $Root 'startup.log'
 try {
     Start-Transcript -Path $Log -Force | Out-Null
-    Write-Host 'MikroTik VPN Manager v1.8.0'
+    Write-Host 'MikroTik VPN Manager v1.9.0'
     Write-Host '[1/4] Searching for Python 3.13 (preferred) or a supported Python 3.10–3.12...'
 
     $PythonCommand = $null

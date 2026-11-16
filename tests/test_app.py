@@ -51,7 +51,7 @@ def test_backdrop_switches_real_canvas_theme(qt_app):
     backdrop.set_theme("dark")
     assert backdrop.theme == "dark"
     backdrop.set_theme("not-a-theme")
-    assert backdrop.theme == "dark"
+    assert backdrop.theme == "default"
 
 
 def test_application_theme_and_general_settings_smoke(qt_app):

@@ -2075,6 +2075,7 @@ class App(QMainWindow):
             cmds=[
                 ("table",f'/routing table print detail where name={ros_q(f["route_table"])}'),
                 ("main_route",'/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main'),
+                ("routing_rules",'/routing rule print terse'),
                 ("route",f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}'),
                 ("wg",f'/interface wireguard print detail where name={ros_q(f["wg_interface"])}'),
                 ("peer",f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}'),
@@ -2107,10 +2108,11 @@ class App(QMainWindow):
             dns_tcp=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-TCP")}').strip()
             dhcp_gateway=f'gateway={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
+            routing_rule_conflict=any(x["f"].get("table")==f["route_table"] for x in parse_terse(d["routing_rules"]))
             blockers=[]
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
-            for ok,msg in [(wan,"WAN-интерфейс не найден — проверь имя интерфейса"),(main_route,"Не найден активный основной default route через указанный WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
+            for ok,msg in [(wan,"WAN-интерфейс не найден — проверь имя интерфейса"),(main_route,"Не найден активный основной default route через указанный WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(not routing_rule_conflict,"Обнаружено routing rule, направляющее трафик в VPN-таблицу; проверь правила вручную"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
@@ -2128,7 +2130,8 @@ class App(QMainWindow):
                 f'DNS Firewall UDP/TCP: {dns_udp}/{dns_tcp} управляемых правил',
                 f'{"✓" if dhcp_gateway or dhcp_server in ("0","") else "⚠"} DHCP gateway: {"подтверждён" if dhcp_gateway else ("DHCP отсутствует" if dhcp_server in ("0","") else "не совпадает")}',
                 f'{"⚠" if fast else "✓"} FastTrack: {"обнаружен" if fast else "не обнаружен"}',
-                f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}']
+                f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}',
+                f'{"⚠" if routing_rule_conflict else "✓"} Routing rules → VPN table: {"обнаружены — нужна ручная проверка" if routing_rule_conflict else "не обнаружены"}']
             if dhcp_server in ("0",""): lines.append("ℹ DHCP-сервер на LAN не найден: IP-маршрутизация будет работать, но DNS на клиентах потребуется настроить вручную.")
             self.q.put(("VPN_SETUP_SCAN",{"lines":lines,"blockers":blockers,"ready":not blockers,"dhcp_server":dhcp_server}))
         self.run_job("Сканирование VPN-маршрутизации…",job)
@@ -3320,6 +3323,7 @@ class App(QMainWindow):
             "Wizard DNS TCP rule": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-TCP")}',
             "Wizard NAT rule": f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}',
             "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
+            "Wizard routing rules": '/routing rule print terse',
             "Wizard managed route": f'/ip route print detail where comment={ros_q("VPN-MANAGER-DEFAULT")}',
             "Managed NAT": "/ip firewall nat print terse",
             "DNS redirect NAT": '/ip firewall nat print terse where comment~"DNS-REDIRECT"',
@@ -3528,6 +3532,10 @@ class App(QMainWindow):
             add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
         if not failed("Wizard managed route") and not nonempty("Wizard managed route"):
             add("warn","Мастер настройки · VPN default route","Управляемый default route VPN не найден",raw["Wizard managed route"],"Проверь таблицу vpn и gateway WireGuard; обычный маршрут main должен оставаться через WAN.")
+        if not failed("Wizard routing rules"):
+            vpn_rules=[x for x in parse_terse(raw["Wizard routing rules"]) if x["f"].get("table")==f["route_table"]]
+            if vpn_rules:
+                add("warn","Мастер настройки · routing rules",f"Найдено правил, указывающих в VPN-таблицу {f['route_table']}: {len(vpn_rules)}",raw["Wizard routing rules"],"Проверь src-address/dst-address и action каждого правила. Обычный трафик должен оставаться в main; только Mangle для VPN address-list должен выбирать VPN.")
         for key,proto in (("Wizard DNS UDP rule","UDP"),("Wizard DNS TCP rule","TCP")):
             if failed(key):
                 add("info","Мастер настройки · DNS Firewall",f"Не удалось прочитать input-правило DNS {proto}",raw[key],"Проверь права SSH и повтори диагностику.")
@@ -4722,6 +4730,9 @@ class App(QMainWindow):
                     main_routes_pre=r.exec('/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main')
                     if not main_routes_pre.strip() or "inactive" in main_routes_pre.lower() or f'gateway={wg}' in main_routes_pre or f["wan_interface"].lower() not in main_routes_pre.lower():
                         raise RuntimeError("Основной default route в main отсутствует, неактивен или указывает на WireGuard. Сначала восстанови прямой WAN-маршрут; мастер не будет переводить весь интернет в VPN.")
+                    routing_rules_pre=parse_terse(r.exec("/routing rule print terse"))
+                    if any(x["f"].get("table")==table for x in routing_rules_pre):
+                        raise RuntimeError("Обнаружено routing rule, направляющее трафик в VPN-таблицу. Проверь его вручную: мастер не должен менять default-маршрут обычного трафика.")
                     filters_pre=r.exec("/ip firewall filter print detail"); mangle_pre=r.exec("/ip firewall mangle print detail")
                     if "action=fasttrack-connection" in filters_pre.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена до внесения изменений.")
                     if "action=mark-routing" in mangle_pre and MANGLE_COMMENT not in mangle_pre: raise RuntimeError("Обнаружено стороннее mark-routing правило. Автонастройка остановлена до внесения изменений.")

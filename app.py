@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "MikroTik VPN Manager"
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.10.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "MikroTikVPNManager"
 CONFIG_FILE = APP_DIR / "settings.json"
 KNOWN_HOSTS_FILE = APP_DIR / "known_hosts"
@@ -277,7 +277,8 @@ class NetworkMapView(QGraphicsView):
         self.setMinimumHeight(480)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setBackgroundBrush(QColor("#0b1220"))
-        self.setToolTip("Колесо мыши — масштаб · зажми левую кнопку и перетаскивай — перемещение")
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.setToolTip("Колесо — масштаб · перетаскивание — перемещение · двойной щелчок по узлу — центрировать")
 
     def drawBackground(self,painter,rect):
         painter.save()
@@ -302,6 +303,17 @@ class NetworkMapView(QGraphicsView):
     def fit_map(self):
         if self.scene() and not self.scene().itemsBoundingRect().isNull():
             self.fitInView(self.scene().itemsBoundingRect().adjusted(-48,-48,48,48),Qt.AspectRatioMode.KeepAspectRatio)
+
+    def center_selected(self):
+        if self.scene():
+            selected=self.scene().selectedItems()
+            if selected: self.centerOn(selected[0])
+
+    def mouseDoubleClickEvent(self,event):
+        item=self.itemAt(event.position().toPoint())
+        if item is not None:
+            item.setSelected(True); self.centerOn(item); event.accept(); return
+        super().mouseDoubleClickEvent(event)
 
 
 class Dot(QWidget):
@@ -586,7 +598,7 @@ class WindowTitleBar(QFrame):
         brand.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         row.addWidget(brand); row.addStretch()
         for label,obj,fn in (("—","ChromeButton",window.showMinimized),("□","ChromeButton",self.toggle_maximize),("×","ChromeClose",window.close)):
-            b=QPushButton(label); b.setObjectName(obj); b.setFixedSize(38,30); b.clicked.connect(fn); row.addWidget(b)
+            b=QPushButton(label); b.setObjectName(obj); b.setFixedSize(32,24); b.setCursor(Qt.CursorShape.PointingHandCursor); b.clicked.connect(fn); row.addWidget(b)
         self.max_button=row.itemAt(3).widget()
     def toggle_maximize(self):
         if self.window.isMaximized(): self.window.showNormal(); self.max_button.setText("□")
@@ -2438,7 +2450,13 @@ class App(QMainWindow):
         root=self.centralWidget()
         if isinstance(root,Backdrop): root.set_theme(theme)
         if hasattr(self,"lan_map_view"):
-            self.lan_map_view.setBackgroundBrush(QColor("#f1f5fb" if theme=="light" else ("#171a1d" if theme=="dark" else "#0b1220")))
+            map_bg=QColor("#f1f5fb" if theme=="light" else ("#171a1d" if theme=="dark" else "#0b1220"))
+            self.lan_map_view.setBackgroundBrush(map_bg)
+            self.lan_map_view.setStyleSheet(f"QGraphicsView{{background-color:{map_bg.name()};border:0;}}")
+            if hasattr(self,"lan_map_scene"): self.lan_map_scene.setBackgroundBrush(map_bg)
+            if self._lan_map_detached_view is not None:
+                self._lan_map_detached_view.setBackgroundBrush(map_bg)
+                self._lan_map_detached_view.setStyleSheet(f"QGraphicsView{{background-color:{map_bg.name()};border:0;}}")
         if theme=="light":
             extra="""QWidget{color:#202938;background:transparent}
             QMainWindow,QDialog,QMessageBox{background:#eef2f7}
@@ -2536,10 +2554,13 @@ class App(QMainWindow):
         self.lan_map_legend=QLabel("● Router   ● Network   ● Endpoint   ● New   ● Lost")
         self.lan_map_legend.setObjectName("Muted")
         fit=QPushButton("Вписать"); fit.setObjectName("QuietButton"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
+        focus=QPushButton("К выбранному"); focus.setObjectName("QuietButton"); focus.setToolTip("Переместить карту к выбранному устройству"); focus.clicked.connect(lambda:self.lan_map_view.center_selected())
+        copy=QPushButton("Копировать"); copy.setObjectName("QuietButton"); copy.setToolTip("Скопировать сведения о выбранном узле"); copy.clicked.connect(self.copy_lan_map_selection)
+        detach=QPushButton("⛶  Отдельное окно"); detach.setObjectName("PrimaryButton"); detach.setToolTip("Открыть топологию в отдельном окне"); detach.clicked.connect(self.open_lan_map_window)
         zoom_in=QPushButton("＋"); zoom_in.setObjectName("MapZoom"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
         zoom_out=QPushButton("−"); zoom_out.setObjectName("MapZoom"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
         map_tools.addWidget(self.lan_map_search); map_tools.addWidget(self.lan_map_filter)
-        map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(fit)
+        map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(focus); map_tools.addWidget(copy); map_tools.addWidget(fit); map_tools.addWidget(detach)
         canvas.layout().addLayout(map_tools)
         self.lan_map_scene=QGraphicsScene(self); self.lan_map_view=NetworkMapView(); self.lan_map_view.setScene(self.lan_map_scene)
         self.lan_map_scene.selectionChanged.connect(self.on_lan_map_node_selected)
@@ -2549,6 +2570,7 @@ class App(QMainWindow):
         canvas.layout().addWidget(self.lan_map_details)
         l.addWidget(canvas,1)
         self._lan_map_records=[]; self._lan_map_current={}; self._lan_map_new_count=0; self._lan_map_lost_count=0
+        self._lan_map_window=None; self._lan_map_detached_view=None; self._lan_map_detached_details=None
         self.lan_map_search.textChanged.connect(self.filter_lan_map)
         self.lan_map_filter.currentIndexChanged.connect(self.filter_lan_map)
         note=QLabel("Активный IP Scan отправляет сетевые запросы к адресам выбранной IPv4-подсети. Ограничение — не более /24 за один проход (до 254 адресов). Производитель определяется по локальному OUI-справочнику и может быть неизвестен. Устройства за неуправляемыми коммутаторами нельзя физически локализовать по одному MAC-адресу; такие связи отмечаются как предполагаемые.")
@@ -2563,10 +2585,12 @@ class App(QMainWindow):
         selected=self.lan_map_scene.selectedItems()
         if not selected:
             self.lan_map_details.setText("Выбери узел на карте, чтобы посмотреть его параметры.")
+            if self._lan_map_detached_details is not None: self._lan_map_detached_details.setText(self.lan_map_details.text())
             return
         data=selected[0].data(0)
         if not isinstance(data,dict) or not data:
             self.lan_map_details.setText("Системный узел топологии.")
+            if self._lan_map_detached_details is not None: self._lan_map_detached_details.setText(self.lan_map_details.text())
             return
         rows=[
             f"Устройство: {data.get('hostname') or data.get('identity') or data.get('board') or data.get('scan_name') or 'Без имени'}",
@@ -2577,7 +2601,50 @@ class App(QMainWindow):
         ]
         for key,label in (("platform","Платформа"),("board","Модель"),("signal","Сигнал"),("tx-rate","TX"),("rx-rate","RX"),("uptime","Uptime")):
             if data.get(key): rows.append(f"{label}: {data[key]}")
-        self.lan_map_details.setText("    ·    ".join(rows))
+        detail_text="    ·    ".join(rows)
+        self.lan_map_details.setText(detail_text)
+        if self._lan_map_detached_details is not None: self._lan_map_detached_details.setText(detail_text)
+
+    def copy_lan_map_selection(self):
+        selected=self.lan_map_scene.selectedItems() if hasattr(self,"lan_map_scene") else []
+        if not selected or not isinstance(selected[0].data(0),dict):
+            self.status.setText("Сначала выбери устройство на карте.")
+            return
+        data=selected[0].data(0)
+        lines=[f"{key}: {value}" for key,value in data.items() if value not in (None,"",[],{})]
+        QApplication.clipboard().setText("\\n".join(lines))
+        self.status.setText("Сведения об узле скопированы в буфер обмена.")
+
+    def open_lan_map_window(self):
+        if self._lan_map_window is not None:
+            self._lan_map_window.show(); self._lan_map_window.raise_(); self._lan_map_window.activateWindow(); return
+        dialog=QDialog(self)
+        dialog.setWindowTitle("Топология локальной сети — MikroTik VPN Manager")
+        dialog.setWindowFlags(Qt.WindowType.Window)
+        dialog.resize(1440,900); dialog.setMinimumSize(900,620)
+        dialog.setStyleSheet(self.styleSheet())
+        layout=QVBoxLayout(dialog); layout.setContentsMargins(14,14,14,14); layout.setSpacing(10)
+        heading=QHBoxLayout()
+        title=QLabel("ТОПОЛОГИЯ ЛОКАЛЬНОЙ СЕТИ"); title.setObjectName("SectionTitle")
+        subtitle=QLabel("Интерактивная карта · данные синхронизируются с основным окном"); subtitle.setObjectName("Muted")
+        heading.addWidget(title); heading.addWidget(subtitle,1)
+        fit=QPushButton("Вписать"); fit.setObjectName("QuietButton")
+        fit.clicked.connect(lambda:self._lan_map_detached_view.fit_map())
+        zoom_out=QPushButton("−"); zoom_out.setObjectName("MapZoom"); zoom_out.clicked.connect(lambda:self._lan_map_detached_view.scale(1/1.2,1/1.2))
+        zoom_in=QPushButton("＋"); zoom_in.setObjectName("MapZoom"); zoom_in.clicked.connect(lambda:self._lan_map_detached_view.scale(1.2,1.2))
+        focus=QPushButton("К выбранному"); focus.setObjectName("QuietButton"); focus.clicked.connect(lambda:self._lan_map_detached_view.center_selected())
+        copy=QPushButton("Копировать узел"); copy.setObjectName("QuietButton"); copy.clicked.connect(self.copy_lan_map_selection)
+        heading.addWidget(zoom_out); heading.addWidget(zoom_in); heading.addWidget(focus); heading.addWidget(copy); heading.addWidget(fit)
+        layout.addLayout(heading)
+        self._lan_map_detached_view=NetworkMapView(dialog); self._lan_map_detached_view.setScene(self.lan_map_scene)
+        self._lan_map_detached_view.setMinimumHeight(400); layout.addWidget(self._lan_map_detached_view,1)
+        self._lan_map_detached_details=QLabel(self.lan_map_details.text()); self._lan_map_detached_details.setObjectName("InfoNote"); self._lan_map_detached_details.setWordWrap(True)
+        layout.addWidget(self._lan_map_detached_details)
+        self._lan_map_window=dialog
+        def cleanup(_=None):
+            self._lan_map_window=None; self._lan_map_detached_view=None; self._lan_map_detached_details=None
+        dialog.finished.connect(cleanup)
+        dialog.show(); self._lan_map_detached_view.fit_map()
 
     def filter_lan_map(self,*_):
         if not hasattr(self,"_lan_map_records"): return
@@ -2769,8 +2836,12 @@ class App(QMainWindow):
         muted=QColor("#53677f" if light else ("#aeb9c2" if neutral else "#9eb0c9"))
         green=QColor("#4ade80"); blue=QColor("#72a7ff"); amber=QColor("#fbbf24"); red=QColor("#fb7185"); cyan=QColor("#67e8f9")
         scene.setBackgroundBrush(bg)
-        self.lan_map_view.grid_color=QColor(30,45,65,24) if light else QColor(255,255,255,16)
-        self.lan_map_view.viewport().update()
+        for map_view in (self.lan_map_view,self._lan_map_detached_view):
+            if map_view is not None:
+                map_view.setBackgroundBrush(bg)
+                map_view.setStyleSheet(f"QGraphicsView{{background-color:{bg.name()};border:0;}}")
+                map_view.grid_color=QColor(30,45,65,24) if light else QColor(255,255,255,16)
+                map_view.viewport().update()
         def add_node(x,y,w,h,title,subtitle,color,tooltip="",payload=None):
             path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),14,14)
             fill=QLinearGradient(x,y,x+w,y+h); fill.setColorAt(0,card.lighter(112)); fill.setColorAt(1,card)
@@ -6122,7 +6193,7 @@ STYLE="""
 QMainWindow,QDialog,QMessageBox{background:#05070d}
 QFrame#WindowTitleBar{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0b1425,stop:1 #101c32);border-bottom:1px solid rgba(130,170,230,55)}
 QLabel#ChromeBrand{color:#8fa8cc;font-size:9pt;font-weight:800;letter-spacing:1px}
-QPushButton#ChromeButton,QPushButton#ChromeClose{background:transparent;border:0;border-radius:7px;color:#a9bbd5;font-size:13pt;padding:0}
+QPushButton#ChromeButton,QPushButton#ChromeClose{background:transparent;border:0;border-radius:6px;color:#a9bbd5;font-size:11pt;padding:0;min-width:32px;max-width:32px;min-height:24px;max-height:24px}
 QPushButton#ChromeButton:hover{background:rgba(255,255,255,24);color:#ffffff}
 QPushButton#ChromeClose:hover{background:#d83d55;color:#ffffff}
 QWidget{color:#e8edf6;font-family:'Segoe UI Variable Text','Segoe UI';font-size:10pt}

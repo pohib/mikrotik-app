@@ -2109,9 +2109,10 @@ class App(QMainWindow):
         self.save_settings(); self.refresh_terminal_quick_access(); self.terminal_sets_combo.setCurrentText(name.strip())
 
     def insert_terminal_set(self):
+        name=self.terminal_sets_combo.currentText()
         try: sets=json.loads(self.settings.get("terminal_sets","{}"))
         except Exception: sets={}
-        commands=sets.get(self.terminal_sets_combo.currentText(),[])
+        commands=sets.get(name,[])
         if not commands: return
         if len(commands)==1: chosen=commands[0]
         else:

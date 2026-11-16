@@ -3749,9 +3749,6 @@ class App(QMainWindow):
         cfg={k:w.text().strip() for k,w in self.wg_inputs.items()}
         try:
             if cfg["wg_private_key"] and len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
-            if not cfg["wg_private_key"]:
-                exists=self.router_conn().exec(f'/interface wireguard print count-only where name={ros_q(self.settings["wg_interface"])}').strip()
-                if exists!="1": raise ValueError("PrivateKey пуст. Сначала создай интерфейс и ключ на MikroTik либо импортируй .conf провайдера.")
             if len(base64.b64decode(cfg["wg_public_key"],validate=True))!=32: raise ValueError("PublicKey должен быть корректным WireGuard-ключом.")
             if cfg.get("wg_preshared_key"):
                 if len(base64.b64decode(cfg["wg_preshared_key"],validate=True))!=32: raise ValueError("PresharedKey должен быть корректным ключом WireGuard (32 байта Base64).")

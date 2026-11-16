@@ -2781,7 +2781,7 @@ class App(QMainWindow):
         for rec in records:
             iface=rec.get("interface") or "Порт не определён"
             grouped.setdefault(iface,[]).append(rec)
-        interfaces=sorted(grouped,key=str.casefold); port_w=350; gap=64
+        interfaces=sorted(grouped,key=str.casefold); port_w=390; gap=64
         total_width=max(270,len(interfaces)*port_w+max(0,len(interfaces)-1)*gap)
         root_x=total_width/2-135
         # redraw router centered over all port branches
@@ -2811,17 +2811,17 @@ class App(QMainWindow):
                 cursor_y+=116; inferred_switch=True
             if infra:
                 for ni,device in enumerate(infra):
-                    nx=x+(ni%2)*172; ny=cursor_y+(ni//2)*112
+                    nx=x+(ni%2)*190; ny=cursor_y+(ni//2)*124
                     label=device.get("identity") or device.get("hostname") or device.get("board") or "Сетевое устройство"
                     details=" · ".join(v for v in [device.get("platform"),device.get("board"),device.get("ip")] if v) or device.get("mac","")
                     top,bottom,_=add_node(nx,ny,178,92,label[:26],details[:48],cyan,
                         f'{label}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nОбнаружение: {", ".join(device.get("sources",[]))}',device)
                     edge((port_x,241),(nx+80,ny),cyan)
-                cursor_y+=((len(infra)+1)//2)*116
+                cursor_y+=((len(infra)+1)//2)*128
             columns=2 if len(endpoints)>1 else 1
             for di,device in enumerate(endpoints):
                 col=di%columns; row=di//columns
-                nx=x+col*172; ny=cursor_y+row*112
+                nx=x+col*190; ny=cursor_y+row*124
                 state=device.get("state","online")
                 color={"new":amber,"returned":green,"online":green,"lost":red}.get(state,blue)
                 title=device.get("hostname") or device.get("scan_name") or device.get("ip") or device.get("mac") or "Устройство"

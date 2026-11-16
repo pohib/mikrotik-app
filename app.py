@@ -1939,14 +1939,14 @@ class App(QMainWindow):
         intro.layout().addLayout(steps)
         model=QLabel("Схема: LAN → обычные сайты → WAN напрямую; LAN → домен/IP из VPN-списка → Mangle → таблица vpn → WireGuard. IPv6 проверяется отдельно: IPv4 policy routing само по себе не гарантирует выборочную маршрутизацию IPv6.")
         model.setObjectName("InfoNote"); model.setWordWrap(True); intro.layout().addWidget(model); l.addWidget(intro)
-        p=self.panel("Шаг 1 · Параметры LAN и policy routing","Проверь автоматически найденные значения. Они должны соответствовать реальной схеме твоего MikroTik.")
-        wizard=self.panel("Шаг 2 · Обнаружение и проверка роутера","Сначала найди LAN и WAN, затем проверь, что основной маршрут в main остаётся прямым, а VPN-интерфейс и peer готовы к выборочной маршрутизации.")
+        p=self.panel("Шаг 2 · Обнаружение LAN/WAN и сетевые параметры","Сначала определи LAN и WAN автоматически, затем проверь найденные интерфейсы, подсеть и адрес DNS-шлюза.")
+        wizard=self.panel("Шаг 4 · Проверка и создание выборочной маршрутизации","После подключения WireGuard проверь основной WAN-маршрут, VPN peer и отсутствие конфликтов. Затем подготовь отдельную таблицу для выбранных доменов и IP.")
         wizard_row=QHBoxLayout()
         self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
         lan_detect_btn=QPushButton("Найти LAN/WAN автоматически"); lan_detect_btn.clicked.connect(self.discover_lan_settings)
         scan_btn=QPushButton("Проверить готовность к настройке"); scan_btn.setObjectName("PrimaryButton"); scan_btn.clicked.connect(self.scan_vpn_setup)
         full_diag_btn=QPushButton("Полная диагностика"); full_diag_btn.clicked.connect(lambda:(self.nav.setCurrentRow(3),self.run_diagnostics()))
-        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(lan_detect_btn); wizard_row.addWidget(scan_btn); wizard_row.addWidget(full_diag_btn); wizard.layout().addLayout(wizard_row)
+        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(scan_btn); wizard_row.addWidget(full_diag_btn); wizard.layout().addLayout(wizard_row)
         self.vpn_setup_report=QPlainTextEdit(); self.vpn_setup_report.setReadOnly(True); self.vpn_setup_report.setMaximumHeight(190); self.vpn_setup_report.setPlaceholderText("Состояние routing table, default route, WireGuard, LAN, DHCP, Mangle и NAT.")
         wizard.layout().addWidget(self.vpn_setup_report)
         self.vpn_setup_stage=QPushButton("Подготовить policy routing и DNS для VPN-целей"); self.vpn_setup_stage.setObjectName("PrimaryButton"); self.vpn_setup_stage.setEnabled(False); self.vpn_setup_stage.clicked.connect(self.stage_vpn_setup)
@@ -1961,6 +1961,7 @@ class App(QMainWindow):
                 wrap=QWidget(); rr=QHBoxLayout(wrap); rr.setContentsMargins(0,0,0,0); rr.addWidget(e,1); bb=QPushButton("Выбрать ключ"); bb.clicked.connect(lambda _=False, x=e:self.choose_key(x)); rr.addWidget(bb); form.addRow(label,wrap)
             else: form.addRow(label,e)
         p.layout().addLayout(form)
+        lan_row=QHBoxLayout(); lan_row.addWidget(lan_detect_btn); lan_row.addStretch(); p.layout().addLayout(lan_row)
         wg=self.panel("Шаг 3 · Подключение к VPN-провайдеру","Импортируй WireGuard .conf или создай ключ на MikroTik и зарегистрируй PublicKey у провайдера. После этого введи серверный PublicKey, Endpoint, Address и AllowedIPs. Для выборочной IPv4-маршрутизации нужен AllowedIPs 0.0.0.0/0 на peer; это не меняет основной маршрут WAN.")
         wgform=QFormLayout(); self.wg_inputs={}
         for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("PresharedKey · если выдан провайдером","wg_preshared_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
@@ -1997,10 +1998,10 @@ class App(QMainWindow):
         dohrow.addWidget(apply_doh); dohrow.addWidget(check_doh); doh.layout().addLayout(dohrow)
         doh_note=QLabel("Bootstrap DNS используется только для первоначального разрешения доменного имени DoH endpoint. После включения DoH RouterOS отправляет обычные DNS-запросы через выбранный HTTPS-сервис; автоматического отката на bootstrap DNS при отказе DoH нет. Для своего endpoint укажи доступные IPv4 DNS-серверы через запятую. Проверку TLS-сертификата оставляй включённой.")
         doh_note.setObjectName("InfoNote"); doh_note.setWordWrap(True); doh.layout().addWidget(doh_note)
-        warning=QLabel("Шаг 4 · профиль WireGuard. Применение меняет ключ (если передан), peer и добавляет IPv4 Address. Сторонние адреса не удаляются. На этом шаге policy routing не меняется. Затем снова выполни проверку готовности и подготовь инфраструктуру. DNS из .conf не применяется.")
+        warning=QLabel("Профиль WireGuard применяется отдельно от policy routing. Он меняет ключ (если передан), peer и добавляет IPv4 Address. Сторонние адреса не удаляются. После применения перейди к шагу 4 и запусти проверку готовности. DNS из .conf не применяется.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch()
-        l.addWidget(p); l.addWidget(wizard); l.addWidget(wg); l.addWidget(doh); l.addStretch(); return w
+        l.addWidget(p); l.addWidget(wg); l.addWidget(wizard); l.addWidget(doh); l.addStretch(); return w
 
     def discover_lan_settings(self):
         self.vpn_setup_status.setText("Поиск LAN-интерфейса, адреса и DHCP…")

@@ -238,7 +238,7 @@ def test_message_box_chrome_rebuilds_grid_without_stale_items(qt_app):
     layout = box.layout()
     manager.add_dialog_chrome(box, layout, "Test")
     assert layout.count() >= 2
-    assert box.findChild(QLabel, "DialogHeading") is not None
+    assert box.findChild(manager.QLabel, "DialogHeading") is not None
     box.close()
 
 

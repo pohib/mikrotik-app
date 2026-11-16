@@ -2519,7 +2519,23 @@ class App(QMainWindow):
             extra=""
         compact="QPushButton{min-height:34px;padding-top:0;padding-bottom:0;} QTreeWidget::item{padding-top:5px;padding-bottom:5px;} QTableWidget::item{padding:4px;}" if density=="compact" else ""
         controls="QPushButton{min-height:40px;min-width:90px;padding-left:15px;padding-right:15px;} QLineEdit,QComboBox,QSpinBox{min-height:40px;min-width:150px;} QPushButton#MapZoom{min-width:36px;max-width:36px;padding:0;}"
-        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+controls+"\n"+compact)
+        if theme=="light":
+            track="#e7edf5"; border="#d3deeb"; thumb1="#60a5fa"; thumb2="#2563eb"; hover1="#93c5fd"; hover2="#3b82f6"
+        elif theme=="dark":
+            track="#202428"; border="#30383e"; thumb1="#65717b"; thumb2="#46525b"; hover1="#8b98a2"; hover2="#65717b"
+        else:
+            track="rgba(255,255,255,12)"; border="rgba(255,255,255,24)"; thumb1="#60a5fa"; thumb2="#1d4ed8"; hover1="#93c5fd"; hover2="#3b82f6"
+        scrollbars=f"""
+        QScrollBar:vertical{{background:{track};width:12px;margin:3px;border:1px solid {border};border-radius:6px}}
+        QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;border:2px solid {track};border-radius:5px}}
+        QScrollBar::handle:vertical:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
+        QScrollBar:horizontal{{background:{track};height:12px;margin:3px;border:1px solid {border};border-radius:6px}}
+        QScrollBar::handle:horizontal{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {thumb1},stop:1 {thumb2});min-width:32px;border:2px solid {track};border-radius:5px}}
+        QScrollBar::handle:horizontal:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
+        QScrollBar::add-line,QScrollBar::sub-line{{width:0;height:0;border:0;background:transparent}}
+        QScrollBar::add-page,QScrollBar::sub-page,QScrollBar::corner{{background:transparent}}
+        """
+        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+controls+"\n"+compact+"\n"+scrollbars)
 
     def reset_visual_preferences(self):
         widgets=(self.ui_theme,self.ui_font_size,self.ui_density,self.ui_start_page,self.confirm_exit_check)

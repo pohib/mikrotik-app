@@ -66,12 +66,15 @@ def test_scrollbars_follow_selected_application_theme(qt_app):
             window.apply_visual_preferences()
             stylesheet = window.styleSheet()
             assert "QScrollBar:vertical" in stylesheet
+            assert "width:14px" in stylesheet
+            assert "height:14px" in stylesheet
             assert "QScrollBar:horizontal" in stylesheet
             assert "QScrollBar::handle:vertical:hover" in stylesheet
             assert "QScrollBar::handle:horizontal:hover" in stylesheet
             assert expected in stylesheet
             assert "QScrollBar::add-line" in stylesheet
     finally:
+        window._allow_close = True
         window.close()
 
 

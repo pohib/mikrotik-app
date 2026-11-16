@@ -1998,6 +1998,8 @@ class App(QMainWindow):
         base.layout().addLayout(setup_form)
         self.initial_setup_ack=QCheckBox("Я проверил список портов: WAN не включён в LAN; добавление LAN-портов/изменение IP может прервать текущее подключение.")
         self.initial_setup_ack.setWordWrap(True); base.layout().addWidget(self.initial_setup_ack)
+        pppoe_help=QLabel("Для контроля связи мастер использует два публичных ICMP probe-адреса: 1.1.1.1 и 8.8.8.8. Если оба перестанут отвечать через WireGuard, активируется резервный маршрут через WAN. Если сеть VPN-провайдера блокирует ICMP до обоих адресов, будет выбран прямой WAN даже при работающем туннеле.")
+        pppoe_help.setObjectName("Muted"); pppoe_help.setWordWrap(True); base.layout().addWidget(pppoe_help)
         setup_help=QLabel("ЧТО НАЖИМАТЬ\n1. Выбери DHCP или PPPoE по данным провайдера.\n2. Укажи физический WAN-порт (обычно ether1). Если провайдер требует VLAN, введи VLAN ID; иначе оставь поле пустым.\n3. Для PPPoE введи логин и пароль.\n4. Укажи LAN-порты, куда будут подключаться компьютеры/точки доступа. Не указывай WAN-порт.\n5. Проверь адрес LAN-шлюза и DHCP pool: пул должен находиться в этой же подсети и не включать адрес самого роутера.\n6. Отметь подтверждение, нажми «Подготовить первичную настройку», затем внимательно проверь команды в общем предпросмотре и только после этого нажми «Применить изменения».")
         setup_help.setObjectName("Muted"); setup_help.setWordWrap(True); base.layout().addWidget(setup_help)
         self.initial_setup_status=QLabel("Первичная настройка ещё не подготовлена."); self.initial_setup_status.setObjectName("StatusBar"); self.initial_setup_status.setWordWrap(True); base.layout().addWidget(self.initial_setup_status)
@@ -4604,6 +4606,18 @@ class App(QMainWindow):
         verified_by_comment={name:[x for x in verified if x["f"].get("comment")==name] for name in required}
         if any(len(verified_by_comment[name])!=1 for name in required):
             raise RuntimeError("VPN failover post-check: не все шесть probe/default routes присутствуют ровно по одному разу.")
+        expected_routes={
+            "VPN-MANAGER-WG-PROBE-1":{"dst-address":"1.1.1.1/32","gateway":wg,"scope":"10"},
+            "VPN-MANAGER-WG-PROBE-2":{"dst-address":"8.8.8.8/32","gateway":wg,"scope":"10"},
+            "VPN-MANAGER-DEFAULT":{"dst-address":"0.0.0.0/0","gateway":f"1.1.1.1@{table}","distance":"1","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-DEFAULT-2":{"dst-address":"0.0.0.0/0","gateway":f"8.8.8.8@{table}","distance":"1","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-WAN-FALLBACK-1":{"dst-address":"0.0.0.0/0","gateway":"1.1.1.1@main","distance":"2","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-WAN-FALLBACK-2":{"dst-address":"0.0.0.0/0","gateway":"8.8.8.8@main","distance":"2","target-scope":"11","check-gateway":"ping"},
+        }
+        for name,expected in expected_routes.items():
+            actual=verified_by_comment[name][0]["f"]
+            mismatch=[f"{key}: expected {value}, got {actual.get(key,'<missing>')}" for key,value in expected.items() if actual.get(key)!=value]
+            if mismatch: raise RuntimeError("Failover route "+name+" has unexpected parameters: "+"; ".join(mismatch))
         active_primary=any("A" in verified_by_comment[name][0]["flags"] for name in primary_comments)
         active_backup=any("A" in verified_by_comment[name][0]["flags"] for name in backup_comments)
         if not (active_primary or active_backup):
@@ -4629,6 +4643,7 @@ class App(QMainWindow):
             self.q.put(("LOG",f"На LAN {lan} нет активного DHCP-сервера: IP-маршрутизация доступна, DNS на клиентах нужно задать вручную."))
         route_state=self.ensure_vpn_failover_routes(r,f)
         wan_nat_entries=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(sub)} and out-interface={ros_q(f["wan_interface"])}'))
+        if len(wan_nat_entries)>1: raise RuntimeError("Найдено несколько одинаковых WAN masquerade правил для LAN; проверь их вручную.")
         if any("X" in x["flags"] for x in wan_nat_entries):
             raise RuntimeError("Найдено отключённое WAN masquerade правило для LAN. Проверь его вручную.")
         if not wan_nat_entries:
@@ -4961,6 +4976,8 @@ class App(QMainWindow):
                     conflicts=[f"{p} (bridge={port_map[p]})" for p in ports if p in port_map and port_map[p]!=bridge]
                     if conflicts: raise RuntimeError("LAN port(s) already belong to another bridge; no changes made: "+", ".join(conflicts))
                     if any(p==base for p in ports): raise RuntimeError("WAN port must not be added to LAN bridge.")
+                    if base in port_map: raise RuntimeError(f"WAN interface {base} already belongs to bridge {port_map[base]}; refusing to configure it as a WAN uplink.")
+                    if bridge==wan_if: raise RuntimeError("LAN bridge and WAN interface names must be different.")
                     # Refuse overlapping LAN networks already configured on other interfaces.
                     desired=ipaddress.ip_interface(c["lan_address"])
                     for item in parse_terse(r.exec("/ip address print terse")):
@@ -4992,8 +5009,8 @@ class App(QMainWindow):
                         if ppp and (len(ppp)!=1 or ppp[0]["f"].get("interface")!=(c["vlan_name"] or base) or ppp[0]["f"].get("user")!=c["pppoe_user"]):
                             raise RuntimeError("PPPoE interface name already exists with different parameters.")
                     nat_rows=parse_terse(r.exec(f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}'))
-                    if nat_rows and (len(nat_rows)!=1 or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade"):
-                        raise RuntimeError("Managed WAN NAT comment is already used by a different rule.")
+                    if nat_rows and (len(nat_rows)!=1 or "X" in nat_rows[0]["flags"] or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade" or nat_rows[0]["f"].get("src-address")!=c["lan_subnet"]):
+                        raise RuntimeError("Managed WAN NAT comment is already used by a different/disabled rule.")
                     # Create a router backup before making any changes.
                     backup_name="vpn-manager-before-network-setup"
                     self.cmd(r,f'/system backup save name={ros_q(backup_name)}')

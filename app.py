@@ -1952,7 +1952,7 @@ class App(QMainWindow):
         self.vpn_setup_stage=QPushButton("Подготовить policy routing и DNS для VPN-целей"); self.vpn_setup_stage.setObjectName("PrimaryButton"); self.vpn_setup_stage.setEnabled(False); self.vpn_setup_stage.clicked.connect(self.stage_vpn_setup)
         wizard.layout().addWidget(self.vpn_setup_stage)
         note=QLabel("Важно: мастер сохраняет основной default route через WAN и не переводит весь трафик в VPN. В отдельную таблицу направляются только IP из выбранного address-list. Сторонние правила не удаляются. При FastTrack, конфликтующем маршруте, стороннем mark-routing или отсутствии прямого WAN-маршрута мастер остановится. Изменения сначала показываются в предпросмотре и применяются только после подтверждения.")
-        note.setObjectName("InfoNote"); note.setWordWrap(True); wizard.layout().addWidget(note); l.addWidget(wizard)
+        note.setObjectName("InfoNote"); note.setWordWrap(True); wizard.layout().addWidget(note)
         form=QFormLayout(); self.inputs={}; form.setVerticalSpacing(12); form.setHorizontalSpacing(22); form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         fields=[("LAN bridge / интерфейс","lan_interface"),("LAN subnet","lan_subnet"),("LAN DNS IP","lan_dns"),("Routing table","route_table"),("WireGuard interface","wg_interface"),("WAN interface","wan_interface"),("Address-list","address_list")]
         for label,key in fields:
@@ -1996,10 +1996,11 @@ class App(QMainWindow):
         check_doh=QPushButton("Проверить DoH на роутере"); check_doh.clicked.connect(self.check_doh_config)
         dohrow.addWidget(apply_doh); dohrow.addWidget(check_doh); doh.layout().addLayout(dohrow)
         doh_note=QLabel("Bootstrap DNS используется только для первоначального разрешения доменного имени DoH endpoint. После включения DoH RouterOS отправляет обычные DNS-запросы через выбранный HTTPS-сервис; автоматического отката на bootstrap DNS при отказе DoH нет. Для своего endpoint укажи доступные IPv4 DNS-серверы через запятую. Проверку TLS-сертификата оставляй включённой.")
-        doh_note.setObjectName("InfoNote"); doh_note.setWordWrap(True); doh.layout().addWidget(doh_note); l.addWidget(doh)
+        doh_note.setObjectName("InfoNote"); doh_note.setWordWrap(True); doh.layout().addWidget(doh_note)
         warning=QLabel("Шаг 4 · профиль WireGuard. Применение меняет ключ (если передан), peer и добавляет IPv4 Address. Сторонние адреса не удаляются. На этом шаге policy routing не меняется. Затем снова выполни проверку готовности и подготовь инфраструктуру. DNS из .conf не применяется.")
-        warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
-        row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
+        warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning)
+        row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch()
+        l.addWidget(p); l.addWidget(wizard); l.addWidget(wg); l.addWidget(doh); l.addStretch(); return w
 
     def discover_lan_settings(self):
         self.vpn_setup_status.setText("Поиск LAN-интерфейса, адреса и DHCP…")
@@ -4760,14 +4761,19 @@ class App(QMainWindow):
                     self.prepare_router(r)
                     verified=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
                     if f'gateway={wg}' not in verified or "inactive" in verified.lower(): raise RuntimeError("Default route не подтвердился как активный.")
-                    mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
-                    if mc!="1": raise RuntimeError(f"Mangle post-check: ожидалось одно правило, найдено {mc or '0'}.")
-                    nat_count=r.exec(f'/ip firewall nat print count-only where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}').strip()
-                    if nat_count in ("0",""): raise RuntimeError("NAT post-check: masquerade для LAN через WireGuard не найден.")
-                    if nat_count not in ("1",): raise RuntimeError(f"NAT post-check: найдено несколько совпадающих правил ({nat_count}).")
+                    mangle_detail=r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}')
+                    mangle_entries=parse_terse(mangle_detail)
+                    if len(mangle_entries)!=1 or "X" in mangle_entries[0]["flags"]: raise RuntimeError("Mangle post-check: управляемое правило отсутствует, дублируется или отключено.")
+                    nat_detail=r.exec(f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}')
+                    nat_entries=parse_terse(nat_detail)
+                    if len(nat_entries)!=1 or "X" in nat_entries[0]["flags"]: raise RuntimeError("NAT post-check: управляемое правило отсутствует, дублируется или отключено.")
+                    nat_fields=nat_entries[0]["f"]
+                    if any(nat_fields.get(k)!=v for k,v in {"chain":"srcnat","action":"masquerade","src-address":f["lan_subnet"],"out-interface":wg}.items()):
+                        raise RuntimeError("NAT post-check: параметры правила не совпадают с LAN → WireGuard.")
                     for proto in ("UDP","TCP"):
-                        count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
-                        if count!="1": raise RuntimeError(f"DNS firewall post-check ({proto}): ожидалось одно правило, найдено {count or '0'}.")
+                        detail=r.exec(f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}')
+                        entries=parse_terse(detail)
+                        if len(entries)!=1 or "X" in entries[0]["flags"]: raise RuntimeError(f"DNS firewall post-check ({proto}): правило отсутствует, дублируется или отключено.")
                     if "allow-remote-requests: yes" not in r.exec("/ip dns print"): raise RuntimeError("DNS remote requests post-check не пройден.")
                     dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     if dhcp_count not in ("0",""):

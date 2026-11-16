@@ -1587,12 +1587,41 @@ class App(QMainWindow):
             QMessageBox.critical(self,"Не удалось сохранить отчёт",str(exc))
 
     def page_firewall(self):
-        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        p=self.panel("Firewall и DNS","Просмотр ключевых правил защиты DNS, NAT и policy routing. Никакие правила здесь не редактируются автоматически.")
-        row=QHBoxLayout()
-        for text,fn in [("Обновить данные",self.refresh_firewall),("Показать NAT",lambda:self.read_command("/ip firewall nat print detail",self.firewall_text)),("Показать Filter",lambda:self.read_command("/ip firewall filter print detail",self.firewall_text)),("Показать Mangle",lambda:self.read_command("/ip firewall mangle print detail",self.firewall_text)),("DNS static",lambda:self.read_command("/ip dns static print detail",self.firewall_text))]:
-            b=QPushButton(text); b.clicked.connect(fn); row.addWidget(b)
-        p.layout().addLayout(row); self.firewall_text=QPlainTextEdit(); self.firewall_text.setMinimumHeight(300); self.firewall_text.setReadOnly(True); p.layout().addWidget(self.firewall_text,1); l.addWidget(p,1); return w
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
+        head=self.panel("Конструктор Firewall","Filter, NAT и Mangle в таблицах. Изменения сначала попадают в локальную очередь; на MikroTik ничего не отправляется до отдельного применения.")
+        top=QHBoxLayout()
+        self.fw_search=QLineEdit(); self.fw_search.setPlaceholderText("Поиск по chain, action, адресу, интерфейсу или комментарию…"); self.fw_search.setClearButtonEnabled(True)
+        self.fw_search.textChanged.connect(self.filter_firewall_table)
+        refresh=QPushButton("⟳ Обновить"); refresh.setObjectName("PrimaryButton"); refresh.clicked.connect(self.refresh_firewall)
+        top.addWidget(self.fw_search,1); top.addWidget(refresh); head.layout().addLayout(top)
+        self.fw_tabs=QTabWidget(); self.fw_tabs.setObjectName("FirewallTabs"); self.fw_tables={}
+        for key,title in (("filter","Filter"),("nat","NAT"),("mangle","Mangle")):
+            table=QTableWidget(0,9); table.setObjectName("FirewallTable")
+            table.setHorizontalHeaderLabels(["№","Вкл.","Chain","Action","Protocol","Src address","Dst address","Interface","Comment"])
+            table.verticalHeader().setVisible(False); table.setAlternatingRowColors(True)
+            table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows); table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(8,QHeaderView.ResizeMode.Stretch)
+            table.setMinimumHeight(260); self.fw_tables[key]=table; self.fw_tabs.addTab(table,title)
+        head.layout().addWidget(self.fw_tabs,1)
+        actions=QHBoxLayout()
+        add=QPushButton("＋ Добавить правило"); add.setObjectName("PrimaryButton"); add.clicked.connect(self.firewall_add_rule)
+        edit=QPushButton("Редактировать"); edit.clicked.connect(self.firewall_edit_rule)
+        delete=QPushButton("Удалить"); delete.setObjectName("DangerButton"); delete.clicked.connect(self.firewall_delete_rule)
+        actions.addWidget(add); actions.addWidget(edit); actions.addWidget(delete); actions.addStretch(); head.layout().addLayout(actions)
+        l.addWidget(head,3)
+        queue_panel=self.panel("Очередь изменений","Проверь описание воздействия и команды перед применением.")
+        self.fw_queue_view=QPlainTextEdit(); self.fw_queue_view.setObjectName("FirewallQueue"); self.fw_queue_view.setReadOnly(True); self.fw_queue_view.setMinimumHeight(90)
+        self.fw_queue_view.setPlaceholderText("Очередь пуста. Добавь или отредактируй правило."); queue_panel.layout().addWidget(self.fw_queue_view)
+        qrow=QHBoxLayout()
+        clear=QPushButton("Очистить очередь"); clear.clicked.connect(self.firewall_clear_queue)
+        preview=QPushButton("Предпросмотр"); preview.clicked.connect(self.firewall_preview_queue)
+        apply=QPushButton("Применить изменения"); apply.setObjectName("PrimaryButton"); apply.clicked.connect(self.firewall_apply_queue)
+        qrow.addWidget(clear); qrow.addStretch(); qrow.addWidget(preview); qrow.addWidget(apply); queue_panel.layout().addLayout(qrow)
+        self.fw_queue=[]; self.fw_data={"filter":[],"nat":[],"mangle":[]}
+        l.addWidget(queue_panel,2); self.fw_tabs.currentChanged.connect(self.filter_firewall_table)
+        return w
 
     def page_dns_diagnostics(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -2334,6 +2363,8 @@ class App(QMainWindow):
                         v=str(result.get(key.upper(),""))
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
+                elif kind=="FW_DATA": self.on_firewall_data(*payload)
+                elif kind=="FW_APPLIED": self.firewall_applied()
                 elif kind=="TERMOUT":
                     cursor=self.terminal_output.textCursor()
                     cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -4454,13 +4485,138 @@ class App(QMainWindow):
         self.run_job("Обновление статусов целей и VPN-маршрутизации…",job)
     def read_command(self,command,target):
         self.run_job("Чтение конфигурации…",lambda:self.q.put(("TEXT",(target,self.router_conn().exec(command)))))
+
     def refresh_firewall(self):
-        commands=["/ip firewall nat print detail","/ip firewall filter print detail","/ip firewall mangle print detail","/ip dns print","/ip dns static print detail",f"/ip firewall address-list print detail where list={ros_q(self.settings['address_list'])}"]
+        commands={"filter":"/ip firewall filter print terse","nat":"/ip firewall nat print terse","mangle":"/ip firewall mangle print terse"}
         def job():
-            r=self.router_conn(); parts=[]
-            for c in commands: parts.append("$ "+c+"\n"+r.exec(c))
-            self.q.put(("TEXT",(self.firewall_text,"\n\n".join(parts))))
-        self.run_job("Сбор Firewall/DNS…",job)
+            r=self.router_conn()
+            for key,command in commands.items():
+                self.q.put(("FW_DATA",(key,r.exec(command,timeout=25))))
+        self.run_job("Загрузка Filter / NAT / Mangle…",job)
+
+    def on_firewall_data(self,key,output):
+        records=[]
+        for line in output.splitlines():
+            line=line.strip()
+            match=re.match(r"^(\\d+)\\s+(.*)$",line)
+            if not match: continue
+            number=int(match.group(1))
+            parsed=parse_terse(str(number)+" "+match.group(2))
+            if not parsed: continue
+            records.append({"number":number,"flags":parsed[0]["flags"],"fields":parsed[0]["f"]})
+        self.fw_data[key]=records
+        self.render_firewall_table(key)
+
+    def render_firewall_table(self,key):
+        table=self.fw_tables[key]; table.setRowCount(0)
+        for record in self.fw_data.get(key,[]):
+            fields=record["fields"]; row=table.rowCount(); table.insertRow(row)
+            enabled="Нет" if "X" in record["flags"] or fields.get("disabled")=="yes" else "Да"
+            interface=fields.get("in-interface") or fields.get("out-interface") or fields.get("in-interface-list") or fields.get("out-interface-list","—")
+            values=[str(record["number"]),enabled,fields.get("chain","—"),fields.get("action","—"),fields.get("protocol","—"),fields.get("src-address","—"),fields.get("dst-address","—"),interface,fields.get("comment","")]
+            for column,value in enumerate(values):
+                item=QTableWidgetItem(value); item.setData(Qt.ItemDataRole.UserRole,record)
+                if column==1 and enabled=="Нет": item.setForeground(QColor("#fbbf24"))
+                table.setItem(row,column,item)
+        self.filter_firewall_table()
+
+    def filter_firewall_table(self,*_):
+        if not hasattr(self,"fw_tabs"): return
+        key=("filter","nat","mangle")[self.fw_tabs.currentIndex()]
+        table=self.fw_tables[key]; needle=self.fw_search.text().casefold()
+        for row in range(table.rowCount()):
+            hidden=bool(needle) and not any(needle in (table.item(row,col).text().casefold() if table.item(row,col) else "") for col in range(table.columnCount()))
+            table.setRowHidden(row,hidden)
+
+    def firewall_selected(self):
+        key=("filter","nat","mangle")[self.fw_tabs.currentIndex()]
+        table=self.fw_tables[key]; row=table.currentRow()
+        if row<0: return key,None
+        item=table.item(row,0)
+        return key,item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def firewall_rule_dialog(self,key,record=None):
+        title={"filter":"Filter","nat":"NAT","mangle":"Mangle"}[key]
+        fields=["chain","action","protocol","src-address","dst-address","src-port","dst-port","in-interface","out-interface","connection-state","connection-nat-state","connection-mark","new-routing-mark","to-addresses","to-ports","comment"]
+        dialog=QDialog(self); dialog.setWindowTitle(("Редактировать " if record else "Новое правило ")+title); dialog.setMinimumWidth(520)
+        form=QFormLayout(dialog); widgets={}; current=record["fields"] if record else {}
+        for name in fields:
+            edit=QLineEdit(current.get(name,"")); edit.setPlaceholderText("не задано"); widgets[name]=edit; form.addRow(name,edit)
+        enabled=QCheckBox("Правило включено")
+        enabled.setChecked(not record or ("X" not in record["flags"] and current.get("disabled")!="yes"))
+        form.addRow("",enabled)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); form.addRow(buttons)
+        if dialog.exec()!=QDialog.DialogCode.Accepted: return
+        values={name:edit.text().strip() for name,edit in widgets.items() if edit.text().strip()}
+        if not values.get("chain") or not values.get("action"):
+            QtMessageBox.warning(self,"Недостаточно данных","Поля chain и action обязательны."); return
+        values["disabled"]="no" if enabled.isChecked() else "yes"
+        path=f"/ip firewall {key}"
+        args=" ".join(f"{name}={ros_q(value)}" for name,value in values.items())
+        if record:
+            command=f"{path} set {record['number']} {args}"
+            description=f"Изменить правило {title} №{record['number']} ({values['chain']} / {values['action']})."
+        else:
+            command=f"{path} add {args}"
+            description=f"Добавить правило {title} ({values['chain']} / {values['action']})."
+        self.fw_queue.append({"command":command,"description":description,"risk":"Изменение Firewall; проверь порядок, chain и влияние на доступ."})
+        self.update_firewall_queue()
+
+    def firewall_add_rule(self):
+        self.firewall_rule_dialog(("filter","nat","mangle")[self.fw_tabs.currentIndex()])
+
+    def firewall_edit_rule(self):
+        key,record=self.firewall_selected()
+        if not record: QtMessageBox.information(self,"Правило не выбрано","Выбери строку правила."); return
+        self.firewall_rule_dialog(key,record)
+
+    def firewall_delete_rule(self):
+        key,record=self.firewall_selected()
+        if not record: QtMessageBox.information(self,"Правило не выбрано","Выбери строку правила."); return
+        title={"filter":"Filter","nat":"NAT","mangle":"Mangle"}[key]
+        self.fw_queue.append({"command":f"/ip firewall {key} remove {record['number']}","description":f"Удалить правило {title} №{record['number']}.","risk":"Удаление правила может открыть или заблокировать сетевой доступ."})
+        self.update_firewall_queue()
+
+    def update_firewall_queue(self):
+        if not hasattr(self,"fw_queue_view"): return
+        lines=[]
+        for i,item in enumerate(self.fw_queue,1):
+            lines.extend([f"{i}. {item['description']}",f"   Риск: {item['risk']}",f"   $ {item['command']}",""])
+        self.fw_queue_view.setPlainText("\\n".join(lines) if lines else "")
+
+    def firewall_clear_queue(self):
+        self.fw_queue=[]; self.update_firewall_queue()
+
+    def firewall_preview_queue(self):
+        if not self.fw_queue:
+            QtMessageBox.information(self,"Очередь пуста","Нет изменений для предпросмотра."); return
+        dialog=QDialog(self); dialog.setWindowTitle("Предпросмотр изменений Firewall"); dialog.resize(850,520)
+        layout=QVBoxLayout(dialog); label=QLabel("Проверь каждую команду и её влияние перед подтверждением."); label.setWordWrap(True); layout.addWidget(label)
+        preview=QPlainTextEdit(); preview.setReadOnly(True)
+        preview.setPlainText("\\n\\n".join(f"{i}. {item['description']}\\nРиск: {item['risk']}\\n$ {item['command']}" for i,item in enumerate(self.fw_queue,1)))
+        preview.setStyleSheet("QPlainTextEdit {background:#07111f;color:#dce7f8;border:1px solid #304764;border-radius:10px;padding:12px;font-family:Consolas,monospace;}")
+        layout.addWidget(preview,1)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
+
+    def firewall_apply_queue(self):
+        if not self.fw_queue:
+            QtMessageBox.information(self,"Очередь пуста","Нет изменений для применения."); return
+        self.firewall_preview_queue()
+        answer=QtMessageBox.question(self,"Применить изменения Firewall",f"Отправить на MikroTik {len(self.fw_queue)} команд(ы)? Это изменит активные правила.",QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No,QtMessageBox.StandardButton.No)
+        if answer!=QtMessageBox.StandardButton.Yes: return
+        pending=list(self.fw_queue)
+        def job():
+            router=self.router_conn()
+            for item in pending:
+                output=router.exec(item["command"],timeout=30)
+                if re.search(r"failure:|expected end of command|syntax error",output,re.I):
+                    raise RuntimeError(item["command"]+"\\n"+output)
+            self.q.put(("FW_APPLIED",None))
+        self.run_job("Применение очереди Firewall…",job)
+
+    def firewall_applied(self):
+        self.fw_queue=[]; self.update_firewall_queue(); self.refresh_firewall()
 
     def choose_key(self,e):
         p,_=QFileDialog.getOpenFileName(self,"Выбрать приватный SSH-ключ",str(Path.home()),"All files (*.*)")

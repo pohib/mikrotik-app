@@ -4360,14 +4360,17 @@ class App(QMainWindow):
         alist=self.settings["address_list"]
         if k=="Домен":
             comment=f"VPN-MANAGER:{t}"
-            if r.exec(f'/ip dns static print count-only where comment={ros_q(comment)}').strip().isdigit() and int(r.exec(f'/ip dns static print count-only where comment={ros_q(comment)}').strip())>0: return
+            count=r.exec(f'/ip dns static print count-only where comment={ros_q(comment)}').strip()
+            if count=="1": return
+            if count not in ("0",""): raise RuntimeError(f"Для домена {t} найдено несколько управляемых FWD-записей ({count}); дубликаты не изменены.")
             old=r.exec(f'/ip dns static print detail where name={ros_q(t)}')
             if old: raise RuntimeError(f"Уже существует DNS static запись для {t}; не перезаписываю её автоматически:\n{old}")
             self.cmd(r,target_cmd(self.settings,t,k))
         else:
             comment=f"VPN-MANAGER-CIDR:{t}"
             count=r.exec(f'/ip firewall address-list print count-only where comment={ros_q(comment)}').strip()
-            if count.isdigit() and int(count)>0: return
+            if count=="1": return
+            if count not in ("0",""): raise RuntimeError(f"Для IP {t} найдено несколько управляемых address-list записей ({count}); дубликаты не изменены.")
             self.cmd(r,target_cmd(self.settings,t,k))
 
     def pending_action_details(self,a):
@@ -4682,8 +4685,17 @@ class App(QMainWindow):
                     self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall и DNS resolver проверены."))
                 elif k=="apply_targets":
                     self.prepare_router(r)
-                    for t,kind in a["targets"]: self.apply_target(r,t,kind)
+                    for t,kind in a["targets"]:
+                        self.apply_target(r,t,kind)
+                        if kind=="Домен":
+                            count=r.exec(f'/ip dns static print count-only where comment={ros_q("VPN-MANAGER:"+t)}').strip()
+                            if count!="1": raise RuntimeError(f"Проверка домена {t}: ожидалась одна DNS FWD-запись, найдено {count or '0'}.")
+                        else:
+                            count=r.exec(f'/ip firewall address-list print count-only where list={ros_q(self.settings["address_list"])} and address={ros_q(t)} and comment={ros_q("VPN-MANAGER-CIDR:"+t)}').strip()
+                            if count!="1": raise RuntimeError(f"Проверка IP {t}: запись address-list не подтвердилась.")
                     self.cmd(r,"/ip dns cache flush")
+                    self.fetch_targets(r); self.fetch_mangle_status(r)
+                    self.q.put(("LOG","VPN targets post-check: DNS FWD и IP address-list подтверждены на MikroTik."))
                 elif k=="remove_selected":
                     for t,kind in a["targets"]:
                         comment=f"VPN-MANAGER:{t}" if kind=="Домен" else f"VPN-MANAGER-CIDR:{t}"

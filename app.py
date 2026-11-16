@@ -3311,8 +3311,7 @@ class App(QMainWindow):
         self.terminal_input.draft=""
         self.terminal_input.clear()
         stamp=datetime.now().strftime("%H:%M:%S")
-        self.terminal_output.appendPlainText(f"\n[{stamp}] $ {command}")
-        self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+        self.append_terminal_text(f"[{stamp}] $ {command}", "#c9d7e8")
         self.terminal_history_hint.setText(f"↑ / ↓  история команд · {len(self.terminal_history)}")
         def job():
             try:
@@ -3322,6 +3321,22 @@ class App(QMainWindow):
             except Exception as e:
                 self.q.put(("TERMOUT","ОШИБКА: "+str(e)))
         self.run_job("RouterOS CLI: "+command,job)
+
+    def append_terminal_text(self, text, color="#c9d7e8"):
+        """Append one terminal line without leaking its color into later lines."""
+        cursor=self.terminal_output.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertBlock()
+        fmt=QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        cursor.setCharFormat(fmt)
+        cursor.insertText(str(text))
+        # Keep the editor's insertion format neutral for subsequent typing/output.
+        neutral=QTextCharFormat()
+        neutral.setForeground(QColor("#c9d7e8"))
+        cursor.setCharFormat(neutral)
+        self.terminal_output.setTextCursor(cursor)
+        self.terminal_output.ensureCursorVisible()
 
     def pages_changed(self,index):
         titles=[("Мастер настройки VPN","Первичная настройка MikroTik: LAN, WireGuard, policy routing и контроль результата"),("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","Сетевой профиль и DNS-over-HTTPS"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения"),("Карта локальной сети","Устройства LAN: DHCP, ARP, MAC, hostname и история обнаружения")]
@@ -3403,16 +3418,11 @@ class App(QMainWindow):
                 elif kind=="FW_DATA": self.on_firewall_data(*payload)
                 elif kind=="FW_APPLIED": self.firewall_applied()
                 elif kind=="TERMOUT":
-                    cursor=self.terminal_output.textCursor()
-                    cursor.movePosition(QTextCursor.MoveOperation.End)
-                    cursor.insertBlock()
-                    fmt=QTextCharFormat()
                     is_error=str(payload).startswith("ОШИБКА:")
-                    fmt.setForeground(QColor("#fb7185" if is_error else "#4ade80"))
-                    cursor.setCharFormat(fmt)
-                    cursor.insertText(str(payload))
-                    self.terminal_output.setTextCursor(cursor)
-                    self.terminal_output.ensureCursorVisible()
+                    self.append_terminal_text(
+                        str(payload),
+                        "#fb7185" if is_error else "#4ade80",
+                    )
                 elif kind=="DISCONNECTED":
                     self.auth_btn.setText("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")

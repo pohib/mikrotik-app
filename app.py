@@ -3717,6 +3717,8 @@ class App(QMainWindow):
         try:
             if len(base64.b64decode(cfg["wg_private_key"],validate=True))!=32: raise ValueError("PrivateKey должен быть корректным WireGuard-ключом (32 байта Base64).")
             if len(base64.b64decode(cfg["wg_public_key"],validate=True))!=32: raise ValueError("PublicKey должен быть корректным WireGuard-ключом.")
+            if cfg.get("wg_preshared_key"):
+                if len(base64.b64decode(cfg["wg_preshared_key"],validate=True))!=32: raise ValueError("PresharedKey должен быть корректным ключом WireGuard (32 байта Base64).")
             try: ipaddress.ip_address(cfg["wg_endpoint"])
             except ValueError:
                 if not re.fullmatch(r"[A-Za-z0-9.-]+",cfg["wg_endpoint"]): raise ValueError("Endpoint: укажи домен или IP без порта.")
@@ -3752,7 +3754,8 @@ class App(QMainWindow):
             r.exec(f"/interface wireguard set [find where name={q(wg)}] private-key={q(cfg['wg_private_key'])} mtu={int(cfg['wg_mtu'])}",10)
         peer_count=r.exec(f"/interface wireguard peers print count-only where interface={q(wg)}").strip()
         if peer_count not in ("0","1"): raise RuntimeError(f"На интерфейсе {wg} найдено peer: {peer_count}. Автоматически не выбираю, какой заменять.")
-        peer_fields=f"public-key={q(cfg['wg_public_key'])} endpoint-address={q(cfg['wg_endpoint'])} endpoint-port={int(cfg['wg_port'])} allowed-address={q(cfg['wg_allowed'])} persistent-keepalive={int(cfg['wg_keepalive'])}s"
+        psk=cfg.get("wg_preshared_key","")
+        peer_fields=f"public-key={q(cfg['wg_public_key'])} preshared-key={q(psk)} endpoint-address={q(cfg['wg_endpoint'])} endpoint-port={int(cfg['wg_port'])} allowed-address={q(cfg['wg_allowed'])} persistent-keepalive={int(cfg['wg_keepalive'])}s"
         if peer_count=="1": r.exec(f"/interface wireguard peers set [find where interface={q(wg)}] {peer_fields}",10)
         else: r.exec(f"/interface wireguard peers add interface={q(wg)} {peer_fields}",10)
         self.q.put(("LOG",f"Создан/обновлён WireGuard-интерфейс {wg} и peer; private-key скрыт в журнале."))

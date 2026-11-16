@@ -2060,25 +2060,29 @@ class App(QMainWindow):
             for k,c in cmds: d[k]=r.exec(c,timeout=20)
             table=bool(d["table"].strip()); route=bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
             wg=bool(d["wg"].strip()); lan=bool(d["lan"].strip()); dns="allow-remote-requests: yes" in d["dns"]
+            dhcp_server=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
             dhcp=f'dns-server={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
             nat=f'out-interface={f["wg_interface"]}' in d["nat"] and "action=masquerade" in d["nat"] and f'src-address={f["lan_subnet"]}' in d["nat"]
             fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
             blockers=[]
-            for ok,msg in [(wg,"WireGuard-интерфейс не найден"),(lan,"LAN-интерфейс не найден"),(dns,"allow-remote-requests выключен"),(dhcp,f"DHCP не выдаёт DNS {f['lan_dns']}"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
+            lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
+            assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
+            for ok,msg in [(wg,"WireGuard-интерфейс не найден — импортируй профиль и создай туннель"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
                 f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
                 f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
                 f'{"✓" if lan else "✕"} LAN {f["lan_interface"]}: {"найден" if lan else "НЕ НАЙДЕН"}',
-                f'{"✓" if dns else "✕"} DNS remote requests: {"включён" if dns else "выключен"}',
-                f'{"✓" if dhcp else "✕"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else "не совпадает"}',
+                f'{"✓" if dns else "＋"} DNS remote requests: {"включён" if dns else "будет включён с ограничением доступа из LAN"}',
+                f'{"✓" if dhcp else "＋"} DHCP DNS {f["lan_dns"]}: {"совпадает" if dhcp else ("будет обновлён" if dhcp_server not in ("0","") else "DHCP-сервер не найден — DNS клиентам настрой вручную")}',
                 f'{"✓" if mc=="1" else "＋"} Управляемое Mangle: {mc or "0"}',
                 f'{"✓" if nat else "＋"} NAT masquerade: {"найден" if nat else "отсутствует"}',
                 f'{"⚠" if fast else "✓"} FastTrack: {"обнаружен" if fast else "не обнаружен"}',
                 f'{"⚠" if foreign else "✓"} Сторонний mark-routing: {"обнаружен" if foreign else "не обнаружен"}']
-            self.q.put(("VPN_SETUP_SCAN",{"lines":lines,"blockers":blockers,"ready":not blockers}))
+            if dhcp_server in ("0",""): lines.append("ℹ DHCP-сервер на LAN не найден: IP-маршрутизация будет работать, но DNS на клиентах потребуется настроить вручную.")
+            self.q.put(("VPN_SETUP_SCAN",{"lines":lines,"blockers":blockers,"ready":not blockers,"dhcp_server":dhcp_server}))
         self.run_job("Сканирование VPN-маршрутизации…",job)
 
     def on_vpn_setup_scan(self,payload):
@@ -4557,8 +4561,24 @@ class App(QMainWindow):
                     f=dict(self.settings); table=f["route_table"]; wg=f["wg_interface"]
                     if r.exec(f'/interface wireguard print count-only where name={ros_q(wg)}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["lan_interface"])}').strip()!="1":
                         raise RuntimeError("Интерфейс WireGuard или LAN изменился после сканирования. Повтори скан.")
-                    if "allow-remote-requests: yes" not in r.exec("/ip dns print") or f'dns-server={f["lan_dns"]}' not in r.exec("/ip dhcp-server network print detail").replace(" ",""):
-                        raise RuntimeError("DNS/DHCP prerequisites не выполнены. Ничего не применено.")
+                    # DNS разрешаем только для LAN и создаём ограничивающие input-правила перед остальными фильтрами.
+                    lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns=ipaddress.ip_address(f["lan_dns"])
+                    if lan_dns not in lan_net: raise RuntimeError("LAN DNS IP не входит в LAN subnet.")
+                    assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns))}').strip()
+                    if assigned=="0": raise RuntimeError("LAN DNS IP не назначен LAN-интерфейсу. Автоматическая настройка DNS остановлена.")
+                    dns_state=r.exec("/ip dns print")
+                    if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
+                    for proto in ("udp","tcp"):
+                        comment=f"VPN-MANAGER-LAN-DNS-{proto.upper()}"
+                        count=r.exec(f'/ip firewall filter print count-only where comment={ros_q(comment)}').strip()
+                        if count=="0": self.cmd(r,f'/ip firewall filter add chain=input action=accept protocol={proto} dst-port=53 src-address={f["lan_subnet"]} comment={ros_q(comment)} place-before=0')
+                        elif count!="1": raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {comment}")
+                    dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
+                    if dhcp_count not in ("0",""):
+                        network_count=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip()
+                        if network_count=="0": self.cmd(r,f'/ip dhcp-server network add address={f["lan_subnet"]} gateway={f["lan_dns"]} dns-server={f["lan_dns"]}')
+                        elif network_count=="1": self.cmd(r,f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}')
+                        else: raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей; автоматическое изменение остановлено.")
                     filters=r.exec("/ip firewall filter print detail"); all_mangle=r.exec("/ip firewall mangle print detail")
                     if "action=fasttrack-connection" in filters.lower(): raise RuntimeError("Обнаружен FastTrack. Автонастройка остановлена.")
                     if "action=mark-routing" in all_mangle and MANGLE_COMMENT not in all_mangle: raise RuntimeError("Обнаружено стороннее mark-routing правило.")

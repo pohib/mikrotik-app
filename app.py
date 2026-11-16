@@ -1923,7 +1923,7 @@ class App(QMainWindow):
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
         p=self.panel("Сетевые параметры","Здесь находятся параметры LAN, policy routing и WireGuard. SSH-авторизация вынесена в отдельное окно входа.")
-        wizard=self.panel("Мастер настройки VPN-маршрутизации","1. Заполни параметры ниже. 2. Сохрани их и проверь роутер. 3. Мастер покажет существующие и недостающие объекты. 4. Подготовь создание и подтверди его в общей очереди.")
+        wizard=self.panel("Мастер настройки VPN с нуля","Порядок настройки: 1. Подключись к MikroTik по SSH. 2. Нажми «Найти LAN автоматически» или укажи LAN-параметры вручную. 3. Ниже импортируй .conf от VPN-провайдера и нажми «Применить новый VPN-профиль» — если интерфейса ещё нет, он будет создан. 4. Вернись сюда, проверь роутер и подготовь policy routing. 5. После применения добавляй домены и IP в разделе «VPN-маршрутизация».")
         wizard_row=QHBoxLayout()
         self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
         lan_detect_btn=QPushButton("① Найти LAN автоматически"); lan_detect_btn.clicked.connect(self.discover_lan_settings)
@@ -4278,9 +4278,13 @@ class App(QMainWindow):
         if "allow-remote-requests: yes" not in dns: raise RuntimeError("На роутере выключен allow-remote-requests. Автоматически не включаю.")
         try: ipaddress.ip_address(f["lan_dns"])
         except ValueError as e: raise ValueError("LAN DNS IP должен быть корректным IP-адресом") from e
-        dhcp=r.exec("/ip dhcp-server network print detail")
-        if f"dns-server={f['lan_dns']}" not in dhcp.replace(" ", ""):
-            raise RuntimeError(f"DHCP network не подтверждает dns-server={f['lan_dns']}. Сначала проверь DNS, выдаваемый LAN-клиентам.")
+        dhcp_servers=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(lan)} and disabled=no').strip()
+        if dhcp_servers not in ("0",""):
+            dhcp=r.exec(f'/ip dhcp-server network print detail where address={ros_q(sub)}')
+            if f"dns-server={f['lan_dns']}" not in dhcp.replace(" ", ""):
+                raise RuntimeError(f"DHCP network для {sub} не подтверждает dns-server={f['lan_dns']}. Проверь DHCP-настройки LAN.")
+        else:
+            self.q.put(("LOG",f"На LAN {lan} нет активного DHCP-сервера: IP-маршрутизация доступна, DNS на клиентах нужно задать вручную."))
         route=r.exec(f"/ip route print detail where routing-table={ros_q(table)}")
         if f"gateway={wg}" not in route or "dst-address=0.0.0.0/0" not in route or "inactive" in route.lower(): raise RuntimeError(f"Не найден активный default route {table} через {wg}. Маршруты автоматически не создаю.")
         filters=r.exec("/ip firewall filter print detail")

@@ -1926,8 +1926,9 @@ class App(QMainWindow):
         wizard=self.panel("Мастер настройки VPN-маршрутизации","1. Заполни параметры ниже. 2. Сохрани их и проверь роутер. 3. Мастер покажет существующие и недостающие объекты. 4. Подготовь создание и подтверди его в общей очереди.")
         wizard_row=QHBoxLayout()
         self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
-        scan_btn=QPushButton("① Проверить роутер"); scan_btn.setObjectName("PrimaryButton"); scan_btn.clicked.connect(self.scan_vpn_setup)
-        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(scan_btn); wizard.layout().addLayout(wizard_row)
+        lan_detect_btn=QPushButton("① Найти LAN автоматически"); lan_detect_btn.clicked.connect(self.discover_lan_settings)
+        scan_btn=QPushButton("② Проверить роутер"); scan_btn.setObjectName("PrimaryButton"); scan_btn.clicked.connect(self.scan_vpn_setup)
+        wizard_row.addWidget(self.vpn_setup_status,1); wizard_row.addWidget(lan_detect_btn); wizard_row.addWidget(scan_btn); wizard.layout().addLayout(wizard_row)
         self.vpn_setup_report=QPlainTextEdit(); self.vpn_setup_report.setReadOnly(True); self.vpn_setup_report.setMaximumHeight(190); self.vpn_setup_report.setPlaceholderText("Состояние routing table, default route, WireGuard, LAN, DHCP, Mangle и NAT.")
         wizard.layout().addWidget(self.vpn_setup_report)
         self.vpn_setup_stage=QPushButton("② Подготовить создание недостающих правил"); self.vpn_setup_stage.setObjectName("PrimaryButton"); self.vpn_setup_stage.setEnabled(False); self.vpn_setup_stage.clicked.connect(self.stage_vpn_setup)
@@ -1976,6 +1977,65 @@ class App(QMainWindow):
         warning=QLabel("Будут изменены ключ интерфейса, параметры peer и адрес WG-интерфейса. Mangle, NAT, address-list и default route не меняются. Старый адрес на WG-интерфейсе заменяется, если указан новый Address. DNS из .conf не применяется: DNS-политика MikroTik остаётся прежней.")
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning); l.addWidget(wg)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch(); l.addWidget(p,1); return w
+
+    def discover_lan_settings(self):
+        self.vpn_setup_status.setText("Поиск LAN-интерфейса, адреса и DHCP…")
+        def job():
+            r=self.router_conn()
+            raw={
+                "addresses":r.exec("/ip address print terse"),
+                "dhcp":r.exec("/ip dhcp-server print terse"),
+                "dhcp_networks":r.exec("/ip dhcp-server network print terse"),
+                "routes":r.exec("/ip route print terse where dst-address=0.0.0.0/0"),
+                "interfaces":r.exec("/interface print terse"),
+            }
+            addresses=parse_terse(raw["addresses"]); dhcps=parse_terse(raw["dhcp"])
+            networks=parse_terse(raw["dhcp_networks"]); routes=parse_terse(raw["routes"])
+            private=[]
+            for item in addresses:
+                f=item["f"]
+                try:
+                    iface=ipaddress.ip_interface(f.get("address",""))
+                    if iface.version==4 and iface.ip.is_private and not iface.ip.is_loopback:
+                        private.append((f.get("interface",""),str(iface),str(iface.ip),str(iface.network)))
+                except Exception: pass
+            wan_candidates=[]
+            for item in routes:
+                gw=item["f"].get("immediate-gw","")
+                if "%" in gw: wan_candidates.append(gw.rsplit("%",1)[-1])
+            wan=wan_candidates[0] if wan_candidates else self.settings.get("wan_interface","WAN")
+            dhcp_ifaces=[]
+            for item in dhcps:
+                f=item["f"]
+                if "X" not in item["flags"] and f.get("disabled","false")!="true":
+                    dhcp_ifaces.append(f.get("interface",""))
+            matches=[x for x in private if x[0] in dhcp_ifaces and x[0] not in (wan,self.settings.get("wg_interface",""))]
+            candidates=matches or [x for x in private if x[0] not in (wan,self.settings.get("wg_interface",""))]
+            unique={x[0]:x for x in candidates if x[0]}
+            if len(unique)!=1:
+                self.q.put(("LAN_DISCOVERY",{"ok":False,"message":f"Автоматически определить LAN однозначно не удалось. Найдено частных IPv4-интерфейсов: {', '.join(sorted(unique)) or 'нет'}. Выбери LAN bridge вручную в сетевых параметрах и повтори скан.","candidates":list(unique.values())}))
+                return
+            selected=next(iter(unique.values()))
+            iface,address,ip,network=selected
+            matching_net=next((x["f"] for x in networks if x["f"].get("address")==network),{})
+            dhcp_dns=matching_net.get("dns-server","").split(",")[0].strip()
+            chosen_dns=dhcp_dns if dhcp_dns and dhcp_dns!="0.0.0.0" else ip
+            self.q.put(("LAN_DISCOVERY",{"ok":True,"interface":iface,"address":address,"ip":ip,"network":network,"dns":chosen_dns,"wan":wan,"dhcp":iface in dhcp_ifaces,"message":f"Найден LAN: {iface}, адрес {address}, сеть {network}. WAN-кандидат: {wan}. DHCP {'обнаружен' if iface in dhcp_ifaces else 'не обнаружен на этом интерфейсе'}."}))
+        self.run_job("Автоопределение LAN…",job)
+
+    def on_lan_discovery(self,payload):
+        if not payload.get("ok"):
+            self.vpn_setup_status.setText("LAN не определён автоматически")
+            self.vpn_setup_report.setPlainText(payload["message"]+"\n\nКандидаты:\n"+ "\n".join(f"• {x[0]} — {x[1]}" for x in payload.get("candidates",[])))
+            return
+        values={"lan_interface":payload["interface"],"lan_subnet":payload["network"],"lan_dns":payload["dns"],"wan_interface":payload["wan"]}
+        self.settings.update(values)
+        for key,value in values.items():
+            if key in self.inputs: self.inputs[key].setText(value)
+        self.save_settings()
+        self.vpn_setup_status.setText("LAN найден · проверь параметры и выполни сканирование")
+        self.vpn_setup_report.setPlainText(payload["message"]+"\n\nПараметры подставлены автоматически. Перед применением проверь, что это действительно твоя LAN-сеть.")
+        self.log("LAN autodiscovery: "+payload["message"])
 
     def scan_vpn_setup(self):
         try:
@@ -2435,6 +2495,7 @@ class App(QMainWindow):
                         v=str(result.get(key.upper(),""))
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
+                elif kind=="LAN_DISCOVERY": self.on_lan_discovery(payload)
                 elif kind=="VPN_SETUP_SCAN": self.on_vpn_setup_scan(payload)
                 elif kind=="FW_DATA": self.on_firewall_data(*payload)
                 elif kind=="FW_APPLIED": self.firewall_applied()

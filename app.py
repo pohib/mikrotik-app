@@ -777,6 +777,9 @@ def add_dialog_chrome(dialog, layout, title):
     # Сохраняем фирменное безрамочное окно без системной Windows-обёртки.
     # Масштабирование выполняется за компактный QSizeGrip в правом нижнем углу.
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+    # Changing window flags can recreate Qt's internal QMessageBox/QFileDialog layout.
+    # Reacquire it only after all operations that may replace the C++ layout object.
+    layout=dialog.layout()
     dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
     dialog.setMinimumSize(560, 380)
     dialog.setObjectName("AppDialog")

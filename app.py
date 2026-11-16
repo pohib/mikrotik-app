@@ -2539,7 +2539,7 @@ class App(QMainWindow):
         QScrollBar:vertical{{background:{track};width:12px;margin:3px;border:1px solid {border};border-radius:6px}}
         QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;border:2px solid {track};border-radius:5px}}
         QScrollBar::handle:vertical:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
-        QScrollBar:horizontal{{background:{track};height:12px;margin:3px;border:1px solid {border};border-radius:6px}}
+        QScrollBar:horizontal{{background:{track};height:14px;margin:3px;border:1px solid {border};border-radius:7px}}
         QScrollBar::handle:horizontal{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {thumb1},stop:1 {thumb2});min-width:32px;border:2px solid {track};border-radius:5px}}
         QScrollBar::handle:horizontal:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
         QScrollBar::add-line,QScrollBar::sub-line{{width:0;height:0;border:0;background:transparent}}

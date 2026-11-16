@@ -4682,7 +4682,8 @@ class App(QMainWindow):
                     if dhcp_count not in ("0",""):
                         dhcp_verify=r.exec(f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}')
                         if f'dns-server={f["lan_dns"]}' not in dhcp_verify.replace(" ","") or f'gateway={f["lan_dns"]}' not in dhcp_verify.replace(" ",""): raise RuntimeError("DHCP gateway/DNS post-check не пройден.")
-                    self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall и DNS resolver проверены."))
+                    self.fetch_mangle_status(r); self.fetch_targets(r)
+                    self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall, DHCP и DNS resolver проверены."))
                 elif k=="apply_targets":
                     self.prepare_router(r)
                     for t,kind in a["targets"]:

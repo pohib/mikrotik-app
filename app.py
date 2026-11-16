@@ -4498,7 +4498,7 @@ class App(QMainWindow):
         records=[]
         for line in output.splitlines():
             line=line.strip()
-            match=re.match(r"^(\\d+)\\s+(.*)$",line)
+            match=re.match(r"^(\d+)\s+(.*)$",line)
             if not match: continue
             number=int(match.group(1))
             parsed=parse_terse(str(number)+" "+match.group(2))

@@ -2073,6 +2073,8 @@ class App(QMainWindow):
         copykey=QPushButton("Копировать"); copykey.clicked.connect(lambda: QApplication.clipboard().setText(self.wg_local_public_key.text()) if self.wg_local_public_key.text() else None); keyrow.addWidget(copykey)
         wg.layout().addLayout(keyrow)
         doh=self.panel("DNS-over-HTTPS · настройки резолвера","Выбери совместимый с RouterOS DoH-сервис. Пресет подставит HTTPS endpoint и bootstrap DNS IP; оба значения можно проверить и изменить вручную.")
+        doh_guide=QLabel("ЗАЧЕМ: DoH шифрует DNS-запросы между MikroTik и выбранным HTTPS-резолвером. ЧТО ДЕЛАЕТ: RouterOS использует endpoint и bootstrap IP для разрешения имени DoH-сервера; локальные клиенты продолжают обращаться к DNS MikroTik по LAN. ЧТО НАЖИМАТЬ: включи «Использовать DoH», выбери пресет или введи свой HTTPS URL, проверь bootstrap IPv4 и оставь проверку TLS включённой. Нажми «Подготовить применение DoH», просмотри команды в предпросмотре, подтверди изменения и затем нажми «Проверить DoH на роутере».")
+        doh_guide.setObjectName("InfoNote"); doh_guide.setWordWrap(True); doh.layout().addWidget(doh_guide)
         self.doh_enabled=QCheckBox("Использовать DoH")
         self.doh_enabled.setChecked(self.settings.get("doh_enabled","1")=="1")
         self.doh_preset=QComboBox()

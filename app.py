@@ -1943,7 +1943,7 @@ class App(QMainWindow):
                 wrap=QWidget(); rr=QHBoxLayout(wrap); rr.setContentsMargins(0,0,0,0); rr.addWidget(e,1); bb=QPushButton("Выбрать ключ"); bb.clicked.connect(lambda _=False, x=e:self.choose_key(x)); rr.addWidget(bb); form.addRow(label,wrap)
             else: form.addRow(label,e)
         p.layout().addLayout(form)
-        wg=self.panel("Профиль WireGuard / смена VPN-провайдера","Импортируй конфигурацию провайдера .conf или заполни поля вручную. Правила маршрутизации сохраняются.")
+        wg=self.panel("Шаг 3 · Подключение к VPN-провайдеру","Нужен WireGuard .conf от провайдера (или те же параметры вручную: PrivateKey, PublicKey сервера, Endpoint, Address и AllowedIPs). Импорт не отправляет файл в интернет: секретный ключ не сохраняется в настройках приложения. Если интерфейса ещё нет, он будет создан после подтверждения.")
         wgform=QFormLayout(); self.wg_inputs={}
         for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("PresharedKey · если выдан провайдером","wg_preshared_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
             e=QLineEdit("" if key in ("wg_private_key","wg_preshared_key") else self.settings.get(key,""))
@@ -4595,6 +4595,19 @@ class App(QMainWindow):
                     self.prepare_router(r)
                     verified=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
                     if f'gateway={wg}' not in verified or "inactive" in verified.lower(): raise RuntimeError("Default route не подтвердился как активный.")
+                    mc=r.exec(f'/ip firewall mangle print count-only where comment={ros_q(MANGLE_COMMENT)}').strip()
+                    if mc!="1": raise RuntimeError(f"Mangle post-check: ожидалось одно правило, найдено {mc or '0'}.")
+                    nat_count=r.exec(f'/ip firewall nat print count-only where comment={ros_q(NAT_COMMENT)}').strip()
+                    if nat_count!="1": raise RuntimeError(f"NAT post-check: ожидалось одно управляемое правило, найдено {nat_count or '0'}.")
+                    for proto in ("UDP","TCP"):
+                        count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
+                        if count!="1": raise RuntimeError(f"DNS firewall post-check ({proto}): ожидалось одно правило, найдено {count or '0'}.")
+                    if "allow-remote-requests: yes" not in r.exec("/ip dns print"): raise RuntimeError("DNS remote requests post-check не пройден.")
+                    dhcp_count=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
+                    if dhcp_count not in ("0",""):
+                        dhcp_verify=r.exec(f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}')
+                        if f'dns-server={f["lan_dns"]}' not in dhcp_verify.replace(" ",""): raise RuntimeError("DHCP DNS post-check не пройден.")
+                    self.q.put(("LOG","VPN infrastructure post-check: routing table, route, Mangle, NAT, DNS firewall и DNS resolver проверены."))
                 elif k=="apply_targets":
                     self.prepare_router(r)
                     for t,kind in a["targets"]: self.apply_target(r,t,kind)

@@ -71,9 +71,19 @@ def test_scrollbars_use_custom_antialiased_painter(qt_app):
     finally:
         painter.end()
 
-    # The extreme corner stays transparent while the center of the track is painted.
-    assert image.toImage().pixelColor(0, 0).alpha() == 0
-    assert image.toImage().pixelColor(9, 70).alpha() > 0
+    option = manager.QStyleOptionSlider()
+    scrollbar.initStyleOption(option)
+    slider_rect = qt_app.style().subControlRect(
+        manager.QStyle.ComplexControl.CC_ScrollBar,
+        option,
+        manager.QStyle.SubControl.SC_ScrollBarSlider,
+        scrollbar,
+    )
+    rendered = image.toImage()
+    # The handle center is painted, while its rounded top-left corner remains the track color.
+    assert not slider_rect.isEmpty()
+    assert rendered.pixelColor(9, slider_rect.top() + 1) != rendered.pixelColor(4, slider_rect.top() + 1)
+    assert rendered.pixelColor(9, 70) != rendered.pixelColor(0, 0)
     scrollbar.close()
 
 

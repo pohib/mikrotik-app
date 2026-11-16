@@ -277,8 +277,28 @@ class NetworkMapView(QGraphicsView):
         self.setMinimumHeight(480)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setBackgroundBrush(QColor("#0b1220"))
+        self.viewport().setAutoFillBackground(True)
+        self.set_canvas_background(QColor("#0b1220"))
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setToolTip("Колесо — масштаб · перетаскивание — перемещение · двойной щелчок по узлу — центрировать")
+
+    def set_canvas_background(self,color):
+        """Apply the canvas color to the view, scene and actual Qt viewport."""
+        if not isinstance(color,QColor):
+            color=QColor(color)
+        self.setBackgroundBrush(color)
+        self.viewport().setAutoFillBackground(True)
+        palette=self.viewport().palette()
+        palette.setColor(self.viewport().backgroundRole(),color)
+        palette.setColor(QPalette.ColorRole.Base,color)
+        self.viewport().setPalette(palette)
+        self.setStyleSheet(
+            f"QGraphicsView{{background-color:{color.name()};border:0;}}"
+            f"QGraphicsView QWidget{{background-color:{color.name()};}}"
+        )
+        if self.scene():
+            self.scene().setBackgroundBrush(color)
+        self.viewport().update()
 
     def drawBackground(self,painter,rect):
         painter.save()
@@ -2451,12 +2471,10 @@ class App(QMainWindow):
         if isinstance(root,Backdrop): root.set_theme(theme)
         if hasattr(self,"lan_map_view"):
             map_bg=QColor("#f1f5fb" if theme=="light" else ("#171a1d" if theme=="dark" else "#0b1220"))
-            self.lan_map_view.setBackgroundBrush(map_bg)
-            self.lan_map_view.setStyleSheet(f"QGraphicsView{{background-color:{map_bg.name()};border:0;}}")
+            self.lan_map_view.set_canvas_background(map_bg)
             if hasattr(self,"lan_map_scene"): self.lan_map_scene.setBackgroundBrush(map_bg)
             if self._lan_map_detached_view is not None:
-                self._lan_map_detached_view.setBackgroundBrush(map_bg)
-                self._lan_map_detached_view.setStyleSheet(f"QGraphicsView{{background-color:{map_bg.name()};border:0;}}")
+                self._lan_map_detached_view.set_canvas_background(map_bg)
         if theme=="light":
             extra="""QWidget{color:#202938;background:transparent}
             QMainWindow,QDialog,QMessageBox{background:#eef2f7}
@@ -2542,25 +2560,32 @@ class App(QMainWindow):
         self.lan_map_summary=QLabel("Устройств: — · Новых: — · Не обнаружено: —"); self.lan_map_summary.setObjectName("SectionTitle")
         stats.layout().addWidget(self.lan_map_summary); l.addWidget(stats)
         canvas=self.panel("Топология LAN","MikroTik → LAN-интерфейсы/порты → обнаруженные коммутаторы и конечные устройства. Пунктир означает предположение по таблице MAC, а не подтверждённое физическое соединение.")
-        map_tools=QHBoxLayout(); map_tools.setSpacing(8)
+        map_tools=QVBoxLayout(); map_tools.setSpacing(7)
+        map_filters=QHBoxLayout(); map_filters.setSpacing(8)
         self.lan_map_search=QLineEdit(); self.lan_map_search.setPlaceholderText("⌕  Найти устройство, IP, MAC…")
-        self.lan_map_search.setClearButtonEnabled(True); self.lan_map_search.setMaximumWidth(260)
+        self.lan_map_search.setClearButtonEnabled(True); self.lan_map_search.setMinimumWidth(120); self.lan_map_search.setMaximumWidth(360)
         self.lan_map_filter=QComboBox()
         self.lan_map_filter.addItem("Все устройства","all")
         self.lan_map_filter.addItem("На связи","online")
         self.lan_map_filter.addItem("Новые","new")
         self.lan_map_filter.addItem("Не обнаружены","lost")
-        self.lan_map_filter.setMaximumWidth(155)
+        self.lan_map_filter.setMinimumWidth(110); self.lan_map_filter.setMaximumWidth(180)
         self.lan_map_legend=QLabel("● Router   ● Network   ● Endpoint   ● New   ● Lost")
         self.lan_map_legend.setObjectName("Muted")
+        map_filters.addWidget(self.lan_map_search,2); map_filters.addWidget(self.lan_map_filter); map_filters.addWidget(self.lan_map_legend,1)
+        map_actions=QHBoxLayout(); map_actions.setSpacing(6)
         fit=QPushButton("Вписать"); fit.setObjectName("QuietButton"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
         focus=QPushButton("К выбранному"); focus.setObjectName("QuietButton"); focus.setToolTip("Переместить карту к выбранному устройству"); focus.clicked.connect(lambda:self.lan_map_view.center_selected())
         copy=QPushButton("Копировать"); copy.setObjectName("QuietButton"); copy.setToolTip("Скопировать сведения о выбранном узле"); copy.clicked.connect(self.copy_lan_map_selection)
         detach=QPushButton("⛶  Отдельное окно"); detach.setObjectName("PrimaryButton"); detach.setToolTip("Открыть топологию в отдельном окне"); detach.clicked.connect(self.open_lan_map_window)
         zoom_in=QPushButton("＋"); zoom_in.setObjectName("MapZoom"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
         zoom_out=QPushButton("−"); zoom_out.setObjectName("MapZoom"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
-        map_tools.addWidget(self.lan_map_search); map_tools.addWidget(self.lan_map_filter)
-        map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(focus); map_tools.addWidget(copy); map_tools.addWidget(fit); map_tools.addWidget(detach)
+        for button in (fit,focus,copy,detach,zoom_in,zoom_out):
+            button.setMinimumWidth(0)
+            button.setStyleSheet("QPushButton{min-width:0;padding-left:9px;padding-right:9px;}")
+        map_actions.addWidget(zoom_out); map_actions.addWidget(zoom_in); map_actions.addStretch(1)
+        map_actions.addWidget(focus); map_actions.addWidget(copy); map_actions.addWidget(fit); map_actions.addWidget(detach)
+        map_tools.addLayout(map_filters); map_tools.addLayout(map_actions)
         canvas.layout().addLayout(map_tools)
         self.lan_map_scene=QGraphicsScene(self); self.lan_map_view=NetworkMapView(); self.lan_map_view.setScene(self.lan_map_scene)
         self.lan_map_scene.selectionChanged.connect(self.on_lan_map_node_selected)
@@ -2838,8 +2863,7 @@ class App(QMainWindow):
         scene.setBackgroundBrush(bg)
         for map_view in (self.lan_map_view,self._lan_map_detached_view):
             if map_view is not None:
-                map_view.setBackgroundBrush(bg)
-                map_view.setStyleSheet(f"QGraphicsView{{background-color:{bg.name()};border:0;}}")
+                map_view.set_canvas_background(bg)
                 map_view.grid_color=QColor(30,45,65,24) if light else QColor(255,255,255,16)
                 map_view.viewport().update()
         def add_node(x,y,w,h,title,subtitle,color,tooltip="",payload=None):

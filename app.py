@@ -2866,6 +2866,7 @@ class App(QMainWindow):
             hint="Измени фильтр или строку поиска" if self._lan_map_records else "Нажми «Сканировать сеть» для обнаружения"
             add_node(-190,185,380,88,message,hint,amber)
             scene.setSceneRect(scene.itemsBoundingRect().adjusted(-80,-60,80,60)); self.lan_map_view.fit_map()
+            if self._lan_map_detached_view is not None: self._lan_map_detached_view.fit_map()
             self.lan_map_summary.setText(f"Устройств в сети: {len(current)} · В истории: {len(self._lan_map_records)}"); return
         grouped={}
         for rec in records:
@@ -2925,6 +2926,7 @@ class App(QMainWindow):
             caption=scene.addText("Порт MikroTik"); caption.setDefaultTextColor(muted); caption.setFont(QFont("Segoe UI",8)); caption.setPos(x+6,246)
         bounds=scene.itemsBoundingRect().adjusted(-70,-35,70,55)
         scene.setSceneRect(bounds); self.lan_map_view.fit_map()
+        if self._lan_map_detached_view is not None: self._lan_map_detached_view.fit_map()
         active_count=sum(1 for r in current.values() if r.get("active"))
         online_count=sum(1 for r in current.values() if r.get("state") in ("online","new","returned"))
         lost_total=sum(1 for r in self._lan_map_records if r.get("state")=="lost")

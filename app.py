@@ -5068,7 +5068,7 @@ class App(QMainWindow):
                                 raise RuntimeError(f"LAN subnet {desired.network} overlaps existing {raw} on {iface}.")
                         except ValueError: pass
                     address_rows=parse_terse(r.exec(f'/ip address print terse where interface={ros_q(bridge)}'))
-                    if address_rows and not any(x["f"].get("address")==c["lan_address"] and x["f"].get("comment")=="VPN-MANAGER-LAN-GATEWAY" for x in address_rows):
+                    if address_rows and not any(x["f"].get("address")==c["lan_address"] for x in address_rows):
                         raise RuntimeError("LAN bridge already has an IP address; review it manually instead of overwriting.")
                     pool_rows=parse_terse(r.exec(f'/ip pool print terse where name={ros_q(c["pool_name"])}'))
                     if pool_rows and (len(pool_rows)!=1 or pool_rows[0]["f"].get("ranges")!=c["pool"]):
@@ -5101,7 +5101,7 @@ class App(QMainWindow):
                     if nat_rows and (len(nat_rows)!=1 or "X" in nat_rows[0]["flags"] or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade" or nat_rows[0]["f"].get("src-address")!=c["lan_subnet"]):
                         raise RuntimeError("Managed WAN NAT comment is already used by a different/disabled rule.")
                     # Create a router backup before making any changes.
-                    backup_name="vpn-manager-before-network-setup"
+                    backup_name="vpn-manager-before-network-setup-"+time.strftime("%Y%m%d-%H%M%S")
                     self.cmd(r,f'/system backup save name={ros_q(backup_name)}')
                     if c["vlan_name"] and not vlan_rows:
                         self.cmd(r,f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}')

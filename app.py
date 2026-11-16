@@ -343,6 +343,23 @@ def nat_cmd(f):
             f'out-interface={f["wg_interface"]} comment="{NAT_COMMENT}"')
 
 
+def wan_nat_cmd(f):
+    return (f'/ip firewall nat add chain=srcnat action=masquerade src-address={f["lan_subnet"]} '
+            f'out-interface={f["wan_interface"]} comment="VPN-MANAGER-WAN-NAT"')
+
+
+def vpn_failover_route_cmds(f):
+    table=f["route_table"]; wg=f["wg_interface"]
+    return [
+        f'/ip route add dst-address=1.1.1.1/32 gateway={ros_q(wg)} routing-table={ros_q(table)} scope=10 comment="VPN-MANAGER-WG-PROBE-1"',
+        f'/ip route add dst-address=8.8.8.8/32 gateway={ros_q(wg)} routing-table={ros_q(table)} scope=10 comment="VPN-MANAGER-WG-PROBE-2"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway=1.1.1.1@{table} routing-table={ros_q(table)} check-gateway=ping distance=1 target-scope=11 comment="VPN-MANAGER-DEFAULT"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8@{table} routing-table={ros_q(table)} check-gateway=ping distance=1 target-scope=11 comment="VPN-MANAGER-DEFAULT-2"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway=1.1.1.1@main routing-table={ros_q(table)} check-gateway=ping distance=2 target-scope=11 comment="VPN-MANAGER-WAN-FALLBACK-1"',
+        f'/ip route add dst-address=0.0.0.0/0 gateway=8.8.8.8@main routing-table={ros_q(table)} check-gateway=ping distance=2 target-scope=11 comment="VPN-MANAGER-WAN-FALLBACK-2"',
+    ]
+
+
 def target_cmd(f, t, k):
     if k == "Домен":
         return f'/ip dns static add name={t} type=FWD address-list={f["address_list"]} match-subdomain=yes comment={ros_q("VPN-MANAGER:" + t)}'
@@ -4605,7 +4622,7 @@ class App(QMainWindow):
                          f'/ip pool add name={ros_q(c["pool_name"])} ranges={ros_q(c["pool"])}  # если отсутствует',
                          f'/ip dhcp-server network add address={ros_q(c["lan_subnet"])} gateway={ros_q(c["lan_ip"])} dns-server={ros_q(c["lan_ip"])}  # если отсутствует',
                          f'/ip dhcp-server add name="vpn-manager-lan" interface={ros_q(bridge)} address-pool={ros_q(c["pool_name"])} lease-time=12h disabled=no  # если отсутствует',
-                         f'/ip firewall nat add chain=srcnat action=masquerade out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"  # если отсутствует']
+                         f'/ip firewall nat add chain=srcnat action=masquerade src-address={ros_q(c["lan_subnet"])} out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"  # если отсутствует']
             description=("Создать WAN-подключение "+c["mode"]+(" поверх VLAN "+c["vlan_id"] if c["vlan_id"] else "")+
                          ", LAN bridge и его порты, IPv4 gateway, DHCP pool/server/network и NAT только на WAN. "
                          "Сторонние интерфейсы, DHCP-серверы, IP-адреса и NAT-правила не перезаписываются. "
@@ -4938,7 +4955,7 @@ class App(QMainWindow):
                     if not dhcp_rows: self.cmd(r,f'/ip dhcp-server add name="vpn-manager-lan" interface={ros_q(bridge)} address-pool={ros_q(c["pool_name"])} lease-time=12h disabled=no')
                     if not nat_rows:
                         existing_nat=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and out-interface={ros_q(wan_if)}'))
-                        if not existing_nat: self.cmd(r,f'/ip firewall nat add chain=srcnat action=masquerade out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"')
+                        if not existing_nat: self.cmd(r,f'/ip firewall nat add chain=srcnat action=masquerade src-address={ros_q(c["lan_subnet"])} out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"')
                     # Verify that the provider link is live and the default route is in main (never in vpn).
                     if c["mode"]=="DHCP":
                         ready=False

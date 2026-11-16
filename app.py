@@ -1293,6 +1293,8 @@ class App(QMainWindow):
         self.normal_rx = deque(maxlen=TrafficChart.N); self.normal_tx = deque(maxlen=TrafficChart.N); self.wan_prev = None; self.pending_wg_config = None
         self.router_status_busy = False; self.last_router_status = None
         self.build_ui(); self.load_targets()
+        self.apply_visual_preferences()
+        if self.settings.get("ui_start_page","0")=="1": self.nav.setCurrentRow(1)
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(120)
         # Автоматические проверки выключены; пользователь может отдельно включить опрос трафика.
         self.traffic_timer = QTimer(self); self.traffic_timer.timeout.connect(self.poll_traffic)
@@ -1304,7 +1306,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "wan_static_address":"", "wan_static_gateway":"", "wan_static_dns":"1.1.1.1,8.8.8.8", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "wan_static_address":"", "wan_static_gateway":"", "wan_static_dns":"1.1.1.1,8.8.8.8", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}", "ui_theme":"default", "ui_font_size":"10", "ui_density":"normal", "ui_start_page":"0", "confirm_exit":"1", "lan_map_history":"{}"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -1343,7 +1345,7 @@ class App(QMainWindow):
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.nav.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.nav.setWordWrap(False)
-        for label in ["01     Мастер настройки VPN", "02     Обзор", "03     VPN-маршрутизация", "04     Диагностика", "05     Firewall и DNS", "06     DNS / DoH", "07     Резервные копии", "08     Настройки", "09     Терминал", "10     Журнал"]:
+        for label in ["01     Мастер настройки VPN", "02     Обзор", "03     VPN-маршрутизация", "04     Диагностика", "05     Firewall и DNS", "06     DNS / DoH", "07     Резервные копии", "08     Настройки", "09     Терминал", "10     Журнал", "11     Карта локальной сети"]:
             QListWidgetItem(label, self.nav)
         self.nav.setCurrentRow(0); self.nav.currentRowChanged.connect(self.pages_changed)
         sl.addWidget(self.nav,1)
@@ -1361,7 +1363,7 @@ class App(QMainWindow):
         div=QFrame(); div.setObjectName("Divider"); div.setFixedHeight(1); cv.addWidget(div)
         self.stack=QStackedWidget(); cv.addWidget(self.stack,1)
         self.pages=[]
-        self.pages.append(self.page_setup_wizard()); self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs())
+        self.pages.append(self.page_setup_wizard()); self.pages.append(self.page_dashboard()); self.pages.append(self.page_routing()); self.pages.append(self.page_diagnostics()); self.pages.append(self.page_firewall()); self.pages.append(self.page_dns_diagnostics()); self.pages.append(self.page_backups()); self.pages.append(self.page_settings()); self.pages.append(self.page_terminal()); self.pages.append(self.page_logs()); self.pages.append(self.page_lan_map())
         for p in self.pages: self.stack.addWidget(self.scrolled(p))
         self.pages_changed(0)
         footer=QHBoxLayout()
@@ -1373,7 +1375,7 @@ class App(QMainWindow):
         self.status.setToolTip("Здесь отображаются текущая операция и результат последнего действия.")
         self.auth_btn.setToolTip("Открыть окно SSH-подключения или отключиться от роутера.")
         self.log_btn.setToolTip("Открыть журнал команд, ошибок и действий приложения.")
-        for i in range(10):
+        for i in range(11):
             action=QAction(self); action.setShortcut(f"Ctrl+{i+1}"); action.triggered.connect(lambda checked=False, row=i:self.nav.setCurrentRow(row)); self.addAction(action)
         log_action=QAction(self); log_action.setShortcut("Ctrl+L"); log_action.triggered.connect(lambda:self.nav.setCurrentRow(9)); self.addAction(log_action)
         fit_controls(self)
@@ -2328,11 +2330,60 @@ class App(QMainWindow):
 
     def page_settings(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
-        p=self.panel("Параметры сетевого профиля","Все параметры LAN, WAN, WireGuard, policy routing и DoH находятся в первом разделе бокового меню.")
-        note=QLabel("Для первоначальной настройки и изменения сетевого профиля используй «Мастер настройки VPN». Он содержит единый набор полей, чтобы диагностика, маршрутизация и применение правил всегда работали с одними и теми же значениями.")
-        note.setObjectName("InfoNote"); note.setWordWrap(True); p.layout().addWidget(note)
-        go=QPushButton("Открыть мастер настройки VPN"); go.setObjectName("PrimaryButton"); go.clicked.connect(lambda:self.nav.setCurrentRow(0)); p.layout().addWidget(go)
-        l.addWidget(p); l.addStretch(); return w
+        p=self.panel("Внешний вид","Глобальные настройки интерфейса. Сетевые параметры остаются в своих профильных разделах.")
+        form=QFormLayout(); form.setVerticalSpacing(12); form.setHorizontalSpacing(18)
+        self.ui_theme=QComboBox(); self.ui_theme.addItem("По умолчанию · текущая синяя","default"); self.ui_theme.addItem("Тёмная · графитовая","dark"); self.ui_theme.addItem("Светлая","light")
+        self.ui_theme.setCurrentIndex(max(0,self.ui_theme.findData(self.settings.get("ui_theme","default"))))
+        self.ui_font_size=QComboBox()
+        for n in (9,10,11,12,13): self.ui_font_size.addItem(f"{n} pt",str(n))
+        self.ui_font_size.setCurrentIndex(max(0,self.ui_font_size.findData(self.settings.get("ui_font_size","10"))))
+        self.ui_density=QComboBox(); self.ui_density.addItem("Обычная","normal"); self.ui_density.addItem("Компактная","compact")
+        self.ui_density.setCurrentIndex(max(0,self.ui_density.findData(self.settings.get("ui_density","normal"))))
+        self.ui_start_page=QComboBox(); self.ui_start_page.addItem("Мастер настройки VPN","0"); self.ui_start_page.addItem("Обзор сети","1")
+        self.ui_start_page.setCurrentIndex(max(0,self.ui_start_page.findData(self.settings.get("ui_start_page","0"))))
+        self.confirm_exit_check=QCheckBox("Спрашивать подтверждение перед закрытием приложения")
+        self.confirm_exit_check.setChecked(self.settings.get("confirm_exit","1")=="1")
+        form.addRow("Тема приложения",self.ui_theme); form.addRow("Размер текста",self.ui_font_size); form.addRow("Плотность интерфейса",self.ui_density); form.addRow("Стартовая страница",self.ui_start_page)
+        p.layout().addLayout(form); p.layout().addWidget(self.confirm_exit_check); l.addWidget(p)
+        info=self.panel("Общие параметры","Эти настройки не меняют конфигурацию MikroTik.")
+        label=QLabel("Тема, размер шрифта и плотность применяются сразу. Стартовая страница выбирается при следующем запуске. История карты LAN хранится локально и нужна для определения новых и пропавших устройств.")
+        label.setObjectName("Muted"); label.setWordWrap(True); info.layout().addWidget(label); l.addWidget(info)
+        self.ui_theme.currentIndexChanged.connect(self.save_visual_preferences); self.ui_font_size.currentIndexChanged.connect(self.save_visual_preferences)
+        self.ui_density.currentIndexChanged.connect(self.save_visual_preferences); self.ui_start_page.currentIndexChanged.connect(self.save_visual_preferences)
+        self.confirm_exit_check.toggled.connect(self.save_visual_preferences)
+        return w
+
+    def save_visual_preferences(self,*_):
+        if not hasattr(self,"ui_theme"): return
+        self.settings.update({"ui_theme":str(self.ui_theme.currentData()),"ui_font_size":str(self.ui_font_size.currentData()),
+            "ui_density":str(self.ui_density.currentData()),"ui_start_page":str(self.ui_start_page.currentData()),
+            "confirm_exit":"1" if self.confirm_exit_check.isChecked() else "0"})
+        self.save_settings(); self.apply_visual_preferences()
+
+    def apply_visual_preferences(self):
+        theme=self.settings.get("ui_theme","default"); font=self.settings.get("ui_font_size","10"); density=self.settings.get("ui_density","normal")
+        if theme=="light":
+            extra="""QWidget{color:#202938;background:transparent} QMainWindow,QDialog,QMessageBox{background:#eef2f7}
+            QFrame#Sidebar{background:#e1e8f1;border-right:1px solid #c5cfdd} QLabel#Brand,QLabel#PageTitle,QLabel#HeroTitle{color:#172235}
+            QLabel#BrandSub,QLabel#Muted,QLabel#SidebarFoot,QLabel#CardTitle{color:#52647b}
+            QListWidget#Nav{color:#34445a} QListWidget#Nav::item:selected{background:#c9daf3;color:#16345f;border:1px solid #8eacd5}
+            QFrame#Panel,QFrame#Card,QFrame#Hero{background:#fff;border:1px solid #d4deea;border-radius:16px}
+            QLineEdit,QComboBox,QSpinBox,QPlainTextEdit,QTextEdit,QTableWidget,QTreeWidget{background:#fff;color:#202938;border:1px solid #c7d2df;selection-background-color:#c6daf5;selection-color:#172235}
+            QHeaderView::section{background:#e4ebf4;color:#34445a;border-bottom:1px solid #c7d2df}
+            QPushButton{background:#e8eef6;color:#24344b;border:1px solid #c6d2e0} QPushButton#PrimaryButton{background:#316fc4;color:#fff}
+            QLabel#StatusBar{background:#e4ebf4;color:#34445a;border:1px solid #c7d2df} QLabel#InfoNote{background:#e7f0fc;color:#294b75;border:1px solid #b9cce5}"""
+        elif theme=="dark":
+            extra="""QWidget{color:#e3e6e8;background:transparent} QMainWindow,QDialog,QMessageBox{background:#111315}
+            QFrame#Sidebar{background:#171a1d;border-right:1px solid #30363b} QFrame#Panel,QFrame#Card,QFrame#Hero{background:#202428;border:1px solid #363d43;border-radius:15px}
+            QLabel#PageTitle,QLabel#HeroTitle,QLabel#Brand{color:#f2f4f5} QLabel#Muted,QLabel#CardTitle,QLabel#BrandSub{color:#a2adb7}
+            QListWidget#Nav{color:#b9c2ca} QListWidget#Nav::item:selected{background:#39434b;color:#fff;border:1px solid #65717b}
+            QLineEdit,QComboBox,QSpinBox,QPlainTextEdit,QTextEdit,QTableWidget,QTreeWidget{background:#171a1d;color:#e3e6e8;border:1px solid #3b444b;selection-background-color:#46545e}
+            QHeaderView::section{background:#252b30;color:#c4cbd1;border-bottom:1px solid #414a51}
+            QPushButton{background:#2a3035;color:#e3e6e8;border:1px solid #454e55} QPushButton#PrimaryButton{background:#4b5963;color:#fff;border:1px solid #73818a}
+            QLabel#StatusBar{background:#252b30;color:#cbd2d8;border:1px solid #414a51} QLabel#InfoNote{background:#26323a;color:#d2e0e8;border:1px solid #46545e}"""
+        else: extra=""
+        compact="QPushButton{min-height:18px;padding-top:0;padding-bottom:0;} QTreeWidget::item{padding-top:5px;padding-bottom:5px;} QTableWidget::item{padding:4px;}" if density=="compact" else ""
+        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+compact)
 
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
@@ -2665,7 +2716,7 @@ class App(QMainWindow):
         self.run_job("RouterOS CLI: "+command,job)
 
     def pages_changed(self,index):
-        titles=[("Мастер настройки VPN","Первичная настройка MikroTik: LAN, WireGuard, policy routing и контроль результата"),("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","Сетевой профиль и DNS-over-HTTPS"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения")]
+        titles=[("Мастер настройки VPN","Первичная настройка MikroTik: LAN, WireGuard, policy routing и контроль результата"),("Обзор сети","Состояние маршрутизатора и VPN-туннеля"),("VPN-маршрутизация","Домены, IPv4 и сети, направляемые через WireGuard"),("Диагностика","Проверки соединения и сетевой доступности"),("Конструктор Firewall","Filter, NAT и Mangle · просмотр и управление правилами"),("Диагностика DNS / DoH","Проверка резолвера, DNS FWD, IP-адресов и VPN-маршрута"),("Резервные копии","Локальное сохранение конфигурации MikroTik"),("Настройки","Сетевой профиль и DNS-over-HTTPS"),("Терминал RouterOS","Интерактивная командная строка MikroTik через SSH"),("Журнал операций","История действий, команд и ошибок приложения"),("Карта локальной сети","Устройства LAN: DHCP, ARP, MAC, hostname и история обнаружения")]
         self.stack.setCurrentIndex(index); self.page_title.setText(titles[index][0]); self.page_sub.setText(titles[index][1])
 
     def log(self,msg):
@@ -2748,7 +2799,7 @@ class App(QMainWindow):
                     cursor.insertBlock()
                     fmt=QTextCharFormat()
                     is_error=str(payload).startswith("ОШИБКА:")
-                    fmt.setForeground(QColor("#fb7185" if is_error else "#c9d7e8"))
+                    fmt.setForeground(QColor("#fb7185" if is_error else "#4ade80"))
                     cursor.setCharFormat(fmt)
                     cursor.insertText(str(payload))
                     self.terminal_output.setTextCursor(cursor)
@@ -5555,6 +5606,10 @@ class App(QMainWindow):
         self.run_job("Создание backup/export на MikroTik и скачивание по SFTP…",job)
 
     def closeEvent(self,event):
+        if self.settings.get("confirm_exit","1")=="1" and not getattr(self,"_allow_close",False):
+            answer=QMessageBox.question(self,"Закрыть приложение","Закрыть MikroTik VPN Manager?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
+            if answer!=QMessageBox.StandardButton.Yes: event.ignore(); return
+            self._allow_close=True
         try:
             if self.router:self.router.close()
         finally:event.accept()

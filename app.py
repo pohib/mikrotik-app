@@ -4740,8 +4740,12 @@ class App(QMainWindow):
             if c["vlan_id"]: commands.append(f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}  # если отсутствует')
             if c["mode"]=="DHCP":
                 commands.append(f'/ip dhcp-client add interface={ros_q(wan_if)} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no  # если отсутствует')
-            else:
+            elif c["mode"]=="PPPoE":
                 commands.append(f'/interface pppoe-client add name={ros_q(c["pppoe_name"])} interface={ros_q(c["vlan_name"] or base)} user={ros_q(c["pppoe_user"])} password=[СКРЫТО] add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
+            else:
+                commands += [f'/ip address add address={ros_q(c["static_address"])} interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-ADDRESS"  # если отсутствует',
+                             f'/ip route add dst-address=0.0.0.0/0 gateway={c["static_gateway"]}%{wan_if} distance=1 comment="VPN-MANAGER-WAN-DEFAULT"  # если отсутствует',
+                             f'/ip dns set servers={c["static_dns"]}']
             commands += [f'/interface bridge add name={ros_q(bridge)}  # если отсутствует']
             commands += [f'/interface bridge port add bridge={ros_q(bridge)} interface={ros_q(port)}  # если порт ещё не включён в этот bridge' for port in c["ports"]]
             commands += [f'/ip address add address={ros_q(c["lan_address"])} interface={ros_q(bridge)} comment="VPN-MANAGER-LAN-GATEWAY"  # если отсутствует',
@@ -5054,10 +5058,20 @@ class App(QMainWindow):
                         clients=parse_terse(r.exec(f'/ip dhcp-client print terse where interface={ros_q(vlan_if)}'))
                         if len(clients)>1 or (clients and ("X" in clients[0]["flags"] or clients[0]["f"].get("add-default-route")=="no")):
                             raise RuntimeError("Existing DHCP client is duplicated, disabled, or does not add the main default route.")
-                    else:
+                    elif c["mode"]=="PPPoE":
                         ppp=parse_terse(r.exec(f'/interface pppoe-client print terse where name={ros_q(c["pppoe_name"])}'))
                         if ppp and (len(ppp)!=1 or ppp[0]["f"].get("interface")!=(c["vlan_name"] or base) or ppp[0]["f"].get("user")!=c["pppoe_user"]):
                             raise RuntimeError("PPPoE interface name already exists with different parameters.")
+                    else:
+                        wan_addresses=parse_terse(r.exec(f'/ip address print terse where interface={ros_q(wan_if)}'))
+                        duplicate_address=parse_terse(r.exec(f'/ip address print terse where address={ros_q(c["static_address"])}'))
+                        if any(x["f"].get("address")!=c["static_address"] for x in wan_addresses):
+                            raise RuntimeError("WAN interface already has another IP address; refusing to overwrite it.")
+                        if any(x["f"].get("interface")!=wan_if for x in duplicate_address):
+                            raise RuntimeError("Static WAN address is already assigned to another interface.")
+                        existing_defaults=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
+                        if any(x["f"].get("comment")!="VPN-MANAGER-WAN-DEFAULT" and not x["f"].get("immediate-gw","").endswith("%"+wan_if) for x in existing_defaults):
+                            raise RuntimeError("A main default route through another interface already exists; review WAN routing manually before applying static settings.")
                     nat_rows=parse_terse(r.exec(f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}'))
                     if nat_rows and (len(nat_rows)!=1 or "X" in nat_rows[0]["flags"] or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade" or nat_rows[0]["f"].get("src-address")!=c["lan_subnet"]):
                         raise RuntimeError("Managed WAN NAT comment is already used by a different/disabled rule.")
@@ -5069,10 +5083,18 @@ class App(QMainWindow):
                     if c["mode"]=="DHCP":
                         clients=parse_terse(r.exec(f'/ip dhcp-client print terse where interface={ros_q(vlan_if)}'))
                         if not clients: self.cmd(r,f'/ip dhcp-client add interface={ros_q(vlan_if)} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
-                    else:
+                    elif c["mode"]=="PPPoE":
                         ppp=parse_terse(r.exec(f'/interface pppoe-client print terse where name={ros_q(c["pppoe_name"])}'))
                         if not ppp:
                             self.cmd(r,f'/interface pppoe-client add name={ros_q(c["pppoe_name"])} interface={ros_q(c["vlan_name"] or base)} user={ros_q(c["pppoe_user"])} password={ros_q(c["pppoe_password"])} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
+                    else:
+                        wan_addresses=parse_terse(r.exec(f'/ip address print terse where interface={ros_q(wan_if)}'))
+                        if not any(x["f"].get("address")==c["static_address"] for x in wan_addresses):
+                            self.cmd(r,f'/ip address add address={ros_q(c["static_address"])} interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-ADDRESS"')
+                        existing_defaults=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
+                        if not any(x["f"].get("comment")=="VPN-MANAGER-WAN-DEFAULT" for x in existing_defaults):
+                            self.cmd(r,f'/ip route add dst-address=0.0.0.0/0 gateway={c["static_gateway"]}%{wan_if} distance=1 comment="VPN-MANAGER-WAN-DEFAULT"')
+                        self.cmd(r,f'/ip dns set servers={c["static_dns"]}')
                     if not bridge_rows: self.cmd(r,f'/interface bridge add name={ros_q(bridge)}')
                     for port in ports:
                         if port not in port_map: self.cmd(r,f'/interface bridge port add bridge={ros_q(bridge)} interface={ros_q(port)}')
@@ -5092,13 +5114,17 @@ class App(QMainWindow):
                             if "status=bound" in status.lower(): ready=True; break
                             time.sleep(1)
                         if not ready: raise RuntimeError("WAN DHCP client was created but did not reach status=bound. Inspect cabling, ISP VLAN and DHCP service.")
-                    else:
+                    elif c["mode"]=="PPPoE":
                         ready=False
                         for _ in range(30):
                             status=r.exec(f'/interface pppoe-client print detail where name={ros_q(c["pppoe_name"])}')
                             if re.search(r'\bR\b|running=yes|status=connected',status,re.I): ready=True; break
                             time.sleep(1)
                         if not ready: raise RuntimeError("PPPoE client was created but is not running. Verify provider login/password, service name and VLAN.")
+                    else:
+                        static_status=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
+                        if not any("A" in x["flags"] and x["f"].get("comment")=="VPN-MANAGER-WAN-DEFAULT" for x in static_status):
+                            raise RuntimeError("Static WAN default route is not active. Check provider IP, subnet mask and gateway.")
                     main=r.exec('/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main')
                     main_rows=parse_terse(main)
                     main_via_wan=any("I" not in x["flags"] and (x["f"].get("gateway")==wan_if or x["f"].get("immediate-gw","").endswith("%"+wan_if) or x["f"].get("immediate-gw")==wan_if) for x in main_rows)

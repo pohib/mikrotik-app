@@ -1984,7 +1984,7 @@ class App(QMainWindow):
             r=self.router_conn()
             raw={
                 "addresses":r.exec("/ip address print terse"),
-                "dhcp":r.exec("/ip dhcp-server print terse"),
+                "dhcp":r.exec("/ip dhcp-server print terse where disabled=no"),
                 "dhcp_networks":r.exec("/ip dhcp-server network print terse"),
                 "routes":r.exec("/ip route print terse where dst-address=0.0.0.0/0"),
                 "interfaces":r.exec("/interface print terse"),
@@ -2007,8 +2007,7 @@ class App(QMainWindow):
             dhcp_ifaces=[]
             for item in dhcps:
                 f=item["f"]
-                if "X" not in item["flags"] and f.get("disabled","false")!="true":
-                    dhcp_ifaces.append(f.get("interface",""))
+                dhcp_ifaces.append(f.get("interface",""))
             matches=[x for x in private if x[0] in dhcp_ifaces and x[0] not in (wan,self.settings.get("wg_interface",""))]
             candidates=matches or [x for x in private if x[0] not in (wan,self.settings.get("wg_interface",""))]
             unique={x[0]:x for x in candidates if x[0]}
@@ -2017,9 +2016,7 @@ class App(QMainWindow):
                 return
             selected=next(iter(unique.values()))
             iface,address,ip,network=selected
-            matching_net=next((x["f"] for x in networks if x["f"].get("address")==network),{})
-            dhcp_dns=matching_net.get("dns-server","").split(",")[0].strip()
-            chosen_dns=dhcp_dns if dhcp_dns and dhcp_dns!="0.0.0.0" else ip
+            chosen_dns=ip
             self.q.put(("LAN_DISCOVERY",{"ok":True,"interface":iface,"address":address,"ip":ip,"network":network,"dns":chosen_dns,"wan":wan,"dhcp":iface in dhcp_ifaces,"message":f"Найден LAN: {iface}, адрес {address}, сеть {network}. WAN-кандидат: {wan}. DHCP {'обнаружен' if iface in dhcp_ifaces else 'не обнаружен на этом интерфейсе'}."}))
         self.run_job("Автоопределение LAN…",job)
 

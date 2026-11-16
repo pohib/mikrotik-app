@@ -5070,8 +5070,8 @@ class App(QMainWindow):
                         if any(x["f"].get("interface")!=wan_if for x in duplicate_address):
                             raise RuntimeError("Static WAN address is already assigned to another interface.")
                         existing_defaults=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
-                        if any(x["f"].get("comment")!="VPN-MANAGER-WAN-DEFAULT" and not x["f"].get("immediate-gw","").endswith("%"+wan_if) for x in existing_defaults):
-                            raise RuntimeError("A main default route through another interface already exists; review WAN routing manually before applying static settings.")
+                        if any(not (x["f"].get("gateway") in (c["static_gateway"],c["static_gateway"]+"%"+wan_if) or x["f"].get("immediate-gw")==c["static_gateway"]+"%"+wan_if) for x in existing_defaults):
+                            raise RuntimeError("A main default route through another gateway/interface already exists; review WAN routing manually before applying static settings.")
                     nat_rows=parse_terse(r.exec(f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}'))
                     if nat_rows and (len(nat_rows)!=1 or "X" in nat_rows[0]["flags"] or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade" or nat_rows[0]["f"].get("src-address")!=c["lan_subnet"]):
                         raise RuntimeError("Managed WAN NAT comment is already used by a different/disabled rule.")
@@ -5092,7 +5092,7 @@ class App(QMainWindow):
                         if not any(x["f"].get("address")==c["static_address"] for x in wan_addresses):
                             self.cmd(r,f'/ip address add address={ros_q(c["static_address"])} interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-ADDRESS"')
                         existing_defaults=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
-                        if not any(x["f"].get("comment")=="VPN-MANAGER-WAN-DEFAULT" for x in existing_defaults):
+                        if not any(x["f"].get("gateway") in (c["static_gateway"],c["static_gateway"]+"%"+wan_if) or x["f"].get("immediate-gw")==c["static_gateway"]+"%"+wan_if for x in existing_defaults):
                             self.cmd(r,f'/ip route add dst-address=0.0.0.0/0 gateway={c["static_gateway"]}%{wan_if} distance=1 comment="VPN-MANAGER-WAN-DEFAULT"')
                         self.cmd(r,f'/ip dns set servers={c["static_dns"]}')
                     if not bridge_rows: self.cmd(r,f'/interface bridge add name={ros_q(bridge)}')

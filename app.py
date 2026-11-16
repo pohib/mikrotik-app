@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "MikroTik VPN Manager"
+APP_VERSION = "1.8.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "MikroTikVPNManager"
 CONFIG_FILE = APP_DIR / "settings.json"
 KNOWN_HOSTS_FILE = APP_DIR / "known_hosts"
@@ -280,7 +281,8 @@ class NetworkMapView(QGraphicsView):
 
     def wheelEvent(self,event):
         factor=1.18 if event.angleDelta().y()>0 else 1/1.18
-        self.scale(factor,factor)
+        next_scale=self.transform().m11()*factor
+        if 0.25<=next_scale<=3.5: self.scale(factor,factor)
 
     def fit_map(self):
         if self.scene() and not self.scene().itemsBoundingRect().isNull():
@@ -470,21 +472,45 @@ def make_arrow_icon():
 
 
 class Backdrop(QWidget):
-    """Фон окна: тёмный градиент, мягкие свечения и едва заметная точечная сетка."""
+    """Фон всего окна; палитра синхронизируется с выбранной темой приложения."""
     def __init__(self):
         super().__init__()
+        self.theme = "default"
         self.tile = QPixmap(26, 26); self.tile.fill(Qt.GlobalColor.transparent)
-        tp = QPainter(self.tile); tp.setRenderHint(QPainter.RenderHint.Antialiasing); tp.setPen(Qt.PenStyle.NoPen); tp.setBrush(QColor(255, 255, 255, 20)); tp.drawEllipse(QPointF(13, 13), 0.9, 0.9); tp.end()
+        tp = QPainter(self.tile); tp.setRenderHint(QPainter.RenderHint.Antialiasing); tp.setPen(Qt.PenStyle.NoPen); tp.setBrush(QColor(40, 65, 95, 22)); tp.drawEllipse(QPointF(13, 13), 0.9, 0.9); tp.end()
+
+    def set_theme(self, theme):
+        theme = theme if theme in ("default", "dark", "light") else "default"
+        if theme != self.theme:
+            self.theme = theme
+            self.update()
 
     def paintEvent(self, _event):
         p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        base = QLinearGradient(0, 0, w, h); base.setColorAt(0, QColor("#080d19")); base.setColorAt(1, QColor("#04060b"))
-        p.fillRect(self.rect(), base)
-        for cx, cy, r, col in ((0.88, 0.02, 0.62, (59, 130, 246, 70)), (0.22, 1.02, 0.55, (45, 212, 191, 38)), (0.60, 0.52, 0.45, (139, 92, 246, 32))):
-            g = QRadialGradient(w * cx, h * cy, max(w, h) * r)
-            g.setColorAt(0, QColor(*col)); g.setColorAt(1, QColor(col[0], col[1], col[2], 0))
+        if self.theme == "light":
+            base = QLinearGradient(0, 0, w, h)
+            base.setColorAt(0, QColor("#f7f9fc")); base.setColorAt(1, QColor("#e7edf5"))
+            p.fillRect(self.rect(), base)
+            for cx, cy, r, col in ((0.88, 0.02, 0.62, (91, 137, 190, 24)), (0.22, 1.02, 0.55, (55, 145, 137, 18))):
+                g = QRadialGradient(w * cx, h * cy, max(w, h) * r)
+                g.setColorAt(0, QColor(*col)); g.setColorAt(1, QColor(col[0], col[1], col[2], 0))
+                p.fillRect(self.rect(), g)
+        elif self.theme == "dark":
+            base = QLinearGradient(0, 0, w, h)
+            base.setColorAt(0, QColor("#20252a")); base.setColorAt(1, QColor("#111518"))
+            p.fillRect(self.rect(), base)
+            g = QRadialGradient(w * 0.82, h * 0.08, max(w, h) * 0.7)
+            g.setColorAt(0, QColor(105, 125, 145, 24)); g.setColorAt(1, QColor(105, 125, 145, 0))
             p.fillRect(self.rect(), g)
+        else:
+            base = QLinearGradient(0, 0, w, h)
+            base.setColorAt(0, QColor("#080d19")); base.setColorAt(1, QColor("#04060b"))
+            p.fillRect(self.rect(), base)
+            for cx, cy, r, col in ((0.88, 0.02, 0.62, (59, 130, 246, 70)), (0.22, 1.02, 0.55, (45, 212, 191, 38)), (0.60, 0.52, 0.45, (139, 92, 246, 32))):
+                g = QRadialGradient(w * cx, h * cy, max(w, h) * r)
+                g.setColorAt(0, QColor(*col)); g.setColorAt(1, QColor(col[0], col[1], col[2], 0))
+                p.fillRect(self.rect(), g)
         p.fillRect(self.rect(), QBrush(self.tile))
 
 
@@ -2366,10 +2392,20 @@ class App(QMainWindow):
         self.confirm_exit_check=QCheckBox("Спрашивать подтверждение перед закрытием приложения")
         self.confirm_exit_check.setChecked(self.settings.get("confirm_exit","1")=="1")
         form.addRow("Тема приложения",self.ui_theme); form.addRow("Размер текста",self.ui_font_size); form.addRow("Плотность интерфейса",self.ui_density); form.addRow("Стартовая страница",self.ui_start_page)
-        p.layout().addLayout(form); p.layout().addWidget(self.confirm_exit_check); l.addWidget(p)
-        info=self.panel("Общие параметры","Эти настройки не меняют конфигурацию MikroTik.")
-        label=QLabel("Тема, размер шрифта и плотность применяются сразу. Стартовая страница выбирается при следующем запуске. История карты LAN хранится локально и нужна для определения новых и пропавших устройств.")
-        label.setObjectName("Muted"); label.setWordWrap(True); info.layout().addWidget(label); l.addWidget(info)
+        p.layout().addLayout(form); l.addWidget(p)
+        info=self.panel("Общие параметры","Локальные параметры приложения и данные, которые не отправляются на MikroTik.")
+        label=QLabel("Настройки интерфейса и история обнаруженных устройств хранятся только на этом компьютере. Они не меняют конфигурацию маршрутизатора.")
+        label.setObjectName("Muted"); label.setWordWrap(True); info.layout().addWidget(label)
+        self.confirm_exit_check=QCheckBox("Спрашивать подтверждение перед закрытием приложения")
+        self.confirm_exit_check.setChecked(self.settings.get("confirm_exit","1")=="1")
+        info.layout().addWidget(self.confirm_exit_check)
+        config_path=QLabel(f"Файл настроек: {CONFIG_FILE}"); config_path.setObjectName("Muted"); config_path.setWordWrap(True); config_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        info.layout().addWidget(config_path)
+        general_actions=QHBoxLayout()
+        self.clear_lan_history_btn=QPushButton("Очистить историю LAN"); self.clear_lan_history_btn.setObjectName("clear_lan_history_btn"); self.clear_lan_history_btn.setProperty("role","danger"); self.clear_lan_history_btn.clicked.connect(self.clear_lan_history)
+        self.reset_appearance_btn=QPushButton("Сбросить оформление"); self.reset_appearance_btn.clicked.connect(self.reset_visual_preferences)
+        general_actions.addWidget(self.clear_lan_history_btn); general_actions.addWidget(self.reset_appearance_btn); general_actions.addStretch()
+        info.layout().addLayout(general_actions); l.addWidget(info)
         self.ui_theme.currentIndexChanged.connect(self.save_visual_preferences); self.ui_font_size.currentIndexChanged.connect(self.save_visual_preferences)
         self.ui_density.currentIndexChanged.connect(self.save_visual_preferences); self.ui_start_page.currentIndexChanged.connect(self.save_visual_preferences)
         self.confirm_exit_check.toggled.connect(self.save_visual_preferences)
@@ -2384,28 +2420,75 @@ class App(QMainWindow):
 
     def apply_visual_preferences(self):
         theme=self.settings.get("ui_theme","default"); font=self.settings.get("ui_font_size","10"); density=self.settings.get("ui_density","normal")
+        root=self.centralWidget()
+        if isinstance(root,Backdrop): root.set_theme(theme)
+        if hasattr(self,"lan_map_view"):
+            self.lan_map_view.setBackgroundBrush(QColor("#f1f5fb" if theme=="light" else ("#171a1d" if theme=="dark" else "#0b1220")))
         if theme=="light":
-            extra="""QWidget{color:#202938;background:transparent} QMainWindow,QDialog,QMessageBox{background:#eef2f7}
-            QFrame#Sidebar{background:#e1e8f1;border-right:1px solid #c5cfdd} QLabel#Brand,QLabel#PageTitle,QLabel#HeroTitle{color:#172235}
-            QLabel#BrandSub,QLabel#Muted,QLabel#SidebarFoot,QLabel#CardTitle{color:#52647b}
-            QListWidget#Nav{color:#34445a} QListWidget#Nav::item:selected{background:#c9daf3;color:#16345f;border:1px solid #8eacd5}
+            extra="""QWidget{color:#202938;background:transparent}
+            QMainWindow,QDialog,QMessageBox{background:#eef2f7}
+            QFrame#Sidebar{background:#e1e8f1;border-right:1px solid #c5cfdd}
+            QLabel{color:#202938}
+            QLabel#Brand,QLabel#PageTitle,QLabel#HeroTitle,QLabel#SectionTitle,QLabel#CardValue,QLabel#StatValue,QLabel#IndTitle,QLabel#TerminalPrompt{color:#172235}
+            QLabel#BrandSub,QLabel#Muted,QLabel#SidebarFoot,QLabel#CardTitle,QLabel#IndValue,QLabel#TerminalCaption,QLabel#TerminalHint,QLabel#TreeCaption{color:#52647b}
+            QLabel#Eyebrow{color:#315f9b} QLabel#TerminalTag{color:#176b4a;background:#e1f4eb;border:1px solid #a7d8c0}
+            QLabel#TerminalRiskBadge{color:#6b3e10}
+            QListWidget#Nav{color:#34445a} QListWidget#Nav::item:hover:!selected{background:#d5e0ed;color:#24364d}
+            QListWidget#Nav::item:selected{background:#c9daf3;color:#16345f;border:1px solid #8eacd5}
             QFrame#Panel,QFrame#Card,QFrame#Hero{background:#fff;border:1px solid #d4deea;border-radius:16px}
             QLineEdit,QComboBox,QSpinBox,QPlainTextEdit,QTextEdit,QTableWidget,QTreeWidget{background:#fff;color:#202938;border:1px solid #c7d2df;selection-background-color:#c6daf5;selection-color:#172235}
-            QHeaderView::section{background:#e4ebf4;color:#34445a;border-bottom:1px solid #c7d2df}
-            QPushButton{background:#e8eef6;color:#24344b;border:1px solid #c6d2e0} QPushButton#PrimaryButton{background:#316fc4;color:#fff}
-            QLabel#StatusBar{background:#e4ebf4;color:#34445a;border:1px solid #c7d2df} QLabel#InfoNote{background:#e7f0fc;color:#294b75;border:1px solid #b9cce5}"""
+            QTreeWidget::item{color:#202938} QHeaderView::section{background:#e4ebf4;color:#34445a;border-bottom:1px solid #c7d2df}
+            QPushButton{background:#e8eef6;color:#24344b;border:1px solid #c6d2e0} QPushButton:hover{background:#dce7f3;color:#172b45}
+            QPushButton#PrimaryButton{background:#316fc4;color:#fff;border:1px solid #245a9f}
+            QPushButton#DangerButton{background:#fff0f0;color:#8b2634;border:1px solid #e2aeb5}
+            QCheckBox{color:#26364a}
+            QLabel#StatusBar{background:#e4ebf4;color:#34445a;border:1px solid #c7d2df}
+            QLabel#InfoNote{background:#e7f0fc;color:#294b75;border:1px solid #b9cce5}
+            QTabBar::tab{background:#e2e9f1;color:#34445a;padding:9px 14px;border:1px solid #c7d2df}
+            QTabBar::tab:selected{background:#fff;color:#17365d}"""
         elif theme=="dark":
-            extra="""QWidget{color:#e3e6e8;background:transparent} QMainWindow,QDialog,QMessageBox{background:#111315}
-            QFrame#Sidebar{background:#171a1d;border-right:1px solid #30363b} QFrame#Panel,QFrame#Card,QFrame#Hero{background:#202428;border:1px solid #363d43;border-radius:15px}
-            QLabel#PageTitle,QLabel#HeroTitle,QLabel#Brand{color:#f2f4f5} QLabel#Muted,QLabel#CardTitle,QLabel#BrandSub{color:#a2adb7}
+            extra="""QWidget{color:#e3e6e8;background:transparent}
+            QMainWindow,QDialog,QMessageBox{background:#111315}
+            QFrame#Sidebar{background:#171a1d;border-right:1px solid #30363b}
+            QFrame#Panel,QFrame#Card,QFrame#Hero{background:#202428;border:1px solid #363d43;border-radius:15px}
+            QLabel{color:#e3e6e8}
+            QLabel#PageTitle,QLabel#HeroTitle,QLabel#Brand,QLabel#SectionTitle,QLabel#CardValue,QLabel#StatValue,QLabel#IndTitle{color:#f2f4f5}
+            QLabel#Muted,QLabel#CardTitle,QLabel#BrandSub,QLabel#SidebarFoot,QLabel#IndValue,QLabel#TerminalCaption,QLabel#TerminalHint{color:#a2adb7}
             QListWidget#Nav{color:#b9c2ca} QListWidget#Nav::item:selected{background:#39434b;color:#fff;border:1px solid #65717b}
             QLineEdit,QComboBox,QSpinBox,QPlainTextEdit,QTextEdit,QTableWidget,QTreeWidget{background:#171a1d;color:#e3e6e8;border:1px solid #3b444b;selection-background-color:#46545e}
             QHeaderView::section{background:#252b30;color:#c4cbd1;border-bottom:1px solid #414a51}
             QPushButton{background:#2a3035;color:#e3e6e8;border:1px solid #454e55} QPushButton#PrimaryButton{background:#4b5963;color:#fff;border:1px solid #73818a}
-            QLabel#StatusBar{background:#252b30;color:#cbd2d8;border:1px solid #414a51} QLabel#InfoNote{background:#26323a;color:#d2e0e8;border:1px solid #46545e}"""
-        else: extra=""
-        compact="QPushButton{min-height:18px;padding-top:0;padding-bottom:0;} QTreeWidget::item{padding-top:5px;padding-bottom:5px;} QTableWidget::item{padding:4px;}" if density=="compact" else ""
-        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+compact)
+            QPushButton#DangerButton{background:#40272b;color:#ffdce0;border:1px solid #77434b}
+            QCheckBox{color:#d5dbe0}
+            QLabel#StatusBar{background:#252b30;color:#cbd2d8;border:1px solid #414a51}
+            QLabel#InfoNote{background:#26323a;color:#d2e0e8;border:1px solid #46545e}
+            QTabBar::tab{background:#252b30;color:#c4cbd1;padding:9px 14px;border:1px solid #414a51}
+            QTabBar::tab:selected{background:#343d44;color:#fff}"""
+        else:
+            extra=""
+        compact="QPushButton{min-height:34px;padding-top:0;padding-bottom:0;} QTreeWidget::item{padding-top:5px;padding-bottom:5px;} QTableWidget::item{padding:4px;}" if density=="compact" else ""
+        controls="QPushButton{min-height:40px;min-width:90px;padding-left:15px;padding-right:15px;} QLineEdit,QComboBox,QSpinBox{min-height:40px;min-width:150px;} QPushButton#MapZoom{min-width:36px;max-width:36px;padding:0;}"
+        self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+controls+"\n"+compact)
+
+    def reset_visual_preferences(self):
+        widgets=(self.ui_theme,self.ui_font_size,self.ui_density,self.ui_start_page,self.confirm_exit_check)
+        for widget in widgets: widget.blockSignals(True)
+        self.ui_theme.setCurrentIndex(self.ui_theme.findData("default"))
+        self.ui_font_size.setCurrentIndex(self.ui_font_size.findData("10"))
+        self.ui_density.setCurrentIndex(self.ui_density.findData("normal"))
+        self.ui_start_page.setCurrentIndex(self.ui_start_page.findData("0"))
+        self.confirm_exit_check.setChecked(True)
+        for widget in widgets: widget.blockSignals(False)
+        self.save_visual_preferences()
+
+    def clear_lan_history(self):
+        answer=QtMessageBox.question(self,"Очистить историю LAN","Удалить локальную историю обнаруженных устройств? Текущая топология будет очищена до следующего сканирования.",QtMessageBox.StandardButton.Yes|QtMessageBox.StandardButton.No,QtMessageBox.StandardButton.No)
+        if answer!=QtMessageBox.StandardButton.Yes: return
+        self.settings["lan_map_history"]="{}"
+        self.save_settings()
+        if hasattr(self,"lan_map_scene"):
+            self.render_lan_map([],{},0,0)
+            self.lan_map_status.setText("История очищена · выполни новое сканирование")
 
     def page_lan_map(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(12)
@@ -2430,8 +2513,8 @@ class App(QMainWindow):
         self.lan_map_legend=QLabel("● Маршрутизатор   ● Сетевое оборудование   ● Устройство в сети   ● Новое   ● Не обнаружено")
         self.lan_map_legend.setObjectName("Muted")
         fit=QPushButton("По размеру"); fit.clicked.connect(lambda:self.lan_map_view.fit_map())
-        zoom_in=QPushButton("＋"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
-        zoom_out=QPushButton("−"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
+        zoom_in=QPushButton("＋"); zoom_in.setObjectName("MapZoom"); zoom_in.setMaximumWidth(36); zoom_in.clicked.connect(lambda:self.lan_map_view.scale(1.2,1.2))
+        zoom_out=QPushButton("−"); zoom_out.setObjectName("MapZoom"); zoom_out.setMaximumWidth(36); zoom_out.clicked.connect(lambda:self.lan_map_view.scale(1/1.2,1/1.2))
         map_tools.addWidget(self.lan_map_legend,1); map_tools.addWidget(zoom_out); map_tools.addWidget(zoom_in); map_tools.addWidget(fit)
         canvas.layout().addLayout(map_tools)
         self.lan_map_scene=QGraphicsScene(self); self.lan_map_view=NetworkMapView(); self.lan_map_view.setScene(self.lan_map_scene)
@@ -2605,8 +2688,13 @@ class App(QMainWindow):
 
     def render_lan_map(self,records,current,new_count,lost_count):
         scene=self.lan_map_scene; scene.clear()
-        bg=QColor("#0b1220"); card=QColor("#172337"); border=QColor("#3a506d")
-        text_color=QColor("#e8eef8"); muted=QColor("#9eb0c9")
+        theme=self.settings.get("ui_theme","default")
+        light=theme=="light"; neutral=theme=="dark"
+        bg=QColor("#f1f5fb" if light else ("#171a1d" if neutral else "#0b1220"))
+        card=QColor("#ffffff" if light else ("#252b30" if neutral else "#172337"))
+        border=QColor("#b8c8dc" if light else ("#46515a" if neutral else "#3a506d"))
+        text_color=QColor("#1d2b3d" if light else ("#edf1f4" if neutral else "#e8eef8"))
+        muted=QColor("#53677f" if light else ("#aeb9c2" if neutral else "#9eb0c9"))
         green=QColor("#4ade80"); blue=QColor("#72a7ff"); amber=QColor("#fbbf24"); red=QColor("#fb7185"); cyan=QColor("#67e8f9")
         scene.setBackgroundBrush(bg)
         def add_node(x,y,w,h,title,subtitle,color,tooltip=""):
@@ -2629,7 +2717,7 @@ class App(QMainWindow):
         for rec in records:
             iface=rec.get("interface") or "Порт не определён"
             grouped.setdefault(iface,[]).append(rec)
-        interfaces=sorted(grouped,key=str.casefold); port_w=230; gap=50
+        interfaces=sorted(grouped,key=str.casefold); port_w=350; gap=64
         total_width=max(270,len(interfaces)*port_w+max(0,len(interfaces)-1)*gap)
         root_x=total_width/2-135
         # redraw router centered over all port branches
@@ -2650,30 +2738,30 @@ class App(QMainWindow):
             cursor_y=300
             inferred_switch=False
             if not infra and len(endpoints)>=3:
-                top,bottom,_=add_node(x+61,cursor_y,108,78,"Switch / AP?","предположение",amber,
+                top,bottom,_=add_node(x+95,cursor_y,160,86,"Switch / AP?","предположение",amber,
                     "Предполагаемый промежуточный коммутатор или точка доступа: на одном порту MikroTik обнаружено несколько MAC. Физическая связь не подтверждена.")
-                edge((port_x,241),(x+115,cursor_y),amber,dashed=True)
+                edge((port_x,241),(x+175,cursor_y),amber,dashed=True)
                 cursor_y+=116; inferred_switch=True
             if infra:
                 for ni,device in enumerate(infra):
-                    nx=x+(ni%2)*115; ny=cursor_y+(ni//2)*116
+                    nx=x+(ni%2)*172; ny=cursor_y+(ni//2)*112
                     label=device.get("identity") or device.get("hostname") or device.get("board") or "Сетевое устройство"
                     details=" · ".join(v for v in [device.get("platform"),device.get("board"),device.get("ip")] if v) or device.get("mac","")
-                    top,bottom,_=add_node(nx,ny,108,78,label[:17],details[:28],cyan,
+                    top,bottom,_=add_node(nx,ny,160,88,label[:24],details[:42],cyan,
                         f'{label}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nОбнаружение: {", ".join(device.get("sources",[]))}')
-                    edge((port_x,241),(nx+54,ny),cyan)
+                    edge((port_x,241),(nx+80,ny),cyan)
                 cursor_y+=((len(infra)+1)//2)*116
             columns=2 if len(endpoints)>1 else 1
             for di,device in enumerate(endpoints):
                 col=di%columns; row=di//columns
-                nx=x+col*115; ny=cursor_y+row*116
+                nx=x+col*172; ny=cursor_y+row*112
                 state=device.get("state","online")
                 color={"new":amber,"returned":green,"online":green,"lost":red}.get(state,blue)
                 title=device.get("hostname") or device.get("scan_name") or device.get("ip") or device.get("mac") or "Устройство"
                 subtitle=" · ".join(v for v in [device.get("ip"),device.get("vendor") if device.get("vendor")!="Не определён" else None] if v) or device.get("mac","")
                 subtitle=(subtitle or "MAC без IP")[:30]
                 tooltip=(f'{title}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nПроизводитель: {device.get("vendor","Не определён")}\nОтклик: {device.get("response") or "—"}\nИсточники: {", ".join(device.get("sources",[]))}\nСостояние: {state}')
-                top,bottom,_=add_node(nx,ny,108,78,title[:17],subtitle,color,tooltip)
+                top,bottom,_=add_node(nx,ny,160,88,title[:24],subtitle,color,tooltip)
                 # If an LLDP/CDP/MNDP switch is known on this port, downstream placement is inferred.
                 edge((port_x,241) if not infra and not inferred_switch else ((x+115,cursor_y-116) if inferred_switch and not infra else (port_x,cursor_y-116)),(nx,ny),color,dashed=bool(infra or inferred_switch))
             # Per-port caption
@@ -5992,7 +6080,7 @@ QFrame#Card[metric="vpnroute"]{border-top-color:#7c93ff}
 QFrame#Card[metric="dns"]{border-top-color:#a78bfa}
 
 /* ---------- inputs ---------- */
-QLineEdit,QComboBox,QSpinBox{background:rgba(3,6,12,195);border:1px solid rgba(255,255,255,34);border-radius:11px;padding:0 12px;min-height:22px;color:#eaf0fa;selection-background-color:#2a5fc4}
+QLineEdit,QComboBox,QSpinBox{background:rgba(3,6,12,195);border:1px solid rgba(255,255,255,34);border-radius:11px;padding:0 12px;min-height:38px;min-width:150px;color:#eaf0fa;selection-background-color:#2a5fc4}
 QLineEdit:hover,QComboBox:hover,QSpinBox:hover{border-color:rgba(140,180,255,110)}
 QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border:1px solid #6aa0ff;background:rgba(8,15,28,215)}
 QComboBox{padding-right:38px}
@@ -6039,7 +6127,7 @@ QTableCornerButton::section{background:#0b1424;border:0}
 QTableWidget::item{padding:8px;border-bottom:1px solid #15243a}
 
 /* ---------- buttons (glass) ---------- */
-QPushButton{background:rgba(255,255,255,11);color:#e9f0fc;border:1px solid rgba(255,255,255,34);border-radius:11px;padding:0 18px;min-height:22px;font-weight:600}
+QPushButton{background:rgba(255,255,255,11);color:#e9f0fc;border:1px solid rgba(255,255,255,34);border-radius:11px;padding:0 18px;min-height:38px;min-width:88px;font-weight:600}
 QPushButton:hover{background:rgba(255,255,255,28);border-color:rgba(160,195,255,120)}
 QPushButton:pressed{background:rgba(255,255,255,8)}
 QPushButton:disabled{color:#5c6f8b;background:rgba(255,255,255,6);border-color:rgba(255,255,255,14)}

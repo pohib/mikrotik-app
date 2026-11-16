@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }} · tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install runtime and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Compile application and tests
+        run: python -m compileall -q app.py tests
+      - name: Run unit and GUI smoke tests
+        run: python -m pytest -q
+      - name: Check release metadata and launcher contract
+        run: |
+          python -c "from pathlib import Path; import app; assert app.APP_VERSION == '1.8.0'; assert 'v1.8.0' in Path('README.md').read_text(encoding='utf-8'); assert 'start.ps1' in Path('start.bat').read_text(encoding='utf-8')"
+
+  windows-launcher:
+    name: Windows launcher validation
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile application
+        run: python -m py_compile app.py
+      - name: Parse PowerShell launcher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path "start.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+      - name: Check batch entry point
+        shell: pwsh
+        run: |
+          $batch = Get-Content "start.bat" -Raw
+          if ($batch -notmatch "start\.ps1" -or $batch -notmatch "v1\.8\.0") { throw "start.bat is out of sync with the application release" }

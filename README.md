@@ -1,4 +1,15 @@
-# MikroTik VPN Manager — v1.7.0
+# MikroTik VPN Manager — v1.8.0
+
+## v1.8.0 — Theme, settings and CI
+
+- Fixed the application canvas background so Default, Dark and Light themes change the entire window, not only cards and the sidebar.
+- Added explicit light/dark text palettes for headings, status labels, navigation, inputs, tables, checkboxes and secondary UI elements.
+- Reworked **General settings**: confirmation before exit, local configuration-file path, LAN topology-history cleanup and one-click visual-preference reset.
+- Improved LAN topology readability with wider device cards, more spacing, theme-aware canvas colors and bounded mouse-wheel zoom.
+- Increased the baseline size of buttons, text inputs and selection controls while retaining compact map zoom buttons.
+- Added automated unit and GUI smoke tests plus CI for Python 3.12/3.13 and Windows launcher validation.
+- Runtime dependencies are pinned to PySide6 6.12.0 and Paramiko 4.0.0. Python 3.10–3.13 is supported; Python 3.13.13 is the recommended runtime.
+
 
 ## v1.7.0 — Grouped service dependency discovery
 

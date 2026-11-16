@@ -1304,7 +1304,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "wan_static_address":"", "wan_static_gateway":"", "wan_static_dns":"1.1.1.1,8.8.8.8", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -1973,13 +1973,16 @@ class App(QMainWindow):
         guide=QLabel("ЗАЧЕМ ЭТО НУЖНО\nWAN — внешний интерфейс, через который роутер получает интернет. DHCP подходит, если провайдер выдаёт адрес автоматически; PPPoE требует логин и пароль из договора. VLAN ID нужен только если провайдер передаёт интернет в tagged VLAN. LAN bridge объединяет выбранные внутренние порты в одну сеть; DHCP раздаёт устройствам IP, шлюз и DNS; NAT позволяет LAN-клиентам выходить в интернет через WAN.\n\nВАЖНО: добавление портов в bridge и смена IP LAN могут оборвать текущее SSH-подключение. Подключись к одному из выбранных LAN-портов и заранее сохрани резервную копию. Не добавляй WAN-порт в LAN bridge.")
         guide.setObjectName("InfoNote"); guide.setWordWrap(True); base.layout().addWidget(guide)
         self.initial_setup_inputs={}
-        self.initial_setup_mode=QComboBox(); self.initial_setup_mode.addItems(["DHCP","PPPoE"]); self.initial_setup_mode.setCurrentText(self.settings.get("wan_mode","DHCP"))
+        self.initial_setup_mode=QComboBox(); self.initial_setup_mode.addItems(["DHCP","PPPoE","Static IPv4"]); self.initial_setup_mode.setCurrentText(self.settings.get("wan_mode","DHCP"))
         self.initial_setup_inputs["wan_mode"]=self.initial_setup_mode
         self.initial_setup_wan_base=QLineEdit(self.settings.get("wan_base","ether1")); self.initial_setup_inputs["wan_base"]=self.initial_setup_wan_base
         self.initial_setup_vlan=QLineEdit(self.settings.get("wan_vlan_id","")); self.initial_setup_vlan.setPlaceholderText("Пусто — без VLAN; обычно 10, 35, 100 и т. п."); self.initial_setup_inputs["wan_vlan_id"]=self.initial_setup_vlan
         self.initial_setup_pppoe_name=QLineEdit(self.settings.get("wan_pppoe_name","pppoe-wan")); self.initial_setup_inputs["wan_pppoe_name"]=self.initial_setup_pppoe_name
         self.initial_setup_user=QLineEdit(); self.initial_setup_user.setPlaceholderText("Логин из договора провайдера")
         self.initial_setup_password=QLineEdit(); self.initial_setup_password.setEchoMode(QLineEdit.EchoMode.Password); self.initial_setup_password.setPlaceholderText("Пароль не сохраняется в settings.json")
+        self.initial_setup_static_address=QLineEdit(self.settings.get("wan_static_address","")); self.initial_setup_static_address.setPlaceholderText("Например: 203.0.113.10/29")
+        self.initial_setup_static_gateway=QLineEdit(self.settings.get("wan_static_gateway","")); self.initial_setup_static_gateway.setPlaceholderText("Шлюз провайдера")
+        self.initial_setup_static_dns=QLineEdit(self.settings.get("wan_static_dns","1.1.1.1,8.8.8.8")); self.initial_setup_static_dns.setPlaceholderText("DNS IPv4 через запятую")
         self.initial_setup_bridge=QLineEdit(self.settings.get("lan_bridge","bridge")); self.initial_setup_inputs["lan_bridge"]=self.initial_setup_bridge
         self.initial_setup_ports=QLineEdit(self.settings.get("lan_ports","ether2,ether3,ether4")); self.initial_setup_ports.setPlaceholderText("ether2,ether3,ether4")
         self.initial_setup_address=QLineEdit(self.settings.get("lan_address","192.168.88.1/24")); self.initial_setup_inputs["lan_address"]=self.initial_setup_address
@@ -1991,7 +1994,22 @@ class App(QMainWindow):
         setup_form.addRow("Имя PPPoE-интерфейса",self.initial_setup_pppoe_name)
         setup_form.addRow("PPPoE login",self.initial_setup_user)
         setup_form.addRow("PPPoE password",self.initial_setup_password)
+        setup_form.addRow("WAN static address · CIDR",self.initial_setup_static_address)
+        setup_form.addRow("WAN static gateway",self.initial_setup_static_gateway)
+        setup_form.addRow("WAN DNS · IPv4 через запятую",self.initial_setup_static_dns)
         setup_form.addRow("Имя LAN bridge",self.initial_setup_bridge)
+        def update_initial_wan_fields(mode):
+            pppoe_visible=(mode=="PPPoE"); static_visible=(mode=="Static IPv4")
+            for widget in (self.initial_setup_pppoe_name,self.initial_setup_user,self.initial_setup_password):
+                widget.setVisible(pppoe_visible)
+                label=setup_form.labelForField(widget)
+                if label: label.setVisible(pppoe_visible)
+            for widget in (self.initial_setup_static_address,self.initial_setup_static_gateway,self.initial_setup_static_dns):
+                widget.setVisible(static_visible)
+                label=setup_form.labelForField(widget)
+                if label: label.setVisible(static_visible)
+        self.initial_setup_mode.currentTextChanged.connect(update_initial_wan_fields)
+        update_initial_wan_fields(self.initial_setup_mode.currentText())
         setup_form.addRow("LAN-порты через запятую",self.initial_setup_ports)
         setup_form.addRow("Адрес роутера в LAN · CIDR",self.initial_setup_address)
         setup_form.addRow("DHCP pool · начало-конец",self.initial_setup_pool)
@@ -2000,8 +2018,10 @@ class App(QMainWindow):
         self.initial_setup_ack.setWordWrap(True); base.layout().addWidget(self.initial_setup_ack)
         pppoe_help=QLabel("Для контроля связи мастер использует два публичных ICMP probe-адреса: 1.1.1.1 и 8.8.8.8. Если оба перестанут отвечать через WireGuard, активируется резервный маршрут через WAN. Если сеть VPN-провайдера блокирует ICMP до обоих адресов, будет выбран прямой WAN даже при работающем туннеле.")
         pppoe_help.setObjectName("Muted"); pppoe_help.setWordWrap(True); base.layout().addWidget(pppoe_help)
-        setup_help=QLabel("ЧТО НАЖИМАТЬ\n1. Выбери DHCP или PPPoE по данным провайдера.\n2. Укажи физический WAN-порт (обычно ether1). Если провайдер требует VLAN, введи VLAN ID; иначе оставь поле пустым.\n3. Для PPPoE введи логин и пароль.\n4. Укажи LAN-порты, куда будут подключаться компьютеры/точки доступа. Не указывай WAN-порт.\n5. Проверь адрес LAN-шлюза и DHCP pool: пул должен находиться в этой же подсети и не включать адрес самого роутера.\n6. Отметь подтверждение, нажми «Подготовить первичную настройку», затем внимательно проверь команды в общем предпросмотре и только после этого нажми «Применить изменения».")
+        setup_help=QLabel("ЧТО НАЖИМАТЬ\n1. Выбери DHCP, PPPoE или Static IPv4 по данным провайдера.\n2. Укажи физический WAN-порт (обычно ether1). Если провайдер требует VLAN, введи VLAN ID; иначе оставь поле пустым.\n3. Для PPPoE введи логин и пароль.\n4. Укажи LAN-порты, куда будут подключаться компьютеры/точки доступа. Не указывай WAN-порт.\n5. Проверь адрес LAN-шлюза и DHCP pool: пул должен находиться в этой же подсети и не включать адрес самого роутера.\n6. Отметь подтверждение, нажми «Подготовить первичную настройку», затем внимательно проверь команды в общем предпросмотре и только после этого нажми «Применить изменения».")
         setup_help.setObjectName("Muted"); setup_help.setWordWrap(True); base.layout().addWidget(setup_help)
+        static_help=QLabel("Для Static IPv4 введи WAN address с маской, шлюз провайдера и DNS-серверы. Шлюз должен находиться в WAN subnet. При использовании VLAN адрес и шлюз назначаются логическому VLAN-интерфейсу, а не физическому порту.")
+        static_help.setObjectName("Muted"); static_help.setWordWrap(True); base.layout().addWidget(static_help)
         self.initial_setup_status=QLabel("Первичная настройка ещё не подготовлена."); self.initial_setup_status.setObjectName("StatusBar"); self.initial_setup_status.setWordWrap(True); base.layout().addWidget(self.initial_setup_status)
         setup_stage=QPushButton("Подготовить первичную настройку WAN + LAN"); setup_stage.setObjectName("PrimaryButton"); setup_stage.clicked.connect(self.stage_initial_network_setup); base.layout().addWidget(setup_stage)
         l.addWidget(base)
@@ -2085,7 +2105,7 @@ class App(QMainWindow):
         pppoe_name=self.initial_setup_pppoe_name.text().strip()
         bridge=self.initial_setup_bridge.text().strip()
         ports=[x.strip() for x in self.initial_setup_ports.text().split(",") if x.strip()]
-        if mode not in ("DHCP","PPPoE"): raise ValueError("Выбери WAN DHCP или PPPoE.")
+        if mode not in ("DHCP","PPPoE","Static IPv4"): raise ValueError("Выбери DHCP, PPPoE или Static IPv4.")
         for value,label in ((base,"WAN interface"),(bridge,"LAN bridge")):
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",value): raise ValueError(f"Некорректное имя {label}: {value}")
         if not ports: raise ValueError("Укажи хотя бы один LAN-порт для bridge.")
@@ -2095,6 +2115,17 @@ class App(QMainWindow):
         if vlan and (not vlan.isdigit() or not 1<=int(vlan)<=4094): raise ValueError("VLAN ID должен быть числом от 1 до 4094.")
         if mode=="PPPoE" and not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",pppoe_name): raise ValueError("Некорректное имя PPPoE-интерфейса.")
         if mode=="PPPoE" and (not self.initial_setup_user.text().strip() or not self.initial_setup_password.text()): raise ValueError("Для PPPoE нужны логин и пароль провайдера.")
+        static_address=self.initial_setup_static_address.text().strip(); static_gateway=self.initial_setup_static_gateway.text().strip()
+        static_dns=[x.strip() for x in self.initial_setup_static_dns.text().split(",") if x.strip()]
+        if mode=="Static IPv4":
+            try:
+                static_iface=ipaddress.ip_interface(static_address); gateway_ip=ipaddress.ip_address(static_gateway)
+                dns_ips=[ipaddress.ip_address(x) for x in static_dns]
+                if static_iface.version!=4 or gateway_ip.version!=4 or not dns_ips or any(x.version!=4 for x in dns_ips): raise ValueError()
+                if gateway_ip not in static_iface.network: raise ValueError("Gateway должен находиться в WAN subnet; если провайдер выдал шлюз вне подсети, требуется отдельная схема с on-link route.")
+                if static_iface.ip in (static_iface.network.network_address,static_iface.network.broadcast_address): raise ValueError()
+            except ValueError as exc:
+                raise ValueError("Для Static IPv4 укажи корректный WAN address/CIDR, шлюз в этой подсети и один или несколько IPv4 DNS через запятую.") from exc
         cidr=self.initial_setup_address.text().strip()
         iface=ipaddress.ip_interface(cidr)
         if iface.version!=4 or not iface.ip.is_private: raise ValueError("Для LAN укажи частный IPv4-адрес в формате 192.168.88.1/24.")
@@ -2109,6 +2140,7 @@ class App(QMainWindow):
         wan_effective=(pppoe_name if mode=="PPPoE" else (vlan_name or base))
         return {"mode":mode,"wan_base":base,"vlan_id":vlan,"vlan_name":vlan_name,"wan_interface":wan_effective,
                 "pppoe_name":pppoe_name,"pppoe_user":self.initial_setup_user.text().strip(),"pppoe_password":self.initial_setup_password.text(),
+                "static_address":static_address,"static_gateway":static_gateway,"static_dns":",".join(static_dns),
                 "bridge":bridge,"ports":ports,"lan_address":str(iface),"lan_ip":str(iface.ip),"lan_subnet":str(net),
                 "pool":f"{start}-{end}","pool_name":"vpn-manager-lan-pool"}
 
@@ -2118,7 +2150,7 @@ class App(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self,"Проверь параметры первичной настройки",str(exc)); return
         self.settings.update({"wan_base":cfg["wan_base"],"wan_mode":cfg["mode"],"wan_vlan_id":cfg["vlan_id"],
-                              "wan_pppoe_name":cfg["pppoe_name"],"wan_interface":cfg["wan_interface"],
+                              "wan_pppoe_name":cfg["pppoe_name"],"wan_static_address":cfg["static_address"],"wan_static_gateway":cfg["static_gateway"],"wan_static_dns":cfg["static_dns"],"wan_interface":cfg["wan_interface"],
                               "lan_bridge":cfg["bridge"],"lan_interface":cfg["bridge"],"lan_ports":",".join(cfg["ports"]),
                               "lan_address":cfg["lan_address"],"lan_subnet":cfg["lan_subnet"],"lan_dns":cfg["lan_ip"],
                               "dhcp_pool":cfg["pool"]})

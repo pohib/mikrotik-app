@@ -5018,6 +5018,16 @@ class App(QMainWindow):
                     interfaces=parse_terse(r.exec("/interface print terse"))
                     names={x["f"].get("name","") for x in interfaces}
                     if base not in names: raise RuntimeError(f"WAN physical interface {base} не найден.")
+                    main_before=parse_terse(r.exec('/ip route print terse where dst-address=0.0.0.0/0 and routing-table=main'))
+                    for route_item in main_before:
+                        if "I" in route_item["flags"]: continue
+                        route_gateway=route_item["f"].get("gateway","")
+                        route_immediate=route_item["f"].get("immediate-gw","")
+                        same_selected_wan=(route_gateway==wan_if or route_immediate==wan_if or route_immediate.endswith("%"+wan_if))
+                        if c["mode"]=="Static IPv4":
+                            same_selected_wan=same_selected_wan or route_gateway in (c["static_gateway"],c["static_gateway"]+"%"+wan_if) or route_immediate==c["static_gateway"]+"%"+wan_if
+                        if not same_selected_wan:
+                            raise RuntimeError(f"An active main default route already uses another interface/gateway ({route_gateway} / {route_immediate}). Resolve WAN routing manually before applying the first-time wizard.")
                     missing=[p for p in ports if p not in names]
                     if missing: raise RuntimeError("LAN interface(s) not found: "+", ".join(missing))
                     if base in ports: raise RuntimeError("WAN port is also listed as LAN; refusing to bridge WAN.")

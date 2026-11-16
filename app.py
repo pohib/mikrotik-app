@@ -4669,15 +4669,20 @@ class App(QMainWindow):
         expected_routes={
             "VPN-MANAGER-WG-PROBE-1":{"dst-address":"1.1.1.1/32","gateway":wg,"scope":"10"},
             "VPN-MANAGER-WG-PROBE-2":{"dst-address":"8.8.8.8/32","gateway":wg,"scope":"10"},
-            "VPN-MANAGER-DEFAULT":{"dst-address":"0.0.0.0/0","gateway":f"1.1.1.1@{table}","distance":"1","target-scope":"11","check-gateway":"ping"},
-            "VPN-MANAGER-DEFAULT-2":{"dst-address":"0.0.0.0/0","gateway":f"8.8.8.8@{table}","distance":"1","target-scope":"11","check-gateway":"ping"},
-            "VPN-MANAGER-WAN-FALLBACK-1":{"dst-address":"0.0.0.0/0","gateway":"1.1.1.1@main","distance":"2","target-scope":"11","check-gateway":"ping"},
-            "VPN-MANAGER-WAN-FALLBACK-2":{"dst-address":"0.0.0.0/0","gateway":"8.8.8.8@main","distance":"2","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-DEFAULT":{"dst-address":"0.0.0.0/0","gateway":"1.1.1.1","distance":"1","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-DEFAULT-2":{"dst-address":"0.0.0.0/0","gateway":"8.8.8.8","distance":"1","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-WAN-FALLBACK-1":{"dst-address":"0.0.0.0/0","gateway":"1.1.1.1","distance":"2","target-scope":"11","check-gateway":"ping"},
+            "VPN-MANAGER-WAN-FALLBACK-2":{"dst-address":"0.0.0.0/0","gateway":"8.8.8.8","distance":"2","target-scope":"11","check-gateway":"ping"},
         }
         for name,expected in expected_routes.items():
             actual=verified_by_comment[name][0]["f"]
             mismatch=[f"{key}: expected {value}, got {actual.get(key,'<missing>')}" for key,value in expected.items() if actual.get(key)!=value]
             if mismatch: raise RuntimeError("Failover route "+name+" has unexpected parameters: "+"; ".join(mismatch))
+            immediate=actual.get("immediate-gw","")
+            if name in primary_comments and immediate not in (wg, wg+"%"+wg) and not immediate.endswith("%"+wg):
+                raise RuntimeError("Failover primary route "+name+" does not resolve through the WireGuard interface.")
+            if name in backup_comments and immediate!=f["wan_interface"] and not immediate.endswith("%"+f["wan_interface"]):
+                raise RuntimeError("Failover backup route "+name+" does not resolve through the configured WAN interface.")
         active_primary=any("A" in verified_by_comment[name][0]["flags"] for name in primary_comments)
         active_backup=any("A" in verified_by_comment[name][0]["flags"] for name in backup_comments)
         if not (active_primary or active_backup):

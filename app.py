@@ -3318,6 +3318,13 @@ class App(QMainWindow):
             "WireGuard peers": f"/interface wireguard peers print detail where interface={ros_q(f['wg_interface'])}",
             "VPN interface ping": f"/tool ping address=1.1.1.1 interface={ros_q(f['wg_interface'])} count=3",
             "Managed Mangle": f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}',
+            "Wizard routing table": f'/routing table print detail where name={ros_q(f["route_table"])}',
+            "Wizard LAN addresses": f'/ip address print detail where interface={ros_q(f["lan_interface"])}',
+            "Wizard DNS UDP rule": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-UDP")}',
+            "Wizard DNS TCP rule": f'/ip firewall filter print terse where comment={ros_q("VPN-MANAGER-LAN-DNS-TCP")}',
+            "Wizard NAT rule": f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}',
+            "Wizard main route": '/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main',
+            "Wizard managed route": f'/ip route print detail where comment={ros_q("VPN-MANAGER-DEFAULT")}',
             "Managed NAT": "/ip firewall nat print terse",
             "DNS redirect NAT": '/ip firewall nat print terse where comment~"DNS-REDIRECT"',
             "Firewall filter": "/ip firewall filter print terse",
@@ -3516,6 +3523,42 @@ class App(QMainWindow):
             add("bad","Mangle / policy routing","Правило найдено, но параметры mark-routing не совпадают с профилем",mangle,"Проверь action, new-routing-mark, passthrough, chain и address-list.")
         else:
             add("ok","Mangle / policy routing","Управляемое правило найдено",mangle,"Сверь счётчики packets/bytes во время тестового обращения к домену.")
+
+        # Полная сверка объектов, которые создаёт мастер настройки.
+        # Отдельно подтверждаем основной WAN route и selective VPN policy route.
+        if not failed("Wizard routing table") and not nonempty("Wizard routing table"):
+            add("bad","Мастер настройки · routing table",f"Таблица {f['route_table']} отсутствует",raw["Wizard routing table"],"Повтори проверку и подготовь создание инфраструктуры в первом разделе мастера.")
+        if not failed("Wizard main route") and (not nonempty("Wizard main route") or "inactive" in raw["Wizard main route"].lower()):
+            add("bad","Мастер настройки · прямой WAN", "Основной default route через WAN отсутствует или неактивен",raw["Wizard main route"],"Восстанови обычный WAN-маршрут в таблице main. Не создавай default route в main через WireGuard.")
+        if not failed("Wizard managed route") and not nonempty("Wizard managed route"):
+            add("warn","Мастер настройки · VPN default route","Управляемый default route VPN не найден",raw["Wizard managed route"],"Проверь таблицу vpn и gateway WireGuard; обычный маршрут main должен оставаться через WAN.")
+        for key,proto in (("Wizard DNS UDP rule","UDP"),("Wizard DNS TCP rule","TCP")):
+            if failed(key):
+                add("info","Мастер настройки · DNS Firewall",f"Не удалось прочитать input-правило DNS {proto}",raw[key],"Проверь права SSH и повтори диагностику.")
+            elif not nonempty(key):
+                add("warn","Мастер настройки · DNS Firewall",f"Не найдено управляемое LAN DNS input-правило {proto}",raw[key],"Проверь, разрешён ли DNS на MikroTik только из доверенной LAN-подсети.")
+        if not failed("Wizard NAT rule"):
+            nat_records=parse_terse(raw["Wizard NAT rule"])
+            if len(nat_records)!=1:
+                add("warn","Мастер настройки · NAT",f"Ожидалось одно управляемое NAT-правило, найдено {len(nat_records)}",raw["Wizard NAT rule"],"Сверь srcnat, masquerade, LAN subnet и out-interface WireGuard. Не удаляй сторонние правила автоматически.")
+            elif "X" in nat_records[0]["flags"]:
+                add("bad","Мастер настройки · NAT","Управляемое NAT-правило отключено",raw["Wizard NAT rule"],"Проверь правило masquerade для LAN → WireGuard.")
+        if not failed("Wizard LAN addresses"):
+            lan_addresses=raw["Wizard LAN addresses"]
+            if f["lan_dns"] not in lan_addresses:
+                add("bad","Мастер настройки · LAN IP",f"Адрес DNS-шлюза {f['lan_dns']} не найден на интерфейсе {f['lan_interface']}",lan_addresses,"Сверь LAN interface и LAN DNS IP в мастере. Не добавляй IP автоматически, если он уже используется другим устройством.")
+        if not failed("Managed Mangle") and nonempty("Managed Mangle"):
+            entries=parse_terse(raw["Managed Mangle"])
+            if len(entries)==1:
+                mf=entries[0]["f"]
+                expected={"chain":"prerouting","action":"mark-routing","new-routing-mark":f["route_table"],"in-interface":f["lan_interface"],"src-address":f["lan_subnet"],"dst-address-list":f["address_list"],"passthrough":"no"}
+                mismatches=[f"{key}: ожидалось {value}, фактически {mf.get(key,'<нет>')}" for key,value in expected.items() if mf.get(key)!=value]
+                if mismatches:
+                    add("bad","Мастер настройки · Mangle","Правило не соответствует selective routing профилю","; ".join(mismatches),"Исправь параметры Mangle: только LAN → выбранный address-list → отдельная VPN routing table.")
+            elif len(entries)>1:
+                add("bad","Мастер настройки · Mangle",f"Найдено управляемых правил: {len(entries)}",raw["Managed Mangle"],"Устрани дубликаты после резервного копирования и ручной проверки.")
+        if failed("Wizard main route") or failed("Wizard managed route"):
+            add("info","Мастер настройки · маршруты","Часть маршрутов не удалось проверить","; ".join(x for x in (raw.get("Wizard main route",""),raw.get("Wizard managed route","")) if x.startswith("ERROR:")),"Проверь права RouterOS и повтори полную диагностику.")
 
         if domain:
             if not route_probe_ips:

@@ -3762,8 +3762,11 @@ class App(QMainWindow):
             if not 0<=keep<=65535: raise ValueError("Persistent keepalive должен быть от 0 до 65535 секунд.")
             allowed=[x.strip() for x in cfg["wg_allowed"].split(",") if x.strip()]
             if not allowed: raise ValueError("AllowedIPs не может быть пустым.")
-            for net in allowed: ipaddress.ip_network(net,strict=False)
-            if cfg["wg_address"]: ipaddress.ip_interface(cfg["wg_address"])
+            parsed_allowed=[ipaddress.ip_network(net,strict=False) for net in allowed]
+            if not any(net.version==4 and net.prefixlen==0 for net in parsed_allowed):
+                raise ValueError("Для выборочной маршрутизации всех IPv4-целей AllowedIPs должен включать 0.0.0.0/0. Проверь профиль провайдера.")
+            if not cfg["wg_address"]: raise ValueError("В профиле WireGuard отсутствует Address. Укажи выданный провайдером IPv4-адрес туннеля.")
+            if ipaddress.ip_interface(cfg["wg_address"]).version!=4: raise ValueError("Для текущей выборочной маршрутизации нужен IPv4 Address WireGuard.")
             mtu=int(cfg["wg_mtu"])
             if not 576<=mtu<=9000: raise ValueError("MTU должен быть в диапазоне 576–9000.")
             self.pending_wg_config=cfg

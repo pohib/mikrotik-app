@@ -2537,10 +2537,10 @@ class App(QMainWindow):
             track="rgba(255,255,255,12)"; border="rgba(255,255,255,24)"; thumb1="#60a5fa"; thumb2="#1d4ed8"; hover1="#93c5fd"; hover2="#3b82f6"
         scrollbars=f"""
         QScrollBar:vertical{{background:{track};width:18px;margin:3px;border:1px solid {border};border-radius:12px}}
-        QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;border:2px solid {track};border-radius:10px}}
+        QScrollBar::handle:vertical{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {thumb1},stop:1 {thumb2});min-height:32px;margin:1px;border:0;border-radius:9px}}
         QScrollBar::handle:vertical:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
-        QScrollBar:horizontal{{background:{track};height:18px;margin:3px;border:1px solid {border};border-radius:12px}}
-        QScrollBar::handle:horizontal{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {thumb1},stop:1 {thumb2});min-width:32px;border:2px solid {track};border-radius:10px}}
+        QScrollBar:horizontal{{background:{track};height:18px;margin:3px;border:1px solid {border};border-radius:9px}}
+        QScrollBar::handle:horizontal{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {thumb1},stop:1 {thumb2});min-width:32px;margin:1px;border:0;border-radius:9px}}
         QScrollBar::handle:horizontal:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {hover1},stop:1 {hover2});border-color:{border}}}
         QScrollBar::add-line,QScrollBar::sub-line{{width:0;height:0;border:0;background:transparent}}
         QScrollBar::add-page,QScrollBar::sub-page,QScrollBar::corner{{background:transparent}}
@@ -6380,13 +6380,13 @@ QLabel#IndValue{color:#9fb3d1;font-weight:600}
 QFrame#Sep{background:rgba(255,255,255,18);border:0}
 
 /* ---------- scrollbars ---------- */
-QScrollBar:vertical{background:transparent;width:18px;margin:2px;border-radius:12px}
-QScrollBar::handle:vertical{background:rgba(255,255,255,45);min-height:28px;border-radius:10px}
+QScrollBar:vertical{background:transparent;width:18px;margin:2px;border:0;border-radius:9px}
+QScrollBar::handle:vertical{background:rgba(255,255,255,45);min-height:28px;margin:1px;border:0;border-radius:9px}
 QScrollBar::handle:vertical:hover{background:rgba(255,255,255,80)}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0}
 QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent}
-QScrollBar:horizontal{background:transparent;height:18px;margin:2px;border-radius:12px}
-QScrollBar::handle:horizontal{background:rgba(255,255,255,45);min-width:28px;border-radius:10px}
+QScrollBar:horizontal{background:transparent;height:18px;margin:2px;border:0;border-radius:9px}
+QScrollBar::handle:horizontal{background:rgba(255,255,255,45);min-width:28px;margin:1px;border:0;border-radius:9px}
 QScrollBar::handle:horizontal:hover{background:rgba(255,255,255,80)}
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0}
 QToolTip{background:#142238;color:#edf4ff;border:1px solid #3b5575;padding:6px}

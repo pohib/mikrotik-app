@@ -68,3 +68,42 @@ def test_application_theme_and_general_settings_smoke(qt_app):
     finally:
         window._allow_close = True
         window.close()
+
+
+
+def test_lan_map_nodes_are_selectable_and_show_details(qt_app):
+    window = manager.App()
+    records = [
+        {
+            "mac": "AA:BB:CC:DD:EE:01", "ip": "192.0.2.10", "hostname": "workstation",
+            "interface": "bridge-LAN", "vendor": "Intel", "sources": ["IP Scan", "ARP"],
+            "state": "online", "last_seen": "2026-11-16 12:00:00", "kind": "endpoint",
+        },
+        {
+            "mac": "AA:BB:CC:DD:EE:02", "ip": "192.0.2.20", "hostname": "nas",
+            "interface": "bridge-LAN", "vendor": "QNAP", "sources": ["DHCP"],
+            "state": "new", "last_seen": "2026-11-16 12:00:00", "kind": "endpoint",
+        },
+    ]
+    current = {row["mac"]: row for row in records}
+    try:
+        window.render_lan_map(records, current, 1, 0)
+        node = next(
+            item for item in window.lan_map_scene.items()
+            if isinstance(item.data(0), dict) and item.data(0).get("ip") == "192.0.2.10"
+        )
+        assert node.flags() & manager.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        node.setSelected(True)
+        assert "192.0.2.10" in window.lan_map_details.text()
+        assert "AA:BB:CC:DD:EE:01" in window.lan_map_details.text()
+
+        window.lan_map_search.setText("192.0.2.20")
+        visible = [
+            item.data(0).get("ip") for item in window.lan_map_scene.items()
+            if isinstance(item.data(0), dict) and item.data(0).get("ip")
+        ]
+        assert visible == ["192.0.2.20"]
+        assert len(window._lan_map_records) == 2
+    finally:
+        window._allow_close = True
+        window.close()

@@ -5281,6 +5281,8 @@ class App(QMainWindow):
                     # Create a router backup before making any changes.
                     backup_name=c["backup_name"]
                     self.cmd(r,f'/system backup save name={ros_q(backup_name)}')
+                    self.cmd(r,f'/export file={ros_q(backup_name)}',timeout=60)
+                    self.q.put(("LOG",f"Перед WAN/LAN сохранены backup и export на MikroTik: {backup_name}.backup / {backup_name}.rsc"))
                     if c["vlan_name"] and not vlan_rows:
                         self.cmd(r,f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}')
                     if c["mode"]=="DHCP":

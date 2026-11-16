@@ -11,11 +11,11 @@ try:
 except ImportError:
     paramiko = None
 
-from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint, QSize
+from PySide6.QtCore import Qt, QEvent, QTimer, Signal, QObject, QPointF, QRectF, QPropertyAnimation, QEasingCurve, QPoint, QSize, QStringListModel
 from html import escape as esc
 from PySide6.QtGui import QFont, QAction, QTextCursor, QPainter, QColor, QLinearGradient, QRadialGradient, QPainterPath, QPen, QBrush, QPixmap, QSyntaxHighlighter, QTextCharFormat, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit,
+    QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit, QCompleter, QInputDialog,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox as QtMessageBox,
     QFileDialog as QtFileDialog, QPlainTextEdit, QComboBox, QSplitter, QDialog, QDialogButtonBox,
@@ -1287,7 +1287,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -1990,11 +1990,33 @@ class App(QMainWindow):
         self.terminal_input.set_history(getattr(self,"terminal_history",[]))
         self.terminal_input.returnPressed.connect(self.terminal_execute)
         self.terminal_input.textChanged.connect(self.update_terminal_command_hint)
+        self.terminal_input.textChanged.connect(self.update_terminal_parameter_hint)
+        self.terminal_completer_model=QStringListModel(self)
+        self.terminal_completer=QCompleter(self.terminal_completer_model,self.terminal_input)
+        self.terminal_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.terminal_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.terminal_input.setCompleter(self.terminal_completer)
+        self.terminal_parameter_hint=QLabel("Автодополнение RouterOS появится при вводе раздела.")
+        self.terminal_parameter_hint.setObjectName("TerminalHint")
+        pl.addWidget(self.terminal_parameter_hint)
+        self.terminal_completer_model.setStringList(self.terminal_completion_candidates())
         execute=QPushButton("Выполнить  ↵"); execute.setObjectName("PrimaryButton"); execute.setMinimumWidth(142); execute.clicked.connect(self.terminal_execute)
         command_row.addWidget(prompt); command_row.addWidget(self.terminal_input,1); command_row.addWidget(execute)
         pl.addLayout(command_row)
 
-        l.addWidget(panel,1)
+        quick=self.panel("Избранное и наборы команд","Сохранённые команды только подставляются в строку и не запускаются автоматически.")
+        qr=QHBoxLayout()
+        self.terminal_favorites=QComboBox()
+        fav_add=QPushButton("★ В избранное"); fav_add.clicked.connect(self.add_terminal_favorite)
+        fav_use=QPushButton("Вставить"); fav_use.clicked.connect(self.insert_terminal_favorite)
+        self.terminal_sets_combo=QComboBox()
+        set_add=QPushButton("Сохранить набор"); set_add.clicked.connect(self.add_terminal_set)
+        set_use=QPushButton("Вставить набор"); set_use.clicked.connect(self.insert_terminal_set)
+        set_del=QPushButton("Удалить набор"); set_del.clicked.connect(self.delete_terminal_set)
+        qr.addWidget(self.terminal_favorites,2); qr.addWidget(fav_use); qr.addWidget(fav_add)
+        qr.addWidget(self.terminal_sets_combo,1); qr.addWidget(set_use); qr.addWidget(set_add); qr.addWidget(set_del)
+        quick.layout().addLayout(qr)
+        l.addWidget(panel,1); l.addWidget(quick)
         note=QLabel("Перед выполнением приложение оценивает риск команды. Изменяющие и неизвестные команды требуют подтверждения; опасные операции выделяются отдельно. Режим «Только чтение» блокирует всё, что не распознано как безопасный запрос. Ручной ввод CLI сохранён.")
         note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
 
@@ -2022,7 +2044,86 @@ class App(QMainWindow):
         self.ros_guide_search.textChanged.connect(self.filter_ros_guides)
         self.ros_guide_list.currentItemChanged.connect(self.show_ros_guide_details)
         self.populate_ros_guides()
+        self.refresh_terminal_quick_access()
         return w
+
+    def terminal_completion_candidates(self):
+        base=["/system resource print","/system identity print","/interface print detail","/ip address print detail",
+        "/ip route print detail","/routing table print detail","/routing rule print detail",
+        "/ip firewall filter print detail","/ip firewall nat print detail","/ip firewall mangle print detail",
+        "/ip firewall address-list print detail","/ip dns print","/ip dns static print detail","/ip dns cache print",
+        "/interface wireguard print detail","/interface wireguard peers print detail","/ip neighbor print detail",
+        "/ip dhcp-server lease print detail","/ip service print","/user print","/log print",
+        "/ping 1.1.1.1 count=4","/resolve example.com","/tool traceroute 1.1.1.1"]
+        return sorted(set(base+[x[2] for x in getattr(self,"ros_guides",[])]),key=str.casefold)
+
+    def update_terminal_parameter_hint(self, command):
+        if not hasattr(self,"terminal_parameter_hint"): return
+        low=command.strip().lower()
+        hints=[("/ip firewall filter","Filter: chain, action, protocol, src/dst-address, in/out-interface, comment, disabled."),
+        ("/ip firewall nat","NAT: chain, action, protocol, src/dst-address, to-addresses, to-ports, out-interface."),
+        ("/ip firewall mangle","Mangle: chain, action, src/dst-address, in/out-interface, connection-mark, new-routing-mark, passthrough."),
+        ("/ip route","Route: dst-address, gateway, routing-table, distance, check-gateway, disabled."),
+        ("/ip address","IP address: address, network, interface, disabled."),
+        ("/ip dns","DNS: servers, use-doh-server, verify-doh-cert, allow-remote-requests."),
+        ("/interface wireguard","WireGuard: name, listen-port, mtu; peer: public-key, endpoint-address/port, allowed-address, persistent-keepalive.")]
+        hint=next((v for k,v in hints if low.startswith(k)),None)
+        self.terminal_parameter_hint.setText(hint or "Автодополнение по справочнику RouterOS. Выбор подсказки не выполняет команду.")
+
+    def refresh_terminal_quick_access(self):
+        if not hasattr(self,"terminal_favorites"): return
+        try: fav=json.loads(self.settings.get("terminal_favorites","[]"))
+        except Exception: fav=[]
+        self.terminal_favorites.clear()
+        for item in fav if isinstance(fav,list) else []:
+            if isinstance(item,dict) and item.get("name") and item.get("command"): self.terminal_favorites.addItem(item["name"],item["command"])
+        try: sets=json.loads(self.settings.get("terminal_sets","{}"))
+        except Exception: sets={}
+        self.terminal_sets_combo.clear()
+        for name in sorted(sets if isinstance(sets,dict) else {}): self.terminal_sets_combo.addItem(name)
+
+    def add_terminal_favorite(self):
+        command=self.terminal_input.text().strip()
+        if not command: return
+        name,ok=QInputDialog.getText(self,"Избранное","Название команды:",text=command[:48])
+        if not ok or not name.strip(): return
+        try: fav=json.loads(self.settings.get("terminal_favorites","[]"))
+        except Exception: fav=[]
+        fav=[x for x in fav if x.get("command")!=command]; fav.append({"name":name.strip(),"command":command})
+        self.settings["terminal_favorites"]=json.dumps(fav,ensure_ascii=False); self.save_settings(); self.refresh_terminal_quick_access()
+
+    def insert_terminal_favorite(self):
+        command=self.terminal_favorites.currentData()
+        if command: self.terminal_input.setText(command); self.terminal_input.setFocus()
+
+    def add_terminal_set(self):
+        name,ok=QInputDialog.getText(self,"Набор команд","Название набора:")
+        if not ok or not name.strip(): return
+        raw,ok=QInputDialog.getMultiLineText(self,"Команды набора","Одна команда на строку. Набор не запускается автоматически:")
+        if not ok: return
+        commands=[x.strip() for x in raw.splitlines() if x.strip() and not x.strip().startswith("#")]
+        if not commands: return
+        try: sets=json.loads(self.settings.get("terminal_sets","{}"))
+        except Exception: sets={}
+        sets[name.strip()]=commands; self.settings["terminal_sets"]=json.dumps(sets,ensure_ascii=False)
+        self.save_settings(); self.refresh_terminal_quick_access(); self.terminal_sets_combo.setCurrentText(name.strip())
+
+    def insert_terminal_set(self):
+        try: sets=json.loads(self.settings.get("terminal_sets","{}"))
+        except Exception: sets={}
+        commands=sets.get(self.terminal_sets_combo.currentText(),[])
+        if not commands: return
+        self.terminal_input.setText(commands[0]); self.terminal_input.setFocus()
+        if len(commands)>1: QMessageBox.information(self,"Набор команд",f"В наборе {len(commands)} команд. Подставлена первая; пакетное выполнение отключено.")
+
+    def delete_terminal_set(self):
+        name=self.terminal_sets_combo.currentText()
+        if not name: return
+        if QMessageBox.question(self,"Удалить набор",f"Удалить «{name}»?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes: return
+        try: sets=json.loads(self.settings.get("terminal_sets","{}"))
+        except Exception: sets={}
+        sets.pop(name,None); self.settings["terminal_sets"]=json.dumps(sets,ensure_ascii=False)
+        self.save_settings(); self.refresh_terminal_quick_access()
 
     def populate_ros_guides(self):
         self.ros_guides = [
@@ -2053,6 +2154,7 @@ class App(QMainWindow):
             ("DNS","Очистить DNS-кэш","/ip dns cache flush","Очищает динамический DNS-кэш роутера.","ИЗМЕНЯЕТ СОСТОЯНИЕ","Не удаляет статические DNS-записи, но временно заставляет имена разрешаться заново."),
         ]
         self.filter_ros_guides()
+        if hasattr(self,"terminal_completer_model"): self.terminal_completer_model.setStringList(self.terminal_completion_candidates())
 
     def filter_ros_guides(self):
         if not hasattr(self,"ros_guide_list"): return

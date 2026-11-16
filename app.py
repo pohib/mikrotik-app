@@ -1453,7 +1453,7 @@ class App(QMainWindow):
         self.normal_hint=QLabel("Укажи физический WAN-интерфейс в настройках. Автообновление включается отдельно."); self.normal_hint.setObjectName("Muted"); self.normal_hint.setWordWrap(True); normal.layout().addWidget(self.normal_hint)
         l.addWidget(normal)
         ap=self.panel("Активные VPN-цели","Подключись к роутеру, чтобы увидеть статусы"); self.active_panel=ap
-        self.active_table=QTableWidget(0,3); self.active_table.setHorizontalHeaderLabels(["Цель","Тип","Статус"])
+        self.active_table=QTableWidget(0,3); self.active_table.setStyleSheet("QTableWidget{background-color:#07101f;color:#dce7f7;alternate-background-color:#0b192b;gridline-color:#1b2b43;border:1px solid #263750;border-radius:12px;} QTableWidget::item{background-color:#07101f;color:#dce7f7;padding:8px;border-bottom:1px solid #17263d;} QTableWidget::item:alternate{background-color:#0b192b;color:#dce7f7;} QTableWidget::item:selected{background-color:#244b83;color:#ffffff;} QAbstractScrollArea::viewport{background-color:#07101f;}"); self.active_table.setHorizontalHeaderLabels(["Цель","Тип","Статус"])
         hh=self.active_table.horizontalHeader(); hh.setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch); hh.setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents); hh.setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents)
         self.active_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.active_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.active_table.verticalHeader().hide(); self.active_table.verticalHeader().setDefaultSectionSize(38); self.active_table.setShowGrid(False); self.active_table.setAlternatingRowColors(True)
@@ -1547,7 +1547,7 @@ class App(QMainWindow):
 
     def page_diagnostics(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        p=self.panel("Диагностика","Одна комплексная проверка: WAN, DNS/DoH, DHCP, WireGuard, маршруты, Mangle, NAT, FastTrack, IPv6 и DNS/HTTPS с этого Windows-ПК. Проверки не меняют конфигурацию MikroTik.")
+        p=self.panel("Полная диагностика сети и мастера VPN","Комплексная read-only проверка WAN/LAN, WireGuard, main и VPN default routes, routing rules, DNS/DoH, DHCP, управляемых DNS input rules, Mangle, NAT, VPN address-list, FastTrack и IPv6. Отдельно сверяются параметры, которые создаёт мастер настройки; также проверяется DNS/HTTPS с этого Windows-ПК. Конфигурация MikroTik не меняется.")
         row=QHBoxLayout()
         for text,fn in [("Полная диагностика",self.run_diagnostics),("Тест ping через VPN",self.test_vpn),("Ping WAN",self.ping_wan),("Traceroute",self.traceroute)]:
             b=QPushButton(text); b.clicked.connect(fn); row.addWidget(b)

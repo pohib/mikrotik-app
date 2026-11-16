@@ -2461,7 +2461,10 @@ class App(QMainWindow):
                 elif kind=="DONE": self.busy=False; self.progress.hide(); self.log("Операция завершена.")
                 elif kind=="TRAFFIC": self.on_traffic(payload)
                 elif kind=="ROUTER_STATUS": self.on_router_status(payload)
-                elif kind=="WG_APPLIED": self.save_settings(); self.wg_inputs["wg_private_key"].clear()
+                elif kind=="WG_APPLIED":
+                    self.save_settings()
+                    self.wg_inputs["wg_private_key"].clear()
+                    if "wg_preshared_key" in self.wg_inputs: self.wg_inputs["wg_preshared_key"].clear()
                 elif kind=="TARGETS": self.on_targets(payload)
                 elif kind=="DISCOVERY_DNS_CACHE":
                     dialog, output = payload

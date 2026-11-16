@@ -2209,7 +2209,10 @@ class App(QMainWindow):
             dhcp_gateway=f'gateway={f["lan_dns"]}' in d["dhcp"].replace(" ","")
             fast=bool(d["fasttrack"].strip()); foreign="action=mark-routing" in d["all_mangle"] and MANGLE_COMMENT not in d["all_mangle"]
             routing_rule_conflict=any(x["f"].get("table")==f["route_table"] for x in parse_terse(d["routing_rules"]))
-            main_fallback=bool(re.search(r"\\bmain\\b",d["routing_settings"],re.I))
+            policy_text=d["routing_settings"].lower()
+            mangle_pos=re.search(r"\bmangle\b",policy_text)
+            main_pos=re.search(r"\bmain\b",policy_text)
+            main_fallback=bool(mangle_pos and main_pos and main_pos.start()>mangle_pos.start())
             blockers=[]
             if not main_fallback: blockers.append("В /routing/settings отсутствует main: fallback для помеченного Mangle-трафика на WAN не подтверждён")
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
@@ -3552,7 +3555,10 @@ class App(QMainWindow):
         elif "inactive" in raw["Main default route"].lower():
             add("bad","WAN / основной маршрут","Основной default route найден, но помечен inactive",raw["Main default route"],"Проверь доступность шлюза и состояние WAN-интерфейса.")
         if not failed("Routing settings"):
-            if re.search(r"\\bmain\\b",raw["Routing settings"],re.I):
+            policy_text=raw["Routing settings"].lower()
+            mangle_pos=re.search(r"\bmangle\b",policy_text)
+            main_pos=re.search(r"\bmain\b",policy_text)
+            if mangle_pos and main_pos and main_pos.start()>mangle_pos.start():
                 add("ok","Аварийный возврат на WAN","В policy-rules присутствует main: если lookup в VPN-таблице не найдёт активный маршрут, RouterOS продолжит lookup в main",raw["Routing settings"],"Не удаляй main из policy-rules. Это обеспечивает прямой WAN fallback при недоступности WireGuard; Kill Switch не используется.")
             else:
                 add("bad","Аварийный возврат на WAN","В /routing/settings не найден main: fallback для помеченного Mangle-трафика не подтверждён",raw["Routing settings"],"Верни main в policy-rules после mangle согласно RouterOS policy routing. Не добавляй drop/unreachable и не включай Kill Switch.")

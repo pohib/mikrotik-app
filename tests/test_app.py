@@ -228,6 +228,36 @@ def test_detached_topology_window_shares_scene_and_selection(qt_app):
         window.close()
 
 
+def test_message_box_chrome_rebuilds_grid_without_stale_items(qt_app):
+    box = manager.QtMessageBox(
+        manager.QtMessageBox.Icon.Question,
+        "Test",
+        "Close application?",
+        manager.QtMessageBox.StandardButton.Yes | manager.QtMessageBox.StandardButton.No,
+    )
+    layout = box.layout()
+    manager.add_dialog_chrome(box, layout, "Test")
+    assert layout.count() >= 2
+    assert box.findChild(QLabel, "DialogHeading") is not None
+    box.close()
+
+
+def test_settings_button_is_pinned_below_sidebar_navigation(qt_app):
+    window = manager.App()
+    try:
+        assert window.nav.item(7).isHidden()
+        assert window.settings_nav_button.parentWidget() is window.nav.parentWidget()
+        window.settings_nav_button.click()
+        assert window.stack.currentIndex() == 7
+        assert window.settings_nav_button.isChecked()
+        window.nav.setCurrentRow(2)
+        assert window.stack.currentIndex() == 2
+        assert not window.settings_nav_button.isChecked()
+    finally:
+        window._allow_close = True
+        window.close()
+
+
 def test_custom_title_buttons_have_compact_dimensions(qt_app):
     window = manager.App()
     try:

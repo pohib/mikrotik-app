@@ -2113,8 +2113,11 @@ class App(QMainWindow):
         except Exception: sets={}
         commands=sets.get(self.terminal_sets_combo.currentText(),[])
         if not commands: return
-        self.terminal_input.setText(commands[0]); self.terminal_input.setFocus()
-        if len(commands)>1: QMessageBox.information(self,"Набор команд",f"В наборе {len(commands)} команд. Подставлена первая; пакетное выполнение отключено.")
+        if len(commands)==1: chosen=commands[0]
+        else:
+            chosen,ok=QInputDialog.getItem(self,"Выбрать команду из набора",f"Набор «{name}» · {len(commands)} команд:",commands,0,False)
+            if not ok: return
+        self.terminal_input.setText(chosen); self.terminal_input.setFocus()
 
     def delete_terminal_set(self):
         name=self.terminal_sets_combo.currentText()
@@ -2325,7 +2328,16 @@ class App(QMainWindow):
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
                 elif kind=="TERMOUT":
-                    self.terminal_output.appendPlainText(str(payload)); self.terminal_output.moveCursor(QTextCursor.MoveOperation.End)
+                    cursor=self.terminal_output.textCursor()
+                    cursor.movePosition(QTextCursor.MoveOperation.End)
+                    cursor.insertBlock()
+                    fmt=QTextCharFormat()
+                    is_error=str(payload).startswith("ОШИБКА:")
+                    fmt.setForeground(QColor("#fb7185" if is_error else "#c9d7e8"))
+                    cursor.setCharFormat(fmt)
+                    cursor.insertText(str(payload))
+                    self.terminal_output.setTextCursor(cursor)
+                    self.terminal_output.ensureCursorVisible()
                 elif kind=="DISCONNECTED":
                     self.auth_btn.setText("Войти по SSH"); self.auth_btn.setObjectName("PrimaryButton"); self.auth_btn.style().unpolish(self.auth_btn); self.auth_btn.style().polish(self.auth_btn)
                     self.router_state=None; self.render_targets(); self.reset_traffic(); self.mangle_status.setText("●  Статус: не проверен (нет SSH)"); self.mangle_status.setStyleSheet(f"color:{TONES['muted']};font-weight:700"); self.foot.setText("ROUTEROS 7  ·  SSH KEY AUTH\nSelective routing workspace")

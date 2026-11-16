@@ -186,3 +186,25 @@ def test_custom_title_buttons_have_compact_dimensions(qt_app):
     finally:
         window._allow_close = True
         window.close()
+
+
+def test_network_map_view_uses_incremental_updates_and_cached_background(qt_app):
+    view = manager.NetworkMapView()
+    try:
+        assert view.viewportUpdateMode() == manager.QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate
+        assert view.cacheMode() & manager.QGraphicsView.CacheModeFlag.CacheBackground
+    finally:
+        view.close()
+
+
+def test_network_map_fit_uses_explicit_scene_rect(qt_app):
+    scene = manager.QGraphicsScene()
+    scene.setSceneRect(0, 0, 1200, 800)
+    scene.addRect(0, 0, 10, 10)
+    view = manager.NetworkMapView()
+    try:
+        view.setScene(scene)
+        view.fit_map()
+        assert view.transform().m11() > 0
+    finally:
+        view.close()

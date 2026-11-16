@@ -1,4 +1,12 @@
-# MikroTik VPN Manager — v1.8.0
+# MikroTik VPN Manager — v1.9.0
+
+## v1.9.0 — Interactive LAN topology
+
+- Reworked the LAN map into a more polished device canvas with larger cards, restrained gradients, clearer status colors and improved spacing.
+- Added device selection: click a router, interface or endpoint to inspect the available IP, MAC, vendor, interface, discovery sources, last-seen time and radio details.
+- Added live search across discovered device properties and filters for online, new/returned and missing devices.
+- Kept inferred switch/AP links visually distinct from confirmed RouterOS interface and neighbor evidence. The map does not claim physical certainty where only MAC-table inference is available.
+- Preserved IP Scan, DHCP, ARP, Bridge Host, Wi-Fi registration and LLDP/CDP/MNDP discovery inputs.
 
 ## v1.8.0 — Theme, settings and CI
 

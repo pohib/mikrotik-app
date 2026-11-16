@@ -4765,6 +4765,9 @@ class App(QMainWindow):
                         expected={"chain":"srcnat","action":"masquerade","src-address":f["lan_subnet"],"out-interface":wg}
                         if "X" in managed_nat_pre[0]["flags"] or any(managed_nat_pre[0]["f"].get(k)!=v for k,v in expected.items()):
                             raise RuntimeError("Управляемое NAT правило отключено или отличается от профиля. Ничего не изменено.")
+                    matching_nat_pre=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}'))
+                    if len(matching_nat_pre)>1 or any("X" in x["flags"] for x in matching_nat_pre):
+                        raise RuntimeError("Для LAN → WireGuard найдено несколько NAT masquerade правил или отключённое совпадение. Ничего не изменено.")
                     dns_state=r.exec("/ip dns print")
                     if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     for proto in ("udp","tcp"):

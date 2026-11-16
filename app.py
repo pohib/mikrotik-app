@@ -2487,7 +2487,7 @@ class App(QMainWindow):
         found=[]
         mac_re=re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
         for line in output.splitlines():
-            m=re.match(r"^\\s*(\\d{1,3}(?:\\.\\d{1,3}){3})\\s+(.*)$",line)
+            m=re.match(r"^\s*(\d{1,3}(?:\.\d{1,3}){3})\s+(.*)$",line)
             if not m: continue
             try: ip=str(ipaddress.IPv4Address(m.group(1)))
             except ValueError: continue
@@ -2496,7 +2496,7 @@ class App(QMainWindow):
             if tokens and mac_re.fullmatch(tokens[0]): mac=tokens.pop(0).upper()
             response=""
             for i,token in enumerate(tokens):
-                if re.fullmatch(r"\\d+(?:\\.\\d+)?(?:ms|us)",token,re.I):
+                if re.fullmatch(r"\d+(?:\.\d+)?(?:ms|us)",token,re.I):
                     response=token; tokens.pop(i); break
             name=" ".join(tokens).strip()
             found.append({"ip":ip,"mac":mac,"response":response,"scan_name":name})
@@ -2602,8 +2602,8 @@ class App(QMainWindow):
             path=QPainterPath(); path.addRoundedRect(QRectF(x,y,w,h),12,12)
             node=scene.addPath(path,QPen(color,2),QBrush(card)); node.setToolTip(tooltip or title+"\n"+subtitle)
             dot=scene.addEllipse(x+13,y+15,10,10,QPen(color,1),QBrush(color))
-            title_item=scene.addText(title); title_item.setDefaultTextColor(text_color); title_item.setFont(QFont("Segoe UI",10,QFont.Weight.Bold)); title_item.setPos(x+31,y+8)
-            sub_item=scene.addText(subtitle); sub_item.setDefaultTextColor(muted); sub_item.setFont(QFont("Segoe UI",8)); sub_item.setPos(x+13,y+39)
+            title_item=scene.addText(title); title_item.setDefaultTextColor(text_color); title_item.setFont(QFont("Segoe UI",10,QFont.Weight.Bold)); title_item.setTextWidth(max(45,w-42)); title_item.setPos(x+31,y+8)
+            sub_item=scene.addText(subtitle); sub_item.setDefaultTextColor(muted); sub_item.setFont(QFont("Segoe UI",8)); sub_item.setTextWidth(max(60,w-24)); sub_item.setPos(x+13,y+39)
             return (x+w/2,y+h), (x+w/2,y), node
         def edge(a,b,color=border,dashed=False):
             pen=QPen(color,2,Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
@@ -2625,7 +2625,7 @@ class App(QMainWindow):
         scene.clear()
         root_bottom,root_top,_=add_node(root_x,25,270,82,router_title,"Шлюз / корень топологии",cyan)
         for idx,iface in enumerate(interfaces):
-            x=idx*(port_w+gap)+(total_width-port_w)/2-(len(interfaces)*(port_w+gap)-gap)/2
+            x=idx*(port_w+gap)+(total_width-(len(interfaces)*port_w+max(0,len(interfaces)-1)*gap))/2
             port_x=x+port_w/2
             port_records=grouped[iface]
             edge((root_x+135,107),(port_x,165),cyan)

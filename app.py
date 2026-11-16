@@ -3536,8 +3536,10 @@ class App(QMainWindow):
         for key,proto in (("Wizard DNS UDP rule","UDP"),("Wizard DNS TCP rule","TCP")):
             if failed(key):
                 add("info","Мастер настройки · DNS Firewall",f"Не удалось прочитать input-правило DNS {proto}",raw[key],"Проверь права SSH и повтори диагностику.")
-            elif not nonempty(key):
-                add("warn","Мастер настройки · DNS Firewall",f"Не найдено управляемое LAN DNS input-правило {proto}",raw[key],"Проверь, разрешён ли DNS на MikroTik только из доверенной LAN-подсети.")
+            else:
+                dns_rules=parse_terse(raw[key])
+                if len(dns_rules)!=1 or "X" in dns_rules[0]["flags"]:
+                    add("warn","Мастер настройки · DNS Firewall",f"LAN DNS input-правило {proto} отсутствует, дублируется или отключено",raw[key],"Проверь разрешение DNS только из LAN-подсети и состояние правила.")
         if not failed("Wizard NAT rule"):
             nat_records=parse_terse(raw["Wizard NAT rule"])
             if len(nat_records)!=1:
@@ -4764,7 +4766,7 @@ class App(QMainWindow):
                     mangle_detail=r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}')
                     mangle_entries=parse_terse(mangle_detail)
                     if len(mangle_entries)!=1 or "X" in mangle_entries[0]["flags"]: raise RuntimeError("Mangle post-check: управляемое правило отсутствует, дублируется или отключено.")
-                    nat_detail=r.exec(f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}')
+                    nat_detail=r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}')
                     nat_entries=parse_terse(nat_detail)
                     if len(nat_entries)!=1 or "X" in nat_entries[0]["flags"]: raise RuntimeError("NAT post-check: управляемое правило отсутствует, дублируется или отключено.")
                     nat_fields=nat_entries[0]["f"]

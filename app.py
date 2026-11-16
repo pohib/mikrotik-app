@@ -2412,7 +2412,11 @@ class App(QMainWindow):
         intro=self.panel("Карта локальной сети","Активное обнаружение через RouterOS IP Scan с объединением DHCP, ARP, Bridge Host и LLDP/CDP/MNDP Neighbor. Карта показывает фактические интерфейсы MikroTik и отдельно помечает предполагаемые связи.")
         controls=QHBoxLayout(); controls.setSpacing(8)
         self.lan_map_status=QLabel("Ожидает сканирования · требуется SSH"); self.lan_map_status.setObjectName("StatusBar")
-        self.lan_scan_subnet=QLineEdit(self.settings.get("lan_scan_subnet") or self.settings.get("lan_subnet","192.168.88.0/24"))
+        scan_subnet=self.settings.get("lan_scan_subnet","").strip()
+        if not scan_subnet:
+            try: scan_subnet=str(ipaddress.ip_interface(self.settings.get("lan_address","192.168.88.1/24")).network)
+            except Exception: scan_subnet=self.settings.get("lan_subnet","192.168.88.0/24")
+        self.lan_scan_subnet=QLineEdit(scan_subnet)
         self.lan_scan_subnet.setMaximumWidth(190); self.lan_scan_subnet.setPlaceholderText("192.168.88.0/24")
         self.lan_active_scan=QCheckBox("Активный IP Scan"); self.lan_active_scan.setChecked(self.settings.get("lan_active_scan","1")=="1")
         scan=QPushButton("⟳  Сканировать сеть"); scan.setObjectName("PrimaryButton"); scan.clicked.connect(self.scan_lan_map)
@@ -2469,6 +2473,10 @@ class App(QMainWindow):
                   "bridge":r.exec("/interface bridge host print detail",timeout=30),
                   "bridge_ports":r.exec("/interface bridge port print detail",timeout=30),
                   "interfaces":r.exec("/interface print detail",timeout=30)}
+            try: data["wifi"]=r.exec("/interface wifi registration-table print detail",timeout=20)
+            except Exception:
+                try: data["wifi"]=r.exec("/interface wireless registration-table print detail",timeout=20)
+                except Exception: data["wifi"]=""
             if active:
                 first,last=hosts[0],hosts[-1]
                 command=f"/tool ip-scan address-range={first}-{last}"
@@ -2538,13 +2546,14 @@ class App(QMainWindow):
             if ip: rec["ip"]=ip; by_ip[ip]=key
             host=fields.get("host-name") or fields.get("hostname") or fields.get("dns") or fields.get("netbios") or ""
             if host and host.lower() not in ("unknown",""): rec["hostname"]=host
-            for field in ("identity","platform","board","response","scan_name"):
+            for field in ("identity","platform","board","response","scan_name","signal","tx-rate","rx-rate","uptime"):
                 if fields.get(field): rec[field]=fields[field]
             iface=fields.get("on-interface") or fields.get("interface") or fields.get("bridge") or ""
             if iface: rec["interface"]=iface
             if source not in rec["sources"]: rec["sources"].append(source)
             if source=="IP Scan": rec["active"]=True
             if source=="Neighbor" and (rec.get("identity") or rec.get("platform") or rec.get("board")): rec["kind"]="network"
+            if source=="Wi-Fi": rec["wireless"]=True
         for row in data.get("scan",[]):
             merge_record({"ip":row.get("ip"),"mac":row.get("mac"),"response":row.get("response"),"scan_name":row.get("scan_name")},"IP Scan")
         for item in parse_terse(data.get("dhcp","")):
@@ -2555,6 +2564,8 @@ class App(QMainWindow):
             f=item.get("f",{}); merge_record(f,"Neighbor")
         for item in parse_terse(data.get("bridge","")):
             merge_record(item.get("f",{}),"Bridge MAC")
+        for item in parse_terse(data.get("wifi","")):
+            merge_record(item.get("f",{}),"Wi-Fi")
         for item in parse_terse(data.get("bridge_ports","")):
             f=item.get("f",{}); port=f.get("interface","")
             if port:
@@ -2637,6 +2648,12 @@ class App(QMainWindow):
             infra_keys={r.get("mac") for r in infra if r.get("mac")}
             endpoints=[r for r in port_records if r not in infra]
             cursor_y=300
+            inferred_switch=False
+            if not infra and len(endpoints)>=3:
+                top,bottom,_=add_node(x+61,cursor_y,108,78,"Switch / AP?","предположение",amber,
+                    "Предполагаемый промежуточный коммутатор или точка доступа: на одном порту MikroTik обнаружено несколько MAC. Физическая связь не подтверждена.")
+                edge((port_x,241),(x+115,cursor_y),amber,dashed=True)
+                cursor_y+=116; inferred_switch=True
             if infra:
                 for ni,device in enumerate(infra):
                     nx=x+(ni%2)*115; ny=cursor_y+(ni//2)*116
@@ -2658,7 +2675,7 @@ class App(QMainWindow):
                 tooltip=(f'{title}\nIP: {device.get("ip") or "—"}\nMAC: {device.get("mac") or "—"}\nПроизводитель: {device.get("vendor","Не определён")}\nОтклик: {device.get("response") or "—"}\nИсточники: {", ".join(device.get("sources",[]))}\nСостояние: {state}')
                 top,bottom,_=add_node(nx,ny,108,78,title[:17],subtitle,color,tooltip)
                 # If an LLDP/CDP/MNDP switch is known on this port, downstream placement is inferred.
-                edge((port_x,241) if not infra else (port_x,cursor_y-116),(nx,ny),color,dashed=bool(infra))
+                edge((port_x,241) if not infra and not inferred_switch else ((x+115,cursor_y-116) if inferred_switch and not infra else (port_x,cursor_y-116)),(nx,ny),color,dashed=bool(infra or inferred_switch))
             # Per-port caption
             caption=scene.addText("Порт MikroTik"); caption.setDefaultTextColor(muted); caption.setFont(QFont("Segoe UI",8)); caption.setPos(x+6,246)
         bounds=scene.itemsBoundingRect().adjusted(-70,-35,70,55)

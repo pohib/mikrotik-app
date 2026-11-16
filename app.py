@@ -2210,7 +2210,12 @@ class App(QMainWindow):
                 d["peer"]=r.exec(f'/interface wireguard peers print detail where interface={ros_q(f["wg_interface"])}')
             table=bool(d["table"].strip()); wan=bool(d["wan"].strip()); main_route=bool(d["main_route"].strip()) and "inactive" not in d["main_route"].lower() and f["wan_interface"].lower() in d["main_route"].lower()
             route_count=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}').strip()
-            route=route_count=="1" and bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
+            route_entries=parse_terse(d["route"])
+            route_comments={x["f"].get("comment") for x in route_entries}
+            primary_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2") for x in route_entries)
+            backup_active=any("A" in x["flags"] and x["f"].get("comment") in ("VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2") for x in route_entries)
+            legacy_route=(route_count=="1" and bool(route_entries) and route_entries[0]["f"].get("comment")=="VPN-MANAGER-DEFAULT" and route_entries[0]["f"].get("gateway")==f["wg_interface"] and "I" not in route_entries[0]["flags"])
+            route=(legacy_route or (route_count=="4" and {"VPN-MANAGER-DEFAULT","VPN-MANAGER-DEFAULT-2","VPN-MANAGER-WAN-FALLBACK-1","VPN-MANAGER-WAN-FALLBACK-2"}.issubset(route_comments) and (primary_active or backup_active)))
             wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
             handshake_match=re.search(r'last-handshake=("[^"]*"|\S+)',d["peer"])
             handshake=bool(handshake_match and handshake_match.group(1).strip('"').lower() not in ("","never","0"))
@@ -2234,13 +2239,13 @@ class App(QMainWindow):
             if not main_fallback: blockers.append("В /routing/settings отсутствует main: fallback для помеченного Mangle-трафика на WAN не подтверждён")
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
-            for ok,msg in [(wan,"WAN-интерфейс не найден — проверь имя интерфейса"),(main_route,"Не найден активный основной default route через указанный WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(not routing_rule_conflict,"Обнаружено routing rule, направляющее трафик в VPN-таблицу; проверь правила вручную"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
+            for ok,msg in [(wan,"WAN-интерфейс не найден — проверь имя интерфейса"),(main_route,"Не найден активный основной default route через указанный WAN в таблице main — сначала восстанови обычный интернет"),(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(not routing_rule_conflict,"Обнаружено routing rule, направляющее трафик в VPN-таблицу; проверь правила вручную"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1","4") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неполный набор VPN/WAN failover routes"),(dns_udp in ("0","1") and dns_tcp in ("0","1"),"Найдены дублирующиеся DNS input-правила мастера"),(nat_count in ("0","1"),"Найдены дублирующиеся NAT masquerade правила для LAN через WireGuard")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
                 f'{"✓" if wan else "✕"} WAN {f["wan_interface"]}: {"найден" if wan else "НЕ НАЙДЕН"}',
                 f'{"✓" if main_route else "✕"} Основной маршрут main через {f["wan_interface"]}: {"активен" if main_route else "НЕ НАЙДЕН / неактивен / другой интерфейс"}',
-                f'{"✓" if route else "＋"} Default route через {f["wg_interface"]}: {"активен" if route else "отсутствует"}',
+                f'{"✓" if route else "＋"} VPN/WAN failover routes: {"набор маршрутов подтверждён" if route else "отсутствует или конфликтует"}',
                 f'{"✓" if wg else "✕"} WireGuard {f["wg_interface"]}: {"найден" if wg else "НЕ НАЙДЕН"}',
                 f'{"✓" if peer_ready else "✕"} Peer/handshake: {"подключён" if peer_ready else "не подключён или handshake ещё не получен"}',
                 "Ping 1.1.1.1 через WireGuard: "+(d.get("ping","").strip().splitlines()[-1] if d.get("ping","").strip() else "нет данных"),

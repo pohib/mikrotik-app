@@ -4745,8 +4745,26 @@ class App(QMainWindow):
                     network_pre=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip() if dhcp_pre not in ("0","") else "0"
                     if network_pre not in ("0","1"): raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей. Ничего не изменено.")
                     for proto in ("UDP","TCP"):
-                        rule_count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
-                        if rule_count not in ("0","1"): raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {proto}. Ничего не изменено.")
+                        comment="VPN-MANAGER-LAN-DNS-"+proto
+                        detail=r.exec(f'/ip firewall filter print terse where comment={ros_q(comment)}')
+                        entries=parse_terse(detail)
+                        if len(entries)>1: raise RuntimeError(f"Найдено дублирующихся DNS firewall rules: {proto}. Ничего не изменено.")
+                        if entries:
+                            expected={"chain":"input","action":"accept","protocol":proto.lower(),"dst-port":"53","in-interface":f["lan_interface"],"src-address":f["lan_subnet"]}
+                            if "X" in entries[0]["flags"] or any(entries[0]["f"].get(k)!=v for k,v in expected.items()):
+                                raise RuntimeError(f"Существующее DNS firewall rule {proto} отключено или отличается от профиля. Исправь его вручную; мастер не перезаписывает чужое правило.")
+                    managed_mangle_pre=parse_terse(r.exec(f'/ip firewall mangle print terse where comment={ros_q(MANGLE_COMMENT)}'))
+                    if len(managed_mangle_pre)>1: raise RuntimeError("Найдено несколько управляемых Mangle правил. Ничего не изменено.")
+                    if managed_mangle_pre:
+                        expected={"chain":"prerouting","action":"mark-routing","new-routing-mark":table,"in-interface":f["lan_interface"],"src-address":f["lan_subnet"],"dst-address-list":f["address_list"],"dst-address-type":"!local","passthrough":"no"}
+                        if "X" in managed_mangle_pre[0]["flags"] or any(managed_mangle_pre[0]["f"].get(k)!=v for k,v in expected.items()):
+                            raise RuntimeError("Управляемое Mangle правило отключено или отличается от профиля. Ничего не изменено.")
+                    managed_nat_pre=parse_terse(r.exec(f'/ip firewall nat print terse where comment={ros_q(NAT_COMMENT)}'))
+                    if len(managed_nat_pre)>1: raise RuntimeError("Найдено несколько управляемых NAT правил. Ничего не изменено.")
+                    if managed_nat_pre:
+                        expected={"chain":"srcnat","action":"masquerade","src-address":f["lan_subnet"],"out-interface":wg}
+                        if "X" in managed_nat_pre[0]["flags"] or any(managed_nat_pre[0]["f"].get(k)!=v for k,v in expected.items()):
+                            raise RuntimeError("Управляемое NAT правило отключено или отличается от профиля. Ничего не изменено.")
                     dns_state=r.exec("/ip dns print")
                     if "allow-remote-requests: yes" not in dns_state: self.cmd(r,"/ip dns set allow-remote-requests=yes")
                     for proto in ("udp","tcp"):

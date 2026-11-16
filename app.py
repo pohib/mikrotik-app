@@ -3784,6 +3784,15 @@ class App(QMainWindow):
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",wg): raise ValueError("Некорректное имя WireGuard-интерфейса.")
         exists=r.exec(f"/interface wireguard print count-only where name={q(wg)}").strip()
         if exists not in ("0","1"): raise RuntimeError(f"Найдено интерфейсов WireGuard с именем {wg}: {exists}. Ожидался максимум один.")
+        if exists=="1" and cfg.get("wg_address"):
+            pre_addr=ipaddress.ip_interface(cfg["wg_address"])
+            pre_family="/ip address" if pre_addr.version==4 else "/ipv6 address"
+            pre_existing=r.exec(f"{pre_family} print detail where interface={q(wg)}")
+            if cfg["wg_address"] not in pre_existing:
+                pre_managed=r.exec(f'{pre_family} print count-only where interface={q(wg)} and comment={q("VPN-MANAGER:WireGuard address")}').strip()
+                pre_total=r.exec(f'{pre_family} print count-only where interface={q(wg)}').strip()
+                if pre_total not in ("0",pre_managed): raise RuntimeError(f"На {wg} уже есть сторонние адреса. Peer и ключ не изменены; сначала проверь адреса интерфейса.")
+                if pre_managed not in ("0","1"): raise RuntimeError("Найдено несколько управляемых WG-адресов. Peer и ключ не изменены.")
         if exists=="0":
             # Если ключ задан в профиле — импортируем его; иначе RouterOS создаёт собственную пару ключей.
             create=f"/interface wireguard add name={q(wg)} mtu={int(cfg['wg_mtu'])}"

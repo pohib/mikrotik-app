@@ -2612,7 +2612,7 @@ class App(QMainWindow):
             return
         data=selected[0].data(0)
         lines=[f"{key}: {value}" for key,value in data.items() if value not in (None,"",[],{})]
-        QApplication.clipboard().setText("\\n".join(lines))
+        QApplication.clipboard().setText("\n".join(lines))
         self.status.setText("Сведения об узле скопированы в буфер обмена.")
 
     def open_lan_map_window(self):

@@ -2061,7 +2061,8 @@ class App(QMainWindow):
                 ("all_mangle","/ip firewall mangle print detail"),("nat","/ip firewall nat print detail"),
                 ("fasttrack",'/ip firewall filter print detail where action=fasttrack-connection')]
             for k,c in cmds: d[k]=r.exec(c,timeout=20)
-            table=bool(d["table"].strip()); route=bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
+            table=bool(d["table"].strip()); route_count=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}').strip()
+            route=route_count=="1" and bool(d["route"].strip()) and f'gateway={f["wg_interface"]}' in d["route"] and "inactive" not in d["route"].lower()
             wg=bool(d["wg"].strip()); peer_count=r.exec(f'/interface wireguard peers print count-only where interface={ros_q(f["wg_interface"])}').strip()
             handshake_match=re.search(r'last-handshake=("[^"]*"|\S+)',d["peer"])
             handshake=bool(handshake_match and handshake_match.group(1).strip('"').lower() not in ("","never","0"))
@@ -2075,7 +2076,7 @@ class App(QMainWindow):
             blockers=[]
             lan_net=ipaddress.ip_network(f["lan_subnet"],strict=False); lan_dns_ip=ipaddress.ip_address(f["lan_dns"])
             assigned=r.exec(f'/ip address print count-only where interface={ros_q(f["lan_interface"])} and address~{ros_q(str(lan_dns_ip))}').strip()
-            for ok,msg in [(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(not d["route"].strip() or route,"В VPN-таблице есть конфликтующий default route")]:
+            for ok,msg in [(wg,"WireGuard-интерфейс не найден — создай ключ/интерфейс и примени профиль"),(peer_ready,"WireGuard peer не подключён: проверь регистрацию PublicKey, Endpoint, AllowedIPs и дождись handshake"),(lan,"LAN-интерфейс не найден"),(lan_dns_ip in lan_net,"LAN DNS IP должен входить в LAN subnet"),(assigned!="0","LAN DNS IP не назначен выбранному LAN-интерфейсу"),(not fast,"Обнаружен FastTrack"),(not foreign,"Обнаружены сторонние mark-routing правила"),(mc in ("0","1"),"Найдено несколько управляемых Mangle-правил"),(route_count in ("0","1") and (route_count=="0" or route),"В VPN-таблице несколько или конфликтующий/неактивный default route")]:
                 if not ok: blockers.append(msg)
             lines=[
                 f'{"✓" if table else "＋"} Таблица {f["route_table"]}: {"есть" if table else "будет создана"}',
@@ -4616,8 +4617,9 @@ class App(QMainWindow):
                     if "action=mark-routing" in mangle_pre and MANGLE_COMMENT not in mangle_pre: raise RuntimeError("Обнаружено стороннее mark-routing правило. Автонастройка остановлена до внесения изменений.")
                     table_pre=r.exec(f'/routing table print count-only where name={ros_q(table)}').strip()
                     if table_pre not in ("0","1"): raise RuntimeError(f"Найдено таблиц {table_pre}; ожидается не более одной.")
+                    route_count_pre=r.exec(f'/ip route print count-only where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}').strip()
                     route_pre=r.exec(f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(table)}')
-                    if route_pre.strip() and (f'gateway={wg}' not in route_pre or "inactive" in route_pre.lower()): raise RuntimeError("В VPN-таблице уже есть конфликтующий или неактивный default route. Ничего не изменено.")
+                    if route_count_pre not in ("0","1") or (route_count_pre=="1" and (f'gateway={wg}' not in route_pre or "inactive" in route_pre.lower())): raise RuntimeError("В VPN-таблице несколько или конфликтующий/неактивный default route. Ничего не изменено.")
                     dhcp_pre=r.exec(f'/ip dhcp-server print count-only where interface={ros_q(f["lan_interface"])} and disabled=no').strip()
                     network_pre=r.exec(f'/ip dhcp-server network print count-only where address={ros_q(f["lan_subnet"])}').strip() if dhcp_pre not in ("0","") else "0"
                     if network_pre not in ("0","1"): raise RuntimeError("Для LAN subnet найдено несколько DHCP network записей. Ничего не изменено.")
@@ -4650,6 +4652,7 @@ class App(QMainWindow):
                     if mc!="1": raise RuntimeError(f"Mangle post-check: ожидалось одно правило, найдено {mc or '0'}.")
                     nat_count=r.exec(f'/ip firewall nat print count-only where chain=srcnat and action=masquerade and src-address={ros_q(f["lan_subnet"])} and out-interface={ros_q(wg)}').strip()
                     if nat_count in ("0",""): raise RuntimeError("NAT post-check: masquerade для LAN через WireGuard не найден.")
+                    if nat_count not in ("1",): raise RuntimeError(f"NAT post-check: найдено несколько совпадающих правил ({nat_count}).")
                     for proto in ("UDP","TCP"):
                         count=r.exec(f'/ip firewall filter print count-only where comment={ros_q("VPN-MANAGER-LAN-DNS-"+proto)}').strip()
                         if count!="1": raise RuntimeError(f"DNS firewall post-check ({proto}): ожидалось одно правило, найдено {count or '0'}.")

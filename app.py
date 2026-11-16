@@ -2007,7 +2007,11 @@ class App(QMainWindow):
         l.addWidget(base)
 
         p=self.panel("Шаг 2 · Обнаружение LAN/WAN и сетевые параметры","Сначала определи LAN и WAN автоматически, затем проверь найденные интерфейсы, подсеть и адрес DNS-шлюза.")
+        pguide=QLabel("ЗАЧЕМ: приложению нужно точно знать, где находится локальная сеть и через какой интерфейс выходит провайдер, иначе Mangle/NAT могут затронуть не те пакеты. ЧТО ДЕЛАЕТ: кнопка поиска только читает интерфейсы, IP-адреса, DHCP и default route — ничего не меняет. ЧТО НАЖИМАТЬ: нажми «Найти LAN/WAN автоматически», проверь подставленные LAN bridge, подсеть, DNS IP и WAN interface; если найдено неверно — исправь поля вручную. Затем нажми «Проверить готовность к настройке» в следующем блоке.")
+        pguide.setObjectName("InfoNote"); pguide.setWordWrap(True); p.layout().addWidget(pguide)
         wizard=self.panel("Шаг 4 · Проверка и создание выборочной маршрутизации","После подключения WireGuard проверь основной WAN-маршрут, VPN peer и отсутствие конфликтов. Затем подготовь отдельную таблицу для выбранных доменов и IP.")
+        wizard_guide=QLabel("ЗАЧЕМ: перед созданием правил нужно убедиться, что прямой WAN уже работает, WireGuard поднят, а чужие firewall/routing rules не конфликтуют с приложением. ЧТО ДЕЛАЕТ: сканирование ничего не меняет; оно проверяет WAN/main, peer/handshake, LAN/DHCP/DNS, FastTrack, сторонние mark-routing, VPN route и WAN fallback. ЧТО НАЖИМАТЬ: сначала «Проверить готовность к настройке». Если есть блокеры — исправь их и повтори проверку. Если всё готово, нажми «Подготовить policy routing и DNS для VPN-целей», проверь команды в предпросмотре и подтверди применение.")
+        wizard_guide.setObjectName("InfoNote"); wizard_guide.setWordWrap(True); wizard.layout().addWidget(wizard_guide)
         wizard_row=QHBoxLayout()
         self.vpn_setup_status=QLabel("Ожидает проверки · подключись к MikroTik"); self.vpn_setup_status.setObjectName("StatusBar"); self.vpn_setup_status.setWordWrap(True)
         lan_detect_btn=QPushButton("Найти LAN/WAN автоматически"); lan_detect_btn.clicked.connect(self.discover_lan_settings)
@@ -2031,6 +2035,8 @@ class App(QMainWindow):
         p.layout().addLayout(form)
         lan_row=QHBoxLayout(); lan_row.addWidget(lan_detect_btn); lan_row.addStretch(); p.layout().addLayout(lan_row)
         wg=self.panel("Шаг 3 · Подключение к VPN-провайдеру","Импортируй WireGuard .conf или создай ключ на MikroTik и зарегистрируй PublicKey у провайдера. После этого введи серверный PublicKey, Endpoint, Address и AllowedIPs. Для выборочной IPv4-маршрутизации нужен AllowedIPs 0.0.0.0/0 на peer; это не меняет основной маршрут WAN.")
+        wg_guide=QLabel("ЗАЧЕМ: этот шаг создаёт шифрованный туннель между MikroTik и VPN-сервером. ЧТО ДЕЛАЕТ: приложение создаёт/обновляет интерфейс WireGuard, добавляет peer и IP-адрес; таблицы выборочной маршрутизации на этом шаге ещё не включаются. ЧТО НАЖИМАТЬ: если провайдер выдал .conf — нажми «Импортировать .conf» и выбери файл; иначе нажми «Создать ключ на MikroTik», скопируй локальный PublicKey в кабинет провайдера, затем заполни PublicKey сервера, Endpoint, порт, Address и AllowedIPs. Нажми «Применить новый VPN-профиль» и дождись handshake. PrivateKey/PresharedKey не отправляй никому и не сохраняй в публичном репозитории.")
+        wg_guide.setObjectName("InfoNote"); wg_guide.setWordWrap(True); wg.layout().addWidget(wg_guide)
         wgform=QFormLayout(); self.wg_inputs={}
         for label,key in [("PrivateKey (секретный)","wg_private_key"),("PublicKey сервера","wg_public_key"),("PresharedKey · если выдан провайдером","wg_preshared_key"),("Endpoint (домен/IP)","wg_endpoint"),("Endpoint port","wg_port"),("AllowedIPs","wg_allowed"),("Address интерфейса","wg_address"),("Persistent keepalive, сек.","wg_keepalive"),("MTU интерфейса","wg_mtu")]:
             e=QLineEdit("" if key in ("wg_private_key","wg_preshared_key") else self.settings.get(key,""))

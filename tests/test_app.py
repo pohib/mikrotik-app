@@ -54,6 +54,27 @@ def test_backdrop_switches_real_canvas_theme(qt_app):
     assert backdrop.theme == "default"
 
 
+def test_scrollbars_follow_selected_application_theme(qt_app):
+    window = manager.MainWindow()
+    try:
+        for theme, expected in (
+            ("default", "#60a5fa"),
+            ("dark", "#65717b"),
+            ("light", "#60a5fa"),
+        ):
+            window.settings["ui_theme"] = theme
+            window.apply_visual_preferences()
+            stylesheet = window.styleSheet()
+            assert "QScrollBar:vertical" in stylesheet
+            assert "QScrollBar:horizontal" in stylesheet
+            assert "QScrollBar::handle:vertical:hover" in stylesheet
+            assert "QScrollBar::handle:horizontal:hover" in stylesheet
+            assert expected in stylesheet
+            assert "QScrollBar::add-line" in stylesheet
+    finally:
+        window.close()
+
+
 def test_application_theme_and_general_settings_smoke(qt_app):
     window = manager.App()
     try:

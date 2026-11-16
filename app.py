@@ -207,15 +207,15 @@ class RouterConnection:
 
     def exec(self, command, timeout=30):
         # Централизованный журнал: фиксируем все SSH-команды, включая фоновые опросы.
-        safe_command = re.sub(r'(?i)((?:private|preshared)-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', command)
+        safe_command = re.sub(r'(?i)((?:private|preshared)-key|password)\s*=\s*("[^"]*"|\S+)', r'\1=[СКРЫТО]', command)
         self.ui_queue.put(("LOG", f"SSH → $ {safe_command}"))
         try:
             output = self._exec_raw(command, timeout)
         except Exception as exc:
-            safe_error = re.sub(r'(?i)((?:private|preshared)-key\s*=\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', str(exc))
+            safe_error = re.sub(r'(?i)((?:private|preshared)-key|password)\s*=\s*("[^"]*"|\S+)', r'\1=[СКРЫТО]', str(exc))
             self.ui_queue.put(("LOG", f"SSH ✕ {safe_command}\nОШИБКА: {safe_error}"))
             raise
-        safe_output = re.sub(r'(?im)((?:private|preshared)-key\s*[:=]\s*)("[^"]*"|\S+)', r'\1[СКРЫТО]', output)
+        safe_output = re.sub(r'(?im)((?:private|preshared)-key|password)\s*[:=]\s*("[^"]*"|\S+)', r'\1=[СКРЫТО]', output)
         self.ui_queue.put(("LOG", f"SSH ✓ {safe_command}\n{safe_output or '(пустой вывод)'}"))
         return output
 
@@ -1287,7 +1287,7 @@ class App(QMainWindow):
     def load_settings(self):
         try: cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
         except Exception: cfg = {}
-        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
+        defaults = {"host":"", "port":"2313", "username":"pwned", "auth_method":"key", "key_file":"", "wan_base":"ether1", "wan_mode":"DHCP", "wan_vlan_id":"", "wan_pppoe_name":"pppoe-wan", "lan_bridge":"bridge", "lan_ports":"ether2,ether3,ether4", "lan_address":"192.168.88.1/24", "dhcp_pool":"192.168.88.10-192.168.88.254", "lan_interface":"INTERNET", "lan_subnet":"192.168.0.0/24", "lan_dns":"192.168.0.2", "route_table":"vpn", "wg_interface":"furynet-wg", "wan_interface":"WAN", "address_list":"vpn_domains", "doh_enabled":"1", "doh_url":"https://dns.google/dns-query", "doh_bootstrap":"8.8.8.8, 8.8.4.4", "doh_verify_cert":"1", "wg_public_key":"", "wg_endpoint":"", "wg_port":"51820", "wg_allowed":"0.0.0.0/0", "wg_address":"", "wg_keepalive":"25", "wg_mtu":"1240", "dependency_groups":"{}", "managed_targets":"[]", "terminal_favorites":"[]", "terminal_sets":"{}"}
         defaults.update({k:str(v) for k,v in cfg.items() if k in defaults})
         return defaults
 
@@ -1596,6 +1596,16 @@ class App(QMainWindow):
         refresh=QPushButton("⟳ Обновить"); refresh.setObjectName("PrimaryButton"); refresh.clicked.connect(self.refresh_firewall)
         top.addWidget(self.fw_search,1); top.addWidget(refresh); head.layout().addLayout(top)
         self.fw_tabs=QTabWidget(); self.fw_tabs.setObjectName("FirewallTabs"); self.fw_tables={}
+        self.fw_tabs.setDocumentMode(True)
+        self.fw_tabs.setStyleSheet("""
+            QTabWidget#FirewallTabs::pane { background:#07101f; border:1px solid #263750; border-radius:12px; top:-1px; }
+            QTabWidget#FirewallTabs QTabBar::tab { background:#0b1424; color:#91a8c8; border:1px solid #263750;
+                border-bottom:0; border-top-left-radius:9px; border-top-right-radius:9px;
+                padding:10px 22px; margin-right:5px; min-width:72px; font-weight:700; }
+            QTabWidget#FirewallTabs QTabBar::tab:hover:!selected { background:#14243b; color:#e5efff; }
+            QTabWidget#FirewallTabs QTabBar::tab:selected { background:#1a3154; color:#ffffff; border-color:#4d78b5; }
+            QTabWidget#FirewallTabs QTabBar::tab:!selected { margin-top:3px; }
+        """)
         for key,title in (("filter","Filter"),("nat","NAT"),("mangle","Mangle")):
             table=QTableWidget(0,9); table.setObjectName("FirewallTable")
             table.setHorizontalHeaderLabels(["№","Вкл.","Chain","Action","Protocol","Src address","Dst address","Interface","Comment"])
@@ -1606,7 +1616,7 @@ class App(QMainWindow):
             table.horizontalHeader().setSectionResizeMode(8,QHeaderView.ResizeMode.Stretch)
             table.setMinimumHeight(260)
             table.setAlternatingRowColors(True)
-            table.setStyleSheet("QTableWidget#FirewallTable{background-color:#07101f;color:#dce7f7;alternate-background-color:#0b192b;gridline-color:#1b2b43;border:1px solid #263750;border-radius:12px;} QTableWidget#FirewallTable::item{background-color:#07101f;color:#dce7f7;padding:8px;border-bottom:1px solid #17263d;} QTableWidget#FirewallTable::item:alternate{background-color:#0b192b;color:#dce7f7;} QTableWidget#FirewallTable::item:selected{background-color:#244b83;color:#ffffff;} QAbstractScrollArea#FirewallTable::viewport{background-color:#07101f;}")
+            table.setStyleSheet("QTableWidget#FirewallTable{background-color:#07101f;color:#dce7f7;alternate-background-color:#0b192b;gridline-color:#1b2b43;border:1px solid #263750;border-radius:12px;} QTableWidget#FirewallTable::item{background-color:#07101f;color:#dce7f7;padding:8px;border-bottom:1px solid #17263d;} QTableWidget#FirewallTable::item:alternate{background-color:#0b192b;color:#dce7f7;} QTableWidget#FirewallTable::item:selected{background-color:#244b83;color:#ffffff;} QAbstractScrollArea#FirewallTable::viewport{background-color:#07101f;} QHeaderView::section{background:#101d31;color:#a9bddb;border:0;border-bottom:1px solid #30435f;padding:10px;font-size:8pt;font-weight:800;} QTableCornerButton::section{background:#101d31;border:0;}")
             self.fw_tables[key]=table; self.fw_tabs.addTab(table,title)
         head.layout().addWidget(self.fw_tabs,1)
         actions=QHBoxLayout()
@@ -1926,7 +1936,7 @@ class App(QMainWindow):
 
     def page_setup_wizard(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0)
-        intro=self.panel("Настройка VPN · пройди шаги по порядку","Предусловие: на MikroTik уже должны работать интернет по WAN и локальная сеть LAN. Мастер настраивает WireGuard и выборочную маршрутизацию поверх существующей сети; PPPoE/VLAN/подключение провайдера и создание базового bridge/DHCP на полностью сброшенном роутере пока не выполняются. Весь обычный трафик остаётся в main через WAN, а только цели из VPN address-list идут через WireGuard.")
+        intro=self.panel("Настройка сети и VPN · пройди шаги по порядку","Сначала настрой WAN и LAN на чистом или частично настроенном MikroTik, затем WireGuard и выборочную маршрутизацию. Поддерживаются WAN через DHCP или PPPoE, опциональный VLAN провайдера, LAN bridge, адрес шлюза, DHCP pool/server и NAT через WAN. Существующие сторонние объекты не перезаписываются. Обычный трафик остаётся в main через WAN; только добавленные домены/IP идут через WireGuard.")
         steps=QGridLayout(); steps.setHorizontalSpacing(12); steps.setVerticalSpacing(8)
         for col,(number,title,detail) in enumerate([
             ("01","Подключи MikroTik","SSH и проверка доступности роутера"),
@@ -1940,6 +1950,43 @@ class App(QMainWindow):
         intro.layout().addLayout(steps)
         model=QLabel("Схема: LAN → обычные сайты → WAN напрямую; LAN → домен/IP из VPN-списка → Mangle → таблица vpn → WireGuard. IPv6 проверяется отдельно: IPv4 policy routing само по себе не гарантирует выборочную маршрутизацию IPv6.")
         model.setObjectName("InfoNote"); model.setWordWrap(True); intro.layout().addWidget(model); l.addWidget(intro)
+
+        # Полноценный первый этап: подключение провайдера и создание LAN.
+        base=self.panel("Шаг 1 · Первичная настройка WAN и LAN","Используй этот блок на новом/сброшенном MikroTik или когда WAN/LAN ещё не настроены. Сначала выбери тип подключения у провайдера, затем физический WAN-порт, VLAN (если требуется), LAN-порты и адресацию. Ничего не отправляется до предпросмотра и подтверждения.")
+        guide=QLabel("ЗАЧЕМ ЭТО НУЖНО\nWAN — внешний интерфейс, через который роутер получает интернет. DHCP подходит, если провайдер выдаёт адрес автоматически; PPPoE требует логин и пароль из договора. VLAN ID нужен только если провайдер передаёт интернет в tagged VLAN. LAN bridge объединяет выбранные внутренние порты в одну сеть; DHCP раздаёт устройствам IP, шлюз и DNS; NAT позволяет LAN-клиентам выходить в интернет через WAN.\n\nВАЖНО: добавление портов в bridge и смена IP LAN могут оборвать текущее SSH-подключение. Подключись к одному из выбранных LAN-портов и заранее сохрани резервную копию. Не добавляй WAN-порт в LAN bridge.")
+        guide.setObjectName("InfoNote"); guide.setWordWrap(True); base.layout().addWidget(guide)
+        self.initial_setup_inputs={}
+        self.initial_setup_mode=QComboBox(); self.initial_setup_mode.addItems(["DHCP","PPPoE"]); self.initial_setup_mode.setCurrentText(self.settings.get("wan_mode","DHCP"))
+        self.initial_setup_inputs["wan_mode"]=self.initial_setup_mode
+        self.initial_setup_wan_base=QLineEdit(self.settings.get("wan_base","ether1")); self.initial_setup_inputs["wan_base"]=self.initial_setup_wan_base
+        self.initial_setup_vlan=QLineEdit(self.settings.get("wan_vlan_id","")); self.initial_setup_vlan.setPlaceholderText("Пусто — без VLAN; обычно 10, 35, 100 и т. п."); self.initial_setup_inputs["wan_vlan_id"]=self.initial_setup_vlan
+        self.initial_setup_pppoe_name=QLineEdit(self.settings.get("wan_pppoe_name","pppoe-wan")); self.initial_setup_inputs["wan_pppoe_name"]=self.initial_setup_pppoe_name
+        self.initial_setup_user=QLineEdit(); self.initial_setup_user.setPlaceholderText("Логин из договора провайдера")
+        self.initial_setup_password=QLineEdit(); self.initial_setup_password.setEchoMode(QLineEdit.EchoMode.Password); self.initial_setup_password.setPlaceholderText("Пароль не сохраняется в settings.json")
+        self.initial_setup_bridge=QLineEdit(self.settings.get("lan_bridge","bridge")); self.initial_setup_inputs["lan_bridge"]=self.initial_setup_bridge
+        self.initial_setup_ports=QLineEdit(self.settings.get("lan_ports","ether2,ether3,ether4")); self.initial_setup_ports.setPlaceholderText("ether2,ether3,ether4")
+        self.initial_setup_address=QLineEdit(self.settings.get("lan_address","192.168.88.1/24")); self.initial_setup_inputs["lan_address"]=self.initial_setup_address
+        self.initial_setup_pool=QLineEdit(self.settings.get("dhcp_pool","192.168.88.10-192.168.88.254")); self.initial_setup_inputs["dhcp_pool"]=self.initial_setup_pool
+        setup_form=QFormLayout(); setup_form.setVerticalSpacing(10); setup_form.setHorizontalSpacing(18)
+        setup_form.addRow("Тип WAN",self.initial_setup_mode)
+        setup_form.addRow("Физический WAN-порт",self.initial_setup_wan_base)
+        setup_form.addRow("VLAN ID провайдера · необязательно",self.initial_setup_vlan)
+        setup_form.addRow("Имя PPPoE-интерфейса",self.initial_setup_pppoe_name)
+        setup_form.addRow("PPPoE login",self.initial_setup_user)
+        setup_form.addRow("PPPoE password",self.initial_setup_password)
+        setup_form.addRow("Имя LAN bridge",self.initial_setup_bridge)
+        setup_form.addRow("LAN-порты через запятую",self.initial_setup_ports)
+        setup_form.addRow("Адрес роутера в LAN · CIDR",self.initial_setup_address)
+        setup_form.addRow("DHCP pool · начало-конец",self.initial_setup_pool)
+        base.layout().addLayout(setup_form)
+        self.initial_setup_ack=QCheckBox("Я проверил список портов: WAN не включён в LAN; добавление LAN-портов/изменение IP может прервать текущее подключение.")
+        self.initial_setup_ack.setWordWrap(True); base.layout().addWidget(self.initial_setup_ack)
+        setup_help=QLabel("ЧТО НАЖИМАТЬ\n1. Выбери DHCP или PPPoE по данным провайдера.\n2. Укажи физический WAN-порт (обычно ether1). Если провайдер требует VLAN, введи VLAN ID; иначе оставь поле пустым.\n3. Для PPPoE введи логин и пароль.\n4. Укажи LAN-порты, куда будут подключаться компьютеры/точки доступа. Не указывай WAN-порт.\n5. Проверь адрес LAN-шлюза и DHCP pool: пул должен находиться в этой же подсети и не включать адрес самого роутера.\n6. Отметь подтверждение, нажми «Подготовить первичную настройку», затем внимательно проверь команды в общем предпросмотре и только после этого нажми «Применить изменения».")
+        setup_help.setObjectName("Muted"); setup_help.setWordWrap(True); base.layout().addWidget(setup_help)
+        self.initial_setup_status=QLabel("Первичная настройка ещё не подготовлена."); self.initial_setup_status.setObjectName("StatusBar"); self.initial_setup_status.setWordWrap(True); base.layout().addWidget(self.initial_setup_status)
+        setup_stage=QPushButton("Подготовить первичную настройку WAN + LAN"); setup_stage.setObjectName("PrimaryButton"); setup_stage.clicked.connect(self.stage_initial_network_setup); base.layout().addWidget(setup_stage)
+        l.addWidget(base)
+
         p=self.panel("Шаг 2 · Обнаружение LAN/WAN и сетевые параметры","Сначала определи LAN и WAN автоматически, затем проверь найденные интерфейсы, подсеть и адрес DNS-шлюза.")
         wizard=self.panel("Шаг 4 · Проверка и создание выборочной маршрутизации","После подключения WireGuard проверь основной WAN-маршрут, VPN peer и отсутствие конфликтов. Затем подготовь отдельную таблицу для выбранных доменов и IP.")
         wizard_row=QHBoxLayout()
@@ -2004,6 +2051,58 @@ class App(QMainWindow):
         warning.setObjectName("InfoNote"); warning.setWordWrap(True); wg.layout().addWidget(warning)
         row=QHBoxLayout(); save=QPushButton("Сохранить параметры сети"); save.setObjectName("PrimaryButton"); save.clicked.connect(self.save_settings); row.addWidget(save); p.layout().addLayout(row); p.layout().addStretch()
         l.addWidget(p); l.addWidget(wg); l.addWidget(wizard); l.addWidget(doh); l.addStretch(); return w
+
+    def initial_setup_values(self):
+        """Validate and normalize the first-time WAN/LAN wizard form."""
+        mode=self.initial_setup_mode.currentText().strip()
+        base=self.initial_setup_wan_base.text().strip()
+        vlan=self.initial_setup_vlan.text().strip()
+        pppoe_name=self.initial_setup_pppoe_name.text().strip()
+        bridge=self.initial_setup_bridge.text().strip()
+        ports=[x.strip() for x in self.initial_setup_ports.text().split(",") if x.strip()]
+        if mode not in ("DHCP","PPPoE"): raise ValueError("Выбери WAN DHCP или PPPoE.")
+        for value,label in ((base,"WAN interface"),(bridge,"LAN bridge")):
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",value): raise ValueError(f"Некорректное имя {label}: {value}")
+        if not ports: raise ValueError("Укажи хотя бы один LAN-порт для bridge.")
+        if len(set(ports))!=len(ports): raise ValueError("В списке LAN-портов есть дубликаты.")
+        if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",x) for x in ports): raise ValueError("Проверь имена LAN-портов.")
+        if base in ports: raise ValueError("Физический WAN-порт нельзя добавлять в LAN bridge.")
+        if vlan and (not vlan.isdigit() or not 1<=int(vlan)<=4094): raise ValueError("VLAN ID должен быть числом от 1 до 4094.")
+        if mode=="PPPoE" and not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}",pppoe_name): raise ValueError("Некорректное имя PPPoE-интерфейса.")
+        if mode=="PPPoE" and (not self.initial_setup_user.text().strip() or not self.initial_setup_password.text()): raise ValueError("Для PPPoE нужны логин и пароль провайдера.")
+        cidr=self.initial_setup_address.text().strip()
+        iface=ipaddress.ip_interface(cidr)
+        if iface.version!=4 or not iface.ip.is_private: raise ValueError("Для LAN укажи частный IPv4-адрес в формате 192.168.88.1/24.")
+        pool=self.initial_setup_pool.text().strip()
+        if pool.count("-")!=1: raise ValueError("DHCP pool укажи как 192.168.88.10-192.168.88.254.")
+        start=ipaddress.ip_address(pool.split("-",1)[0].strip()); end=ipaddress.ip_address(pool.split("-",1)[1].strip())
+        if start.version!=4 or end.version!=4 or int(start)>int(end): raise ValueError("Некорректный диапазон DHCP pool.")
+        net=iface.network
+        if start not in net or end not in net or iface.ip in (start,end) or start==iface.ip or end==iface.ip: raise ValueError("DHCP pool должен целиком входить в LAN subnet и не включать адрес роутера.")
+        if not self.initial_setup_ack.isChecked(): raise ValueError("Подтверди проверку WAN/LAN-портов и риск потери SSH-доступа.")
+        vlan_name=("wan-vlan"+vlan) if vlan else ""
+        wan_effective=(pppoe_name if mode=="PPPoE" else (vlan_name or base))
+        return {"mode":mode,"wan_base":base,"vlan_id":vlan,"vlan_name":vlan_name,"wan_interface":wan_effective,
+                "pppoe_name":pppoe_name,"pppoe_user":self.initial_setup_user.text().strip(),"pppoe_password":self.initial_setup_password.text(),
+                "bridge":bridge,"ports":ports,"lan_address":str(iface),"lan_ip":str(iface.ip),"lan_subnet":str(net),
+                "pool":f"{start}-{end}","pool_name":"vpn-manager-lan-pool"}
+
+    def stage_initial_network_setup(self):
+        try:
+            cfg=self.initial_setup_values()
+        except Exception as exc:
+            QMessageBox.warning(self,"Проверь параметры первичной настройки",str(exc)); return
+        self.settings.update({"wan_base":cfg["wan_base"],"wan_mode":cfg["mode"],"wan_vlan_id":cfg["vlan_id"],
+                              "wan_pppoe_name":cfg["pppoe_name"],"wan_interface":cfg["wan_interface"],
+                              "lan_bridge":cfg["bridge"],"lan_interface":cfg["bridge"],"lan_ports":",".join(cfg["ports"]),
+                              "lan_address":cfg["lan_address"],"lan_subnet":cfg["lan_subnet"],"lan_dns":cfg["lan_ip"],
+                              "dhcp_pool":cfg["pool"]})
+        for key,value in {"lan_interface":cfg["bridge"],"lan_subnet":cfg["lan_subnet"],"lan_dns":cfg["lan_ip"],"wan_interface":cfg["wan_interface"]}.items():
+            if hasattr(self,"inputs") and key in self.inputs: self.inputs[key].setText(value)
+        self.save_settings()
+        self.queue_change("initial_network_setup","Первичная настройка WAN + LAN",config=cfg)
+        self.initial_setup_status.setText("План добавлен в очередь. Открой общий предпросмотр: проверь WAN, VLAN, LAN bridge и риск потери SSH.")
+        self.initial_setup_password.clear()
 
     def discover_lan_settings(self):
         self.vpn_setup_status.setText("Поиск LAN-интерфейса, адреса и DHCP…")
@@ -4470,7 +4569,37 @@ class App(QMainWindow):
     def pending_action_details(self,a):
         """Пояснение, команды RouterOS и проверки для одной операции."""
         k=a["kind"]; f=dict(self.settings); f.update(self.fields() if hasattr(self,"inputs") else {}); commands=[]; checks=[]
-        if k=="setup_vpn_routing":
+        if k=="initial_network_setup":
+            c=a["config"]; wan_if=c["wan_interface"]; base=c["wan_base"]; bridge=c["bridge"]
+            commands=["/system backup save name=vpn-manager-before-network-setup",
+                      f'/interface print detail where name={ros_q(base)}',
+                      f'/interface bridge print detail where name={ros_q(bridge)}',
+                      f'/ip address print detail where interface={ros_q(bridge)}',
+                      f'/ip dhcp-client print detail where interface={ros_q(c["vlan_name"] or base)}',
+                      f'/interface pppoe-client print detail where name={ros_q(c["pppoe_name"])}',
+                      f'/ip firewall nat print detail']
+            if c["vlan_id"]: commands.append(f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}  # если отсутствует')
+            if c["mode"]=="DHCP":
+                commands.append(f'/ip dhcp-client add interface={ros_q(wan_if)} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no  # если отсутствует')
+            else:
+                commands.append(f'/interface pppoe-client add name={ros_q(c["pppoe_name"])} interface={ros_q(c["vlan_name"] or base)} user={ros_q(c["pppoe_user"])} password=[СКРЫТО] add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
+            commands += [f'/interface bridge add name={ros_q(bridge)}  # если отсутствует']
+            commands += [f'/interface bridge port add bridge={ros_q(bridge)} interface={ros_q(port)}  # если порт ещё не включён в этот bridge' for port in c["ports"]]
+            commands += [f'/ip address add address={ros_q(c["lan_address"])} interface={ros_q(bridge)} comment="VPN-MANAGER-LAN-GATEWAY"  # если отсутствует',
+                         f'/ip pool add name={ros_q(c["pool_name"])} ranges={ros_q(c["pool"])}  # если отсутствует',
+                         f'/ip dhcp-server network add address={ros_q(c["lan_subnet"])} gateway={ros_q(c["lan_ip"])} dns-server={ros_q(c["lan_ip"])}  # если отсутствует',
+                         f'/ip dhcp-server add name="vpn-manager-lan" interface={ros_q(bridge)} address-pool={ros_q(c["pool_name"])} lease-time=12h disabled=no  # если отсутствует',
+                         f'/ip firewall nat add chain=srcnat action=masquerade out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"  # если отсутствует']
+            description=("Создать WAN-подключение "+c["mode"]+(" поверх VLAN "+c["vlan_id"] if c["vlan_id"] else "")+
+                         ", LAN bridge и его порты, IPv4 gateway, DHCP pool/server/network и NAT только на WAN. "
+                         "Сторонние интерфейсы, DHCP-серверы, IP-адреса и NAT-правила не перезаписываются. "
+                         "Секрет PPPoE скрыт в предпросмотре и журналах.")
+            checks=["WAN DHCP status=bound или PPPoE interface running","В таблице main появился активный default route через WAN, не WireGuard",
+                    f"LAN bridge {bridge} содержит только выбранные LAN-порты","LAN gateway {c['lan_address']} назначен bridge",
+                    f"DHCP server выдаёт адреса из {c['pool']} и gateway/DNS {c['lan_ip']}",
+                    "NAT masquerade действует на WAN; обычный трафик выходит напрямую через провайдера",
+                    "Подключить клиент к LAN, получить DHCP lease и открыть сайт по IP и доменному имени"]
+        elif k=="setup_vpn_routing":
             commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(f["wg_interface"])} routing-table={ros_q(f["route_table"])} comment="VPN-MANAGER-DEFAULT"  # если отсутствует',mangle_cmd(f),nat_cmd(f)]
             description="Настроить DNS для LAN с ограниченными input-правилами, при наличии DHCP обновить DNS в DHCP network, затем создать только отсутствующие routing table, default route, Mangle и NAT. WireGuard-профиль применяется отдельно после импорта .conf."
             checks=["Таблица VPN существует","Default route активен через WireGuard","Mangle направляет выбранные цели в VPN-таблицу","NAT masquerade работает через WireGuard","Проверить ping и доступ с LAN-клиента"]
@@ -4717,7 +4846,104 @@ class App(QMainWindow):
             r=self.router_conn()
             for a in actions:
                 k=a["kind"]
-                if k=="setup_vpn_routing":
+                if k=="initial_network_setup":
+                    c=a["config"]; base=c["wan_base"]; bridge=c["bridge"]; ports=c["ports"]
+                    vlan_if=c["vlan_name"] or base; wan_if=c["wan_interface"]
+                    # Read-only preflight: fail closed before the first mutation if the topology is ambiguous.
+                    interfaces=parse_terse(r.exec("/interface print terse"))
+                    names={x["f"].get("name","") for x in interfaces}
+                    if base not in names: raise RuntimeError(f"WAN physical interface {base} не найден.")
+                    missing=[p for p in ports if p not in names]
+                    if missing: raise RuntimeError("LAN interface(s) not found: "+", ".join(missing))
+                    if base in ports: raise RuntimeError("WAN port is also listed as LAN; refusing to bridge WAN.")
+                    vlan_rows=parse_terse(r.exec(f'/interface vlan print terse where name={ros_q(c["vlan_name"])}')) if c["vlan_name"] else []
+                    if c["vlan_name"] and vlan_rows:
+                        vf=vlan_rows[0]["f"]
+                        if vf.get("interface")!=base or vf.get("vlan-id")!=c["vlan_id"]: raise RuntimeError("VLAN interface already exists with different parameters.")
+                    bridge_rows=parse_terse(r.exec(f'/interface bridge print terse where name={ros_q(bridge)}'))
+                    if len(bridge_rows)>1: raise RuntimeError("Duplicate LAN bridge name.")
+                    existing_ports=parse_terse(r.exec("/interface bridge port print terse"))
+                    port_map={x["f"].get("interface",""):x["f"].get("bridge","") for x in existing_ports}
+                    conflicts=[f"{p} (bridge={port_map[p]})" for p in ports if p in port_map and port_map[p]!=bridge]
+                    if conflicts: raise RuntimeError("LAN port(s) already belong to another bridge; no changes made: "+", ".join(conflicts))
+                    if any(p==base for p in ports): raise RuntimeError("WAN port must not be added to LAN bridge.")
+                    # Refuse overlapping LAN networks already configured on other interfaces.
+                    desired=ipaddress.ip_interface(c["lan_address"])
+                    for item in parse_terse(r.exec("/ip address print terse")):
+                        raw=item["f"].get("address",""); iface=item["f"].get("interface","")
+                        if not raw or iface==bridge: continue
+                        try:
+                            other=ipaddress.ip_interface(raw)
+                            if other.version==4 and other.network.overlaps(desired.network):
+                                raise RuntimeError(f"LAN subnet {desired.network} overlaps existing {raw} on {iface}.")
+                        except ValueError: pass
+                    address_rows=parse_terse(r.exec(f'/ip address print terse where interface={ros_q(bridge)}'))
+                    if address_rows and not any(x["f"].get("address")==c["lan_address"] and x["f"].get("comment")=="VPN-MANAGER-LAN-GATEWAY" for x in address_rows):
+                        raise RuntimeError("LAN bridge already has an IP address; review it manually instead of overwriting.")
+                    pool_rows=parse_terse(r.exec(f'/ip pool print terse where name={ros_q(c["pool_name"])}'))
+                    if pool_rows and (len(pool_rows)!=1 or pool_rows[0]["f"].get("ranges")!=c["pool"]):
+                        raise RuntimeError("DHCP pool name already exists with different ranges.")
+                    network_rows=parse_terse(r.exec(f'/ip dhcp-server network print terse where address={ros_q(c["lan_subnet"])}'))
+                    if network_rows and (len(network_rows)!=1 or network_rows[0]["f"].get("gateway")!=c["lan_ip"] or network_rows[0]["f"].get("dns-server")!=c["lan_ip"]):
+                        raise RuntimeError("DHCP network for this subnet already exists with different gateway/DNS.")
+                    dhcp_rows=parse_terse(r.exec(f'/ip dhcp-server print terse where interface={ros_q(bridge)}'))
+                    if dhcp_rows and (len(dhcp_rows)!=1 or "X" in dhcp_rows[0]["flags"] or dhcp_rows[0]["f"].get("address-pool")!=c["pool_name"]):
+                        raise RuntimeError("DHCP server already exists on this bridge with different/disabled settings.")
+                    if c["mode"]=="DHCP":
+                        clients=parse_terse(r.exec(f'/ip dhcp-client print terse where interface={ros_q(vlan_if)}'))
+                        if len(clients)>1 or (clients and ("X" in clients[0]["flags"] or clients[0]["f"].get("add-default-route")=="no")):
+                            raise RuntimeError("Existing DHCP client is duplicated, disabled, or does not add the main default route.")
+                    else:
+                        ppp=parse_terse(r.exec(f'/interface pppoe-client print terse where name={ros_q(c["pppoe_name"])}'))
+                        if ppp and (len(ppp)!=1 or ppp[0]["f"].get("interface")!=(c["vlan_name"] or base) or ppp[0]["f"].get("user")!=c["pppoe_user"]):
+                            raise RuntimeError("PPPoE interface name already exists with different parameters.")
+                    nat_rows=parse_terse(r.exec(f'/ip firewall nat print terse where comment={ros_q("VPN-MANAGER-WAN-NAT")}'))
+                    if nat_rows and (len(nat_rows)!=1 or nat_rows[0]["f"].get("out-interface")!=wan_if or nat_rows[0]["f"].get("action")!="masquerade"):
+                        raise RuntimeError("Managed WAN NAT comment is already used by a different rule.")
+                    # Create a router backup before making any changes.
+                    backup_name="vpn-manager-before-network-setup"
+                    self.cmd(r,f'/system backup save name={ros_q(backup_name)}')
+                    if c["vlan_name"] and not vlan_rows:
+                        self.cmd(r,f'/interface vlan add name={ros_q(c["vlan_name"])} interface={ros_q(base)} vlan-id={c["vlan_id"]}')
+                    if c["mode"]=="DHCP":
+                        clients=parse_terse(r.exec(f'/ip dhcp-client print terse where interface={ros_q(vlan_if)}'))
+                        if not clients: self.cmd(r,f'/ip dhcp-client add interface={ros_q(vlan_if)} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
+                    else:
+                        ppp=parse_terse(r.exec(f'/interface pppoe-client print terse where name={ros_q(c["pppoe_name"])}'))
+                        if not ppp:
+                            self.cmd(r,f'/interface pppoe-client add name={ros_q(c["pppoe_name"])} interface={ros_q(c["vlan_name"] or base)} user={ros_q(c["pppoe_user"])} password={ros_q(c["pppoe_password"])} add-default-route=yes default-route-distance=1 use-peer-dns=no disabled=no')
+                    if not bridge_rows: self.cmd(r,f'/interface bridge add name={ros_q(bridge)}')
+                    for port in ports:
+                        if port not in port_map: self.cmd(r,f'/interface bridge port add bridge={ros_q(bridge)} interface={ros_q(port)}')
+                    if not any(x["f"].get("address")==c["lan_address"] for x in address_rows):
+                        self.cmd(r,f'/ip address add address={ros_q(c["lan_address"])} interface={ros_q(bridge)} comment="VPN-MANAGER-LAN-GATEWAY"')
+                    if not pool_rows: self.cmd(r,f'/ip pool add name={ros_q(c["pool_name"])} ranges={ros_q(c["pool"])}')
+                    if not network_rows: self.cmd(r,f'/ip dhcp-server network add address={ros_q(c["lan_subnet"])} gateway={ros_q(c["lan_ip"])} dns-server={ros_q(c["lan_ip"])}')
+                    if not dhcp_rows: self.cmd(r,f'/ip dhcp-server add name="vpn-manager-lan" interface={ros_q(bridge)} address-pool={ros_q(c["pool_name"])} lease-time=12h disabled=no')
+                    if not nat_rows:
+                        existing_nat=parse_terse(r.exec(f'/ip firewall nat print terse where chain=srcnat and action=masquerade and out-interface={ros_q(wan_if)}'))
+                        if not existing_nat: self.cmd(r,f'/ip firewall nat add chain=srcnat action=masquerade out-interface={ros_q(wan_if)} comment="VPN-MANAGER-WAN-NAT"')
+                    # Verify that the provider link is live and the default route is in main (never in vpn).
+                    if c["mode"]=="DHCP":
+                        ready=False
+                        for _ in range(30):
+                            status=r.exec(f'/ip dhcp-client print detail where interface={ros_q(vlan_if)}')
+                            if "status=bound" in status.lower(): ready=True; break
+                            time.sleep(1)
+                        if not ready: raise RuntimeError("WAN DHCP client was created but did not reach status=bound. Inspect cabling, ISP VLAN and DHCP service.")
+                    else:
+                        ready=False
+                        for _ in range(30):
+                            status=r.exec(f'/interface pppoe-client print detail where name={ros_q(c["pppoe_name"])}')
+                            if re.search(r'\bR\b|running=yes|status=connected',status,re.I): ready=True; break
+                            time.sleep(1)
+                        if not ready: raise RuntimeError("PPPoE client was created but is not running. Verify provider login/password, service name and VLAN.")
+                    main=r.exec('/ip route print detail where dst-address=0.0.0.0/0 and routing-table=main')
+                    if not main.strip() or "inactive" in main.lower() or f'gateway={wan_if}' not in main.lower():
+                        raise RuntimeError("WAN is connected but an active main default route through the configured WAN was not confirmed. VPN routing has not been enabled.")
+                    if "allow-remote-requests: yes" not in r.exec("/ip dns print"): self.cmd(r,"/ip dns set allow-remote-requests=yes")
+                    self.q.put(("LOG","Первичная настройка WAN/LAN завершена. Проверен прямой main default route через WAN; VPN-маршрутизация не включалась."))
+                elif k=="setup_vpn_routing":
                     f=dict(self.settings); table=f["route_table"]; wg=f["wg_interface"]
                     if r.exec(f'/interface wireguard print count-only where name={ros_q(wg)}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["lan_interface"])}').strip()!="1" or r.exec(f'/interface print count-only where name={ros_q(f["wan_interface"])}').strip()!="1":
                         raise RuntimeError("Интерфейс WireGuard, LAN или WAN изменился после сканирования. Повтори скан.")

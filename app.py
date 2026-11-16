@@ -1685,7 +1685,7 @@ class App(QMainWindow):
         self.doh_stage_table.setMinimumHeight(300); stages.layout().addWidget(self.doh_stage_table); l.addWidget(stages)
         self.doh_diagnosis_verdict=QLabel("Запусти полную диагностику — здесь появится предполагаемое место сбоя."); self.doh_diagnosis_verdict.setObjectName("StatusBar"); self.doh_diagnosis_verdict.setWordWrap(True); l.addWidget(self.doh_diagnosis_verdict)
         report=self.panel("Подробный отчёт","Исходные ответы RouterOS и результат независимой проверки DoH.")
-        self.doh_diag_text=QTextEdit(); self.doh_diag_text.setObjectName("DiagView"); self.doh_diag_text.setReadOnly(True); self.doh_diag_text.setAcceptRichText(False); self.doh_diag_text.setPlaceholderText("Подключись по SSH и запусти проверку."); self.doh_diag_text.setMinimumHeight(320)
+        self.doh_diag_text=QTextEdit(); self.doh_diag_text.setObjectName("DiagView"); self.doh_diag_text.setReadOnly(True); self.doh_diag_text.setAcceptRichText(True); self.doh_diag_text.setPlaceholderText("Подключись по SSH и запусти проверку."); self.doh_diag_text.setMinimumHeight(320)
         report.layout().addWidget(self.doh_diag_text,1); l.addWidget(report,1); return w
 
     def run_doh_diagnostic(self):
@@ -2385,6 +2385,105 @@ class App(QMainWindow):
         compact="QPushButton{min-height:18px;padding-top:0;padding-bottom:0;} QTreeWidget::item{padding-top:5px;padding-bottom:5px;} QTableWidget::item{padding:4px;}" if density=="compact" else ""
         self.setStyleSheet(STYLE+"\n"+extra+f"\nQWidget{{font-size:{font}pt;}}\n"+compact)
 
+    def page_lan_map(self):
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
+        intro=self.panel("Карта локальной сети","Снимок устройств из DHCP leases, ARP, RouterOS Neighbor и MAC-таблицы bridge. Сканирование только читает данные MikroTik.")
+        row=QHBoxLayout(); self.lan_map_status=QLabel("Ожидает сканирования · требуется SSH"); self.lan_map_status.setObjectName("StatusBar")
+        scan=QPushButton("Обновить карту LAN"); scan.setObjectName("PrimaryButton"); scan.clicked.connect(self.scan_lan_map)
+        row.addWidget(self.lan_map_status,1); row.addWidget(scan); intro.layout().addLayout(row); l.addWidget(intro)
+        stats=self.panel("Сводка","Новые и пропавшие устройства определяются сравнением с предыдущими успешными сканированиями.")
+        self.lan_map_summary=QLabel("Устройств: — · Новых: — · Пропавших: —"); self.lan_map_summary.setObjectName("SectionTitle"); stats.layout().addWidget(self.lan_map_summary); l.addWidget(stats)
+        split=QSplitter(Qt.Orientation.Horizontal)
+        topology=self.panel("Связи устройств","Логическая схема: MikroTik → LAN-интерфейс → устройство. Не является физической схемой кабелей.")
+        self.lan_map_tree=QTreeWidget(); self.lan_map_tree.setHeaderLabels(["Узел / связь","Состояние"]); self.lan_map_tree.setMinimumHeight(280); topology.layout().addWidget(self.lan_map_tree)
+        devices=self.panel("Устройства","IP, MAC, hostname, производитель и источник обнаружения.")
+        self.lan_map_table=QTableWidget(0,8); self.lan_map_table.setHorizontalHeaderLabels(["Статус","IP","MAC","Hostname","Производитель","Интерфейс","Источник","Последнее обнаружение"])
+        self.lan_map_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.lan_map_table.setAlternatingRowColors(True)
+        self.lan_map_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents); self.lan_map_table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
+        devices.layout().addWidget(self.lan_map_table); split.addWidget(topology); split.addWidget(devices); split.setStretchFactor(0,1); split.setStretchFactor(1,2); l.addWidget(split,1)
+        note=QLabel("Производитель определяется по локальному сокращённому справочнику OUI; неизвестные MAC показываются как «Не определён». Активного ping-сканирования нет: обнаруживаются только устройства, присутствующие в таблицах DHCP/ARP/Neighbor/Bridge на момент запроса.")
+        note.setObjectName("InfoNote"); note.setWordWrap(True); l.addWidget(note)
+        return w
+
+    def scan_lan_map(self):
+        if self.busy: return
+        self.lan_map_status.setText("Сбор DHCP leases, ARP, Neighbor и bridge host…")
+        def job():
+            r=self.router_conn()
+            data={"dhcp":r.exec("/ip dhcp-server lease print detail",timeout=30),
+                  "arp":r.exec(f'/ip arp print detail where interface={ros_q(self.settings.get("lan_interface",""))}',timeout=25),
+                  "neighbor":r.exec("/ip neighbor print detail",timeout=25),
+                  "bridge":r.exec("/interface bridge host print detail",timeout=25)}
+            self.q.put(("LAN_MAP",data))
+        self.run_job("Обнаружение устройств LAN…",job)
+
+    def lan_vendor(self,mac):
+        parts=(mac or "").upper().replace("-",":").split(":"); prefix=":".join(parts[:3]) if len(parts)>=3 else ""
+        vendors={"00:1A:2B":"Cisco","00:1B:63":"Apple","3C:22:FB":"Apple","F0:18:98":"Apple",
+            "B8:27:EB":"Raspberry Pi Foundation","DC:A6:32":"Raspberry Pi Foundation","E4:5F:01":"Raspberry Pi Foundation",
+            "00:15:5D":"Microsoft Hyper-V","00:50:56":"VMware","08:00:27":"Oracle VirtualBox","00:0C:29":"VMware",
+            "DC:2C:6E":"TP-Link","50:C7:BF":"TP-Link","C0:06:C3":"TP-Link","D8:07:B6":"TP-Link",
+            "4C:5E:0C":"Ubiquiti","24:A4:3C":"Ubiquiti","74:AC:B9":"Ubiquiti"}
+        return vendors.get(prefix,"Не определён")
+
+    def on_lan_map(self,data):
+        try: history=json.loads(self.settings.get("lan_map_history","{}"))
+        except Exception: history={}
+        if not isinstance(history,dict): history={}
+        now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"); current={}
+        def merge(items,source):
+            for item in items:
+                f=item.get("f",{}); mac=f.get("mac-address","").upper().replace("-",":"); ip=f.get("address",f.get("active-address",""))
+                if not mac or mac in ("00:00:00:00:00:00","FF:FF:FF:FF:FF:FF"): continue
+                try:
+                    if ip and ipaddress.ip_address(ip).version!=4: ip=""
+                except ValueError: ip=""
+                rec=current.setdefault(mac,{"mac":mac,"ip":"","hostname":"","interface":"","sources":[],"vendor":self.lan_vendor(mac)})
+                if ip: rec["ip"]=ip
+                host=f.get("host-name",f.get("hostname",f.get("identity","")))
+                if host and host.lower() not in ("unknown",""): rec["hostname"]=host
+                iface=f.get("on-interface",f.get("interface",f.get("bridge","")))
+                if iface: rec["interface"]=iface
+                if source not in rec["sources"]: rec["sources"].append(source)
+        merge(parse_terse(data.get("dhcp","")),"DHCP"); merge(parse_terse(data.get("arp","")),"ARP")
+        merge(parse_terse(data.get("neighbor","")),"Neighbor"); merge(parse_terse(data.get("bridge","")),"Bridge MAC")
+        try:
+            net=ipaddress.ip_network(self.settings.get("lan_subnet","0.0.0.0/0"),strict=False)
+            current={k:v for k,v in current.items() if not v["ip"] or ipaddress.ip_address(v["ip"]) in net}
+        except Exception: pass
+        new_count=lost_count=0
+        for mac,rec in current.items():
+            old=history.get(mac,{})
+            rec["state"]="returned" if old.get("state")=="lost" else ("online" if old else "new")
+            if rec["state"] in ("new","returned"): new_count+=1
+            rec["last_seen"]=now; history[mac]=dict(rec,state="online",last_seen=now)
+        visible=list(current.values())
+        for mac,old in list(history.items()):
+            if mac not in current:
+                if old.get("state")=="online": old["state"]="lost"; history[mac]=old; lost_count+=1
+                if old.get("state")=="lost": visible.append(dict(old))
+        self.settings["lan_map_history"]=json.dumps(history,ensure_ascii=False); self.save_settings()
+        self.render_lan_map(visible,current,new_count,lost_count)
+        self.lan_map_status.setText(f"Сканирование завершено · {now} · найдено {len(current)} устройств")
+
+    def render_lan_map(self,records,current,new_count,lost_count):
+        names={"new":"НОВОЕ","returned":"ВЕРНУЛОСЬ","online":"В СЕТИ","lost":"ПРОПАЛО"}
+        colors={"new":TONES["info"],"returned":TONES["ok"],"online":TONES["ok"],"lost":TONES["bad"]}
+        self.lan_map_table.setRowCount(0); self.lan_map_tree.clear()
+        root=QTreeWidgetItem(self.lan_map_tree,[f'MikroTik · {self.settings.get("host","router")}','Шлюз']); groups={}
+        for rec in records:
+            iface=rec.get("interface") or "Интерфейс неизвестен"; state=rec.get("state","online")
+            if iface not in groups: groups[iface]=QTreeWidgetItem(root,[iface,"LAN link"])
+            QTreeWidgetItem(groups[iface],[f'{rec.get("hostname") or "Без hostname"} · {rec.get("ip") or "IP неизвестен"}',names.get(state,state.upper())])
+            row=self.lan_map_table.rowCount(); self.lan_map_table.insertRow(row)
+            vals=[names.get(state,state.upper()),rec.get("ip",""),rec.get("mac",""),rec.get("hostname",""),rec.get("vendor","Не определён"),iface,", ".join(rec.get("sources",[])),rec.get("last_seen","")]
+            for col,value in enumerate(vals):
+                cell=QTableWidgetItem(str(value))
+                if col==0: cell.setForeground(QColor(colors.get(state,TONES["muted"])))
+                self.lan_map_table.setItem(row,col,cell)
+        self.lan_map_tree.expandAll()
+        self.lan_map_summary.setText(f"Сейчас в сети: {len(current)} · Новых/вернувшихся: {new_count} · Пропавших: {lost_count} · Записей: {len(records)}")
+
     def page_terminal(self):
         w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(14)
         panel=QFrame(); panel.setObjectName("Panel")
@@ -2764,7 +2863,7 @@ class App(QMainWindow):
                 elif kind=="DIAGBEGIN": self.diag_begin(payload)
                 elif kind=="DIAGOUT": self.diag_block(*payload)
                 elif kind=="DOH_DIAGOUT":
-                    self.doh_diag_text.setPlainText(str(payload)); self.doh_diag_text.moveCursor(QTextCursor.MoveOperation.Start)
+                    self.render_doh_report(str(payload))
                 elif kind=="DOH_DIAGSTATUS":
                     for i,(name,state,detail) in enumerate(payload):
                         self.doh_stage_table.setItem(i,0,QTableWidgetItem(name))
@@ -2790,6 +2889,7 @@ class App(QMainWindow):
                         if v.isdigit(): self.card_values[key].setText(human_bytes(int(v)))
                     if not silent: self.diag_summary(result)
                 elif kind=="LAN_DISCOVERY": self.on_lan_discovery(payload)
+                elif kind=="LAN_MAP": self.on_lan_map(payload)
                 elif kind=="VPN_SETUP_SCAN": self.on_vpn_setup_scan(payload)
                 elif kind=="FW_DATA": self.on_firewall_data(*payload)
                 elif kind=="FW_APPLIED": self.firewall_applied()
@@ -2816,6 +2916,18 @@ class App(QMainWindow):
                 elif kind=="TEXT": payload[0].setPlainText(payload[1])
                 elif kind=="BACKUP": self.backup_info.setText(payload)
         except queue.Empty: pass
+
+    def render_doh_report(self,report):
+        if not hasattr(self,"doh_diag_text"): return
+        rows=[]
+        for line in report.splitlines():
+            upper=line.upper(); color="#d8e3f3"
+            if "ERROR:" in upper or "FAIL" in upper or "BAD" in upper: color="#fb7185"
+            elif "WARN" in upper or "WARNING" in upper: color="#fbbf24"
+            elif "OK" in upper or "SUCCESSFULLY" in upper or "VERIFIED" in upper: color="#4ade80"
+            rows.append(f'<span style="color:{color}">{esc(line) or "&nbsp;"}</span>')
+        self.doh_diag_text.setHtml('<pre style="white-space:pre-wrap;font-family:Consolas,monospace;">'+"<br>".join(rows)+"</pre>")
+        self.doh_diag_text.moveCursor(QTextCursor.MoveOperation.Start)
 
     # ---------- индикаторы DNS ----------
     def set_ind(self,key,state,text):

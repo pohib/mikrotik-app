@@ -2571,7 +2571,7 @@ class App(QMainWindow):
         rows=[
             f"Устройство: {data.get('hostname') or data.get('identity') or data.get('board') or data.get('scan_name') or 'Без имени'}",
             f"IP: {data.get('ip') or '—'}    MAC: {data.get('mac') or '—'}",
-            f"Интерфейс: {data.get('interface') or '—'}    Производитель: {data.get('vendor') or '—'}",
+            f"Интерфейс: {data.get('interface') or (data.get('identity') if data.get('kind')=='interface' else '—')}    Производитель: {data.get('vendor') or '—'}",
             f"Состояние: {data.get('state') or '—'}    Источники: {', '.join(data.get('sources',[])) or '—'}",
             f"Отклик: {data.get('response') or '—'}    Последнее обнаружение: {data.get('last_seen') or '—'}",
         ]
@@ -2787,7 +2787,9 @@ class App(QMainWindow):
             pen=QPen(color,2,Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
             line=scene.addLine(a[0],a[1],b[0],b[1],pen); line.setZValue(-2)
         router_title=f'MikroTik · {self.settings.get("host","router") or "router"}'
-        root_bottom,root_top,_=add_node(0,25,270,82,router_title,"Шлюз / корень топологии",cyan,"Маршрутизатор, к которому подключено приложение по SSH")
+        root_bottom,root_top,_=add_node(0,25,290,88,router_title,"ROUTER  ·  SSH CONNECTED",cyan,
+            "Маршрутизатор, к которому подключено приложение по SSH",
+            {"identity":router_title,"kind":"router","state":"connected","sources":["SSH"]})
         if not records:
             message="Нет устройств по текущему фильтру" if self._lan_map_records else "Сеть ещё не просканирована"
             hint="Измени фильтр или строку поиска" if self._lan_map_records else "Нажми «Сканировать сеть» для обнаружения"
@@ -2800,7 +2802,7 @@ class App(QMainWindow):
             grouped.setdefault(iface,[]).append(rec)
         interfaces=sorted(grouped,key=str.casefold); port_w=390; gap=64
         total_width=max(270,len(interfaces)*port_w+max(0,len(interfaces)-1)*gap)
-        root_x=total_width/2-135
+        root_x=total_width/2-145
         # redraw router centered over all port branches
         scene.clear()
         root_bottom,root_top,_=add_node(root_x,25,290,88,router_title,"ROUTER  ·  SSH CONNECTED",cyan,
@@ -2810,7 +2812,7 @@ class App(QMainWindow):
             x=idx*(port_w+gap)+(total_width-(len(interfaces)*port_w+max(0,len(interfaces)-1)*gap))/2
             port_x=x+port_w/2
             port_records=grouped[iface]
-            edge((root_x+135,107),(port_x,165),cyan)
+            edge((root_x+145,113),(port_x,165),cyan)
             port_color=green if any(r.get("interface_running") for r in port_records) else blue
             port_top,port_bottom,_=add_node(x,165,port_w,76,iface,f'{len(port_records)} устройств / MAC-записей',port_color,
                 "Интерфейс MikroTik, по которому изучена MAC/ARP-информация",

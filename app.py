@@ -3531,8 +3531,8 @@ class App(QMainWindow):
                 add("info","Мастер настройки · DNS Firewall",f"Не удалось прочитать input-правило DNS {proto}",raw[key],"Проверь права SSH и повтори диагностику.")
             else:
                 dns_rules=parse_terse(raw[key])
-                if len(dns_rules)!=1 or "X" in dns_rules[0]["flags"]:
-                    add("warn","Мастер настройки · DNS Firewall",f"LAN DNS input-правило {proto} отсутствует, дублируется или отключено",raw[key],"Проверь разрешение DNS только из LAN-подсети и состояние правила.")
+                if len(dns_rules)!=1 or "X" in dns_rules[0]["flags"] or dns_rules[0]["f"].get("chain")!="input" or dns_rules[0]["f"].get("action")!="accept" or dns_rules[0]["f"].get("protocol")!=proto.lower() or dns_rules[0]["f"].get("dst-port")!="53" or dns_rules[0]["f"].get("in-interface")!=f["lan_interface"] or dns_rules[0]["f"].get("src-address")!=f["lan_subnet"]:
+                    add("warn","Мастер настройки · DNS Firewall",f"LAN DNS input-правило {proto} отсутствует, отключено или имеет неверные ограничения",raw[key],"Проверь chain=input, action=accept, порт 53, in-interface LAN и src-address LAN subnet.")
         if not failed("Wizard NAT rule"):
             nat_records=parse_terse(raw["Wizard NAT rule"])
             if len(nat_records)!=1:
@@ -3547,7 +3547,7 @@ class App(QMainWindow):
             entries=parse_terse(raw["Managed Mangle"])
             if len(entries)==1:
                 mf=entries[0]["f"]
-                expected={"chain":"prerouting","action":"mark-routing","new-routing-mark":f["route_table"],"in-interface":f["lan_interface"],"src-address":f["lan_subnet"],"dst-address-list":f["address_list"],"passthrough":"no"}
+                expected={"chain":"prerouting","action":"mark-routing","new-routing-mark":f["route_table"],"in-interface":f["lan_interface"],"src-address":f["lan_subnet"],"dst-address-list":f["address_list"],"dst-address-type":"!local","passthrough":"no"}
                 mismatches=[f"{key}: ожидалось {value}, фактически {mf.get(key,'<нет>')}" for key,value in expected.items() if mf.get(key)!=value]
                 if mismatches:
                     add("bad","Мастер настройки · Mangle","Правило не соответствует selective routing профилю","; ".join(mismatches),"Исправь параметры Mangle: только LAN → выбранный address-list → отдельная VPN routing table.")
@@ -4461,7 +4461,7 @@ class App(QMainWindow):
         """Пояснение, команды RouterOS и проверки для одной операции."""
         k=a["kind"]; f=dict(self.settings); f.update(self.fields() if hasattr(self,"inputs") else {}); commands=[]; checks=[]
         if k=="setup_vpn_routing":
-            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(f["wg_interface"])} routing-table={ros_q(f["route_table"])} comment="VPN-MANAGER-DEFAULT"  # если отсутствует',mangle_cmd(f),nat_cmd(f)]
+            commands=["/ip dns print",f'/ip address print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server print detail where interface={ros_q(f["lan_interface"])}',f'/ip dhcp-server network print detail where address={ros_q(f["lan_subnet"])}',f'/ip dns set allow-remote-requests=yes  # если выключено',f'/ip firewall filter add chain=input action=accept protocol=udp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-UDP" place-before=0  # если отсутствует',f'/ip firewall filter add chain=input action=accept protocol=tcp dst-port=53 in-interface={f["lan_interface"]} src-address={f["lan_subnet"]} comment="VPN-MANAGER-LAN-DNS-TCP" place-before=0  # если отсутствует',f'/ip dhcp-server network set [find where address={ros_q(f["lan_subnet"])}] dns-server={f["lan_dns"]}  # либо add, если сети нет',f'/routing table print detail where name={ros_q(f["route_table"])}',f'/routing table add name={ros_q(f["route_table"])} fib  # если отсутствует',f'/ip route print detail where dst-address=0.0.0.0/0 and routing-table={ros_q(f["route_table"])}',f'/ip route add dst-address=0.0.0.0/0 gateway={ros_q(f["wg_interface"])} routing-table={ros_q(f["route_table"])} comment="VPN-MANAGER-DEFAULT"  # если отсутствует',mangle_cmd(f),nat_cmd(f)]
             description="Настроить DNS для LAN с ограниченными input-правилами, при наличии DHCP обновить DNS в DHCP network, затем создать только отсутствующие routing table, default route, Mangle и NAT. WireGuard-профиль применяется отдельно после импорта .conf."
             checks=["Таблица VPN существует","Default route активен через WireGuard","Mangle направляет выбранные цели в VPN-таблицу","NAT masquerade работает через WireGuard","Проверить ping и доступ с LAN-клиента"]
         elif k=="apply_targets":
